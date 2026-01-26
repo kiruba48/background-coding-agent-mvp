@@ -87,37 +87,37 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| EXEC-01 | TBD | Pending |
-| EXEC-02 | TBD | Pending |
-| EXEC-03 | TBD | Pending |
-| EXEC-04 | TBD | Pending |
-| EXEC-05 | TBD | Pending |
-| EXEC-06 | TBD | Pending |
-| TOOL-01 | TBD | Pending |
-| TOOL-02 | TBD | Pending |
-| TOOL-03 | TBD | Pending |
-| TOOL-04 | TBD | Pending |
-| TOOL-05 | TBD | Pending |
-| VERIFY-01 | TBD | Pending |
-| VERIFY-02 | TBD | Pending |
-| VERIFY-03 | TBD | Pending |
-| VERIFY-04 | TBD | Pending |
-| VERIFY-05 | TBD | Pending |
-| VERIFY-06 | TBD | Pending |
-| PR-01 | TBD | Pending |
-| PR-02 | TBD | Pending |
-| PR-03 | TBD | Pending |
-| PR-04 | TBD | Pending |
-| PR-05 | TBD | Pending |
-| CLI-01 | TBD | Pending |
-| CLI-02 | TBD | Pending |
-| CLI-03 | TBD | Pending |
-| CLI-04 | TBD | Pending |
-| CLI-05 | TBD | Pending |
-| TASK-01 | TBD | Pending |
-| TASK-02 | TBD | Pending |
-| TASK-03 | TBD | Pending |
-| TASK-04 | TBD | Pending |
+| EXEC-01 | Phase 1 | Pending |
+| EXEC-02 | Phase 1 | Pending |
+| EXEC-03 | Phase 2 | Pending |
+| EXEC-04 | Phase 2 | Pending |
+| EXEC-05 | Phase 4 | Pending |
+| EXEC-06 | Phase 4 | Pending |
+| TOOL-01 | Phase 3 | Pending |
+| TOOL-02 | Phase 3 | Pending |
+| TOOL-03 | Phase 3 | Pending |
+| TOOL-04 | Phase 3 | Pending |
+| TOOL-05 | Phase 10 | Pending |
+| VERIFY-01 | Phase 5 | Pending |
+| VERIFY-02 | Phase 5 | Pending |
+| VERIFY-03 | Phase 5 | Pending |
+| VERIFY-04 | Phase 6 | Pending |
+| VERIFY-05 | Phase 5 | Pending |
+| VERIFY-06 | Phase 6 | Pending |
+| PR-01 | Phase 7 | Pending |
+| PR-02 | Phase 7 | Pending |
+| PR-03 | Phase 7 | Pending |
+| PR-04 | Phase 7 | Pending |
+| PR-05 | Phase 7 | Pending |
+| CLI-01 | Phase 2 | Pending |
+| CLI-02 | Phase 2 | Pending |
+| CLI-03 | Phase 2 | Pending |
+| CLI-04 | Phase 2 | Pending |
+| CLI-05 | Phase 2 | Pending |
+| TASK-01 | Phase 8 | Pending |
+| TASK-02 | Phase 9 | Pending |
+| TASK-03 | Phase 8 | Pending |
+| TASK-04 | Phase 8 | Pending |
 
 ---
-*Last updated: 2026-01-26 after requirements definition*
+*Last updated: 2026-01-26 after roadmap creation*
