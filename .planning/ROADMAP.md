@@ -34,11 +34,13 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Container has no external network access (network mode: none)
   3. Agent SDK can send/receive messages to Claude API from orchestrator
   4. Container can be torn down cleanly after session
-**Plans**: TBD
+**Plans**: 4 plans in 3 waves
 
 Plans:
-- [ ] 01-01: TBD
-- [ ] 01-02: TBD
+- [ ] 01-01-PLAN.md — Project setup + Docker image (Wave 1)
+- [ ] 01-02-PLAN.md — Container lifecycle management (Wave 2)
+- [ ] 01-03-PLAN.md — Anthropic SDK integration (Wave 2)
+- [ ] 01-04-PLAN.md — End-to-end session integration (Wave 3)
 
 ### Phase 2: CLI & Orchestration
 **Goal**: User can trigger agent runs via CLI and orchestrator manages full session lifecycle with safety limits
@@ -149,7 +151,7 @@ Plans:
   2. Agent can update dependency versions in pom.xml
   3. Task type is configurable via CLI parameter (maven-dependency-update)
   4. Prompt uses end-state format (describe outcome, not steps)
-  5. Full workflow works: trigger → update → verify → PR creation
+  5. Full workflow works: trigger -> update -> verify -> PR creation
   6. Maven multi-module projects are handled correctly
 **Plans**: TBD
 
@@ -166,7 +168,7 @@ Plans:
   2. Agent can update dependency versions in package.json
   3. Agent handles package-lock.json or yarn.lock correctly
   4. Agent respects peer dependency constraints
-  5. Full workflow works: trigger → update → verify → PR creation
+  5. Full workflow works: trigger -> update -> verify -> PR creation
 **Plans**: TBD
 
 Plans:
@@ -191,11 +193,11 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation & Security | 0/0 | Not started | - |
+| 1. Foundation & Security | 0/4 | Planned | - |
 | 2. CLI & Orchestration | 0/0 | Not started | - |
 | 3. Agent Tool Access | 0/0 | Not started | - |
 | 4. Retry & Context Engineering | 0/0 | Not started | - |
