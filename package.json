@@ -27,6 +27,7 @@
   "devDependencies": {
     "@types/dockerode": "^3.3.36",
     "@types/node": "^20.17.10",
+    "dotenv": "^17.2.3",
     "typescript": "^5.7.2"
   }
 }
