@@ -7,6 +7,8 @@
   "scripts": {
     "build": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1",
+    "test:agent": "npx tsx src/orchestrator/agent.test.ts",
+    "test:container": "npx tsx src/orchestrator/container.test.ts",
     "lint": "echo \"Error: no lint specified\" && exit 1"
   },
   "keywords": [
