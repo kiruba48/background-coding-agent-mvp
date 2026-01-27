@@ -12,7 +12,7 @@ Building a trustworthy background coding agent platform in 10 phases. Starting w
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Foundation & Security** - Docker isolation and Anthropic SDK integration
+- [x] **Phase 1: Foundation & Security** - Docker isolation and Anthropic SDK integration
 - [ ] **Phase 2: CLI & Orchestration** - User interface and session lifecycle management
 - [ ] **Phase 3: Agent Tool Access** - Safe file, Git, and Bash operations
 - [ ] **Phase 4: Retry & Context Engineering** - Resilient execution with error context
@@ -37,10 +37,10 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 4 plans in 3 waves
 
 Plans:
-- [ ] 01-01-PLAN.md — Project setup + Docker image (Wave 1)
-- [ ] 01-02-PLAN.md — Container lifecycle management (Wave 2)
-- [ ] 01-03-PLAN.md — Anthropic SDK integration (Wave 2)
-- [ ] 01-04-PLAN.md — End-to-end session integration (Wave 3)
+- [x] 01-01-PLAN.md — Project setup + Docker image (Wave 1)
+- [x] 01-02-PLAN.md — Container lifecycle management (Wave 2)
+- [x] 01-03-PLAN.md — Anthropic SDK integration (Wave 2)
+- [x] 01-04-PLAN.md — End-to-end session integration (Wave 3)
 
 ### Phase 2: CLI & Orchestration
 **Goal**: User can trigger agent runs via CLI and orchestrator manages full session lifecycle with safety limits
@@ -197,7 +197,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation & Security | 0/4 | Planned | - |
+| 1. Foundation & Security | 4/4 | Complete | 2026-01-27 |
 | 2. CLI & Orchestration | 0/0 | Not started | - |
 | 3. Agent Tool Access | 0/0 | Not started | - |
 | 4. Retry & Context Engineering | 0/0 | Not started | - |

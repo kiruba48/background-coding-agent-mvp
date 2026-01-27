@@ -4,8 +4,8 @@
 
 ### Execution & Isolation
 
-- [ ] **EXEC-01**: Agent executes in isolated Docker container with non-root user
-- [ ] **EXEC-02**: Container has no external network access (network isolation)
+- [x] **EXEC-01**: Agent executes in isolated Docker container with non-root user
+- [x] **EXEC-02**: Container has no external network access (network isolation)
 - [ ] **EXEC-03**: Turn limit caps agent sessions at 10 turns maximum
 - [ ] **EXEC-04**: Timeout terminates sessions exceeding 5 minutes
 - [ ] **EXEC-05**: Agent can retry on failure with error context (max 3 retries)
@@ -87,8 +87,8 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| EXEC-01 | Phase 1 | Pending |
-| EXEC-02 | Phase 1 | Pending |
+| EXEC-01 | Phase 1 | Complete |
+| EXEC-02 | Phase 1 | Complete |
 | EXEC-03 | Phase 2 | Pending |
 | EXEC-04 | Phase 2 | Pending |
 | EXEC-05 | Phase 4 | Pending |
@@ -120,4 +120,4 @@
 | TASK-04 | Phase 8 | Pending |
 
 ---
-*Last updated: 2026-01-26 after roadmap creation*
+*Last updated: 2026-01-27 after Phase 1 completion*
