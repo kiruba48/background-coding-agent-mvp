@@ -29,6 +29,6 @@ RUN chown agent:agent /workspace
 # Switch to non-root user
 USER agent
 
-# Use exec-form CMD for proper signal handling
+# Use pure exec-form CMD for proper signal handling
 # Container stays alive for docker exec commands
-CMD ["sh", "-c", "sleep infinity"]
+CMD ["sleep", "infinity"]

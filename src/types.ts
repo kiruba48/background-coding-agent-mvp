@@ -6,11 +6,14 @@ export interface ContainerConfig {
   timeoutSeconds?: number;
 }
 
-export interface AgentSession {
+/**
+ * Session state tracking for orchestrator (used in Phase 2 CLI)
+ */
+export interface SessionState {
   id: string;
   containerId: string;
   workspaceDir: string;
-  status: 'pending' | 'running' | 'success' | 'failed';
+  status: 'pending' | 'running' | 'success' | 'failed' | 'vetoed';
   startedAt: Date;
   endedAt?: Date;
 }

@@ -1,7 +1,30 @@
 import Docker from 'dockerode';
 import * as path from 'path';
+import * as fs from 'fs/promises';
 import { Writable } from 'stream';
 import { ContainerConfig, ToolResult } from '../types.js';
+
+/**
+ * Type guard for Docker API errors which have a statusCode property
+ */
+function isDockerError(error: unknown): error is { statusCode: number; message: string } {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'statusCode' in error &&
+    typeof (error as Record<string, unknown>).statusCode === 'number'
+  );
+}
+
+/**
+ * Extract error message safely without exposing internal details
+ */
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return 'Unknown error';
+}
 
 export class ContainerManager {
   private docker: Docker;
@@ -15,6 +38,13 @@ export class ContainerManager {
   async create(config: ContainerConfig): Promise<void> {
     const absWorkspace = path.resolve(config.workspaceDir);
     this.workspaceDir = absWorkspace;
+
+    // Validate workspace directory exists
+    try {
+      await fs.access(absWorkspace);
+    } catch {
+      throw new Error(`Workspace directory does not exist: ${absWorkspace}`);
+    }
 
     const image = config.image || 'agent-sandbox:latest';
     const memoryBytes = (config.memoryMB ?? 512) * 1024 * 1024;
@@ -36,11 +66,11 @@ export class ContainerManager {
           CapDrop: ['ALL'],
         },
         WorkingDir: absWorkspace,
-        Cmd: ['sh', '-c', 'sleep infinity'],
+        Cmd: ['sleep', 'infinity'],
       });
       console.log('Container created:', this.container.id);
     } catch (error) {
-      throw new Error(`Failed to create container: ${error}`);
+      throw new Error(`Failed to create container: ${getErrorMessage(error)}`);
     }
   }
 
@@ -53,11 +83,18 @@ export class ContainerManager {
       await this.container.start();
       console.log('Container started:', this.container.id);
     } catch (error) {
-      throw new Error(`Failed to start container: ${error}`);
+      throw new Error(`Failed to start container: ${getErrorMessage(error)}`);
     }
   }
 
-  async exec(command: string[]): Promise<ToolResult> {
+  /**
+   * Execute a command in the container with timeout protection
+   *
+   * @param command - Command and arguments to execute
+   * @param timeoutMs - Maximum execution time in milliseconds (default: 30000)
+   * @returns Tool result with stdout, stderr, and exit code
+   */
+  async exec(command: string[], timeoutMs: number = 30000): Promise<ToolResult> {
     if (!this.container) {
       throw new Error('Container not created. Call create() first.');
     }
@@ -75,24 +112,33 @@ export class ContainerManager {
       let stderr = '';
 
       const stdoutStream = new Writable({
-        write(chunk: any, encoding: string, callback: () => void) {
+        write(chunk: Buffer | string, _encoding: BufferEncoding, callback: () => void) {
           stdout += chunk.toString();
           callback();
         }
       });
 
       const stderrStream = new Writable({
-        write(chunk: any, encoding: string, callback: () => void) {
+        write(chunk: Buffer | string, _encoding: BufferEncoding, callback: () => void) {
           stderr += chunk.toString();
           callback();
         }
       });
 
-      await new Promise<void>((resolve, reject) => {
-        this.docker.modem.demuxStream(stream, stdoutStream, stderrStream);
-        stream.on('end', resolve);
-        stream.on('error', reject);
+      // Create timeout promise for command execution
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error(`Command timed out after ${timeoutMs}ms`)), timeoutMs);
       });
+
+      // Race between command completion and timeout
+      await Promise.race([
+        new Promise<void>((resolve, reject) => {
+          this.docker.modem.demuxStream(stream, stdoutStream, stderrStream);
+          stream.on('end', resolve);
+          stream.on('error', reject);
+        }),
+        timeoutPromise
+      ]);
 
       const inspection = await exec.inspect();
       return {
@@ -101,7 +147,7 @@ export class ContainerManager {
         exitCode: inspection.ExitCode ?? 0,
       };
     } catch (error) {
-      throw new Error(`Failed to execute command: ${error}`);
+      throw new Error(`Failed to execute command: ${getErrorMessage(error)}`);
     }
   }
 
@@ -113,16 +159,16 @@ export class ContainerManager {
     try {
       await this.container.stop({ t: timeoutSeconds });
       console.log('Container stopped gracefully');
-    } catch (error: any) {
-      if (error.statusCode === 304) {
+    } catch (error: unknown) {
+      if (isDockerError(error) && error.statusCode === 304) {
         console.log('Container already stopped');
       } else {
-        console.warn('Failed to stop container gracefully, forcing kill:', error.message);
+        console.warn('Failed to stop container gracefully, forcing kill:', getErrorMessage(error));
         try {
           await this.container.kill({ signal: 'SIGKILL' });
           console.log('Container killed forcefully');
         } catch (killError) {
-          throw new Error(`Failed to kill container: ${killError}`);
+          throw new Error(`Failed to kill container: ${getErrorMessage(killError)}`);
         }
       }
     }
@@ -136,11 +182,11 @@ export class ContainerManager {
     try {
       await this.container.remove({ force: true });
       console.log('Container removed');
-    } catch (error: any) {
-      if (error.statusCode === 404) {
+    } catch (error: unknown) {
+      if (isDockerError(error) && error.statusCode === 404) {
         console.log('Container already removed');
       } else {
-        console.warn('Failed to remove container:', error.message);
+        console.warn('Failed to remove container:', getErrorMessage(error));
       }
     }
   }

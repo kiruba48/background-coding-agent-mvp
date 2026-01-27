@@ -1,3 +1,4 @@
+import * as nodePath from 'path';
 import { ContainerManager } from './container.js';
 import { AgentClient, Tool } from './agent.js';
 import { ContainerConfig } from '../types.js';
@@ -5,7 +6,7 @@ import { ContainerConfig } from '../types.js';
 export interface SessionConfig {
   workspaceDir: string;
   image?: string;
-  apiKey?: string;
+  model?: string;
 }
 
 /**
@@ -71,12 +72,13 @@ export class AgentSession {
   private container: ContainerManager;
   private agent: AgentClient;
   private config: SessionConfig;
+  private workspaceDir: string = '';
   private started = false;
 
   constructor(config: SessionConfig) {
     this.config = config;
     this.container = new ContainerManager();
-    this.agent = new AgentClient();
+    this.agent = new AgentClient({ model: config.model });
   }
 
   /**
@@ -89,9 +91,12 @@ export class AgentSession {
    * - Workspace bind mount
    */
   async start(): Promise<void> {
+    // Resolve workspace to absolute path for path traversal checks
+    this.workspaceDir = nodePath.resolve(this.config.workspaceDir);
+
     const containerConfig: ContainerConfig = {
       image: this.config.image ?? 'agent-sandbox:latest',
-      workspaceDir: this.config.workspaceDir,
+      workspaceDir: this.workspaceDir,
     };
 
     await this.container.create(containerConfig);
@@ -119,11 +124,31 @@ export class AgentSession {
   }
 
   /**
+   * Validate and resolve a path, ensuring it stays within the workspace.
+   * Prevents path traversal attacks (e.g., ../../../etc/passwd).
+   *
+   * @param inputPath - User-provided path (relative or absolute)
+   * @returns Resolved absolute path within workspace
+   * @throws Error if path escapes workspace
+   */
+  private validatePath(inputPath: string): string {
+    // Resolve path relative to workspace
+    const resolved = nodePath.resolve(this.workspaceDir, inputPath);
+
+    // Ensure resolved path is within workspace (prevent traversal)
+    if (!resolved.startsWith(this.workspaceDir + nodePath.sep) && resolved !== this.workspaceDir) {
+      throw new Error('Path traversal detected - access denied');
+    }
+
+    return resolved;
+  }
+
+  /**
    * Execute a tool in the isolated container
    *
    * Routes tool calls to appropriate container commands:
    * - read_file: cat <path>
-   * - execute_bash: bash -c "<command>"
+   * - execute_bash: bash -c "<command>" (Note: container isolation is primary defense)
    * - list_files: ls -la <path>
    *
    * @param name - Tool name
@@ -136,8 +161,20 @@ export class AgentSession {
   ): Promise<string> {
     switch (name) {
       case 'read_file': {
-        const path = input.path as string;
-        const result = await this.container.exec(['cat', path]);
+        // Validate input type
+        if (typeof input.path !== 'string') {
+          return 'Error: path must be a string';
+        }
+
+        // Validate path stays within workspace
+        let safePath: string;
+        try {
+          safePath = this.validatePath(input.path);
+        } catch (error) {
+          return `Error: ${error instanceof Error ? error.message : 'Invalid path'}`;
+        }
+
+        const result = await this.container.exec(['cat', safePath]);
         if (result.exitCode !== 0) {
           return `Error reading file: ${result.stderr}`;
         }
@@ -145,15 +182,35 @@ export class AgentSession {
       }
 
       case 'execute_bash': {
-        const command = input.command as string;
-        const result = await this.container.exec(['bash', '-c', command]);
+        // Validate input type
+        if (typeof input.command !== 'string') {
+          return 'Error: command must be a string';
+        }
+
+        // Note: Command injection is mitigated by container isolation (network: none,
+        // read-only rootfs, non-root user, dropped capabilities). Phase 3 will add
+        // command allowlisting for defense-in-depth.
+        const result = await this.container.exec(['bash', '-c', input.command]);
         const output = result.stdout + result.stderr;
         return output || `(exit code: ${result.exitCode})`;
       }
 
       case 'list_files': {
-        const path = (input.path as string) || '.';
-        const result = await this.container.exec(['ls', '-la', path]);
+        // Validate input type (path is optional, defaults to '.')
+        const inputPath = input.path;
+        if (inputPath !== undefined && typeof inputPath !== 'string') {
+          return 'Error: path must be a string';
+        }
+
+        // Validate path stays within workspace
+        let safePath: string;
+        try {
+          safePath = this.validatePath(inputPath || '.');
+        } catch (error) {
+          return `Error: ${error instanceof Error ? error.message : 'Invalid path'}`;
+        }
+
+        const result = await this.container.exec(['ls', '-la', safePath]);
         if (result.exitCode !== 0) {
           return `Error listing files: ${result.stderr}`;
         }

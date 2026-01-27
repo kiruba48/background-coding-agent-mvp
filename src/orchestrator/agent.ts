@@ -44,6 +44,17 @@ export type ExecuteToolFn = (
  */
 export type OnTextFn = (text: string) => void;
 
+/** Default model to use if not specified */
+const DEFAULT_MODEL = 'claude-sonnet-4-5-20250929';
+
+/** Configuration options for AgentClient */
+export interface AgentClientOptions {
+  /** Anthropic API key (defaults to ANTHROPIC_API_KEY env var) */
+  apiKey?: string;
+  /** Claude model to use (defaults to claude-sonnet-4-5-20250929) */
+  model?: string;
+}
+
 /**
  * AgentClient handles communication with Claude via Anthropic SDK
  *
@@ -54,9 +65,10 @@ export type OnTextFn = (text: string) => void;
  */
 export class AgentClient {
   private client: Anthropic;
+  private model: string;
 
-  constructor() {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+  constructor(options: AgentClientOptions = {}) {
+    const apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY;
 
     if (!apiKey) {
       throw new Error(
@@ -66,6 +78,7 @@ export class AgentClient {
     }
 
     this.client = new Anthropic({ apiKey });
+    this.model = options.model ?? process.env.CLAUDE_MODEL ?? DEFAULT_MODEL;
   }
 
   /**
@@ -205,7 +218,7 @@ export class AgentClient {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         return await this.client.messages.create({
-          model: 'claude-sonnet-4-5-20250929',
+          model: this.model,
           max_tokens: 4096,
           tools,
           messages

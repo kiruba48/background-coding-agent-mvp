@@ -15,6 +15,7 @@ export type {
   ToolCall,
   ToolResultInput,
   ExecuteToolFn,
-  OnTextFn
+  OnTextFn,
+  AgentClientOptions
 } from './agent.js';
 export type { SessionConfig } from './session.js';
