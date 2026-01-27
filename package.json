@@ -1,0 +1,30 @@
+{
+  "name": "background-coding-agent",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "AI coding agent that creates pull requests by autonomously coding in isolated Docker containers",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "lint": "echo \"Error: no lint specified\" && exit 1"
+  },
+  "keywords": [
+    "ai",
+    "claude",
+    "docker",
+    "automation",
+    "coding-agent"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.2",
+    "dockerode": "^4.0.2"
+  },
+  "devDependencies": {
+    "@types/dockerode": "^3.3.36",
+    "@types/node": "^20.17.10",
+    "typescript": "^5.7.2"
+  }
+}
