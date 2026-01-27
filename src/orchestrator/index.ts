@@ -9,6 +9,7 @@
 
 export { ContainerManager } from './container.js';
 export { AgentClient } from './agent.js';
+export { AgentSession } from './session.js';
 export type {
   Tool,
   ToolCall,
@@ -16,3 +17,4 @@ export type {
   ExecuteToolFn,
   OnTextFn
 } from './agent.js';
+export type { SessionConfig } from './session.js';
