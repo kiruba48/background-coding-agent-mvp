@@ -42,8 +42,8 @@ async function runTests() {
     const readResult = await session.run(
       'Read the file greeting.txt and tell me what it says.'
     );
-    console.log('  Claude response:', readResult.substring(0, 200));
-    if (!readResult.toLowerCase().includes('hello')) {
+    console.log('  Claude response:', readResult.finalResponse.substring(0, 200));
+    if (!readResult.finalResponse.toLowerCase().includes('hello')) {
       console.log('  Warning: Expected response to mention "hello"');
     }
     console.log('  ✓ File read test completed\n');
@@ -53,8 +53,8 @@ async function runTests() {
     const listResult = await session.run(
       'List the files in the current directory and the src subdirectory.'
     );
-    console.log('  Claude response:', listResult.substring(0, 300));
-    if (!listResult.includes('greeting') && !listResult.includes('src')) {
+    console.log('  Claude response:', listResult.finalResponse.substring(0, 300));
+    if (!listResult.finalResponse.includes('greeting') && !listResult.finalResponse.includes('src')) {
       console.log('  Warning: Expected response to list files');
     }
     console.log('  ✓ List files test completed\n');
@@ -64,7 +64,7 @@ async function runTests() {
     const bashResult = await session.run(
       'Use bash to count the number of lines in src/example.js'
     );
-    console.log('  Claude response:', bashResult.substring(0, 200));
+    console.log('  Claude response:', bashResult.finalResponse.substring(0, 200));
     console.log('  ✓ Bash execution test completed\n');
 
     // Test 4: Create a file (verifies write works)
@@ -72,7 +72,7 @@ async function runTests() {
     const createResult = await session.run(
       'Create a new file called "output.txt" containing the text "Created by Claude" using bash.'
     );
-    console.log('  Claude response:', createResult.substring(0, 200));
+    console.log('  Claude response:', createResult.finalResponse.substring(0, 200));
 
     // Verify file was created
     const outputPath = path.join(workspaceDir, 'output.txt');

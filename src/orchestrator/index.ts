@@ -21,3 +21,4 @@ export type {
 } from './agent.js';
 export type { SessionConfig } from './session.js';
 export type { SessionMetrics, ComputedMetrics } from './metrics.js';
+export type { SessionResult } from '../types.js';
