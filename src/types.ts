@@ -23,3 +23,15 @@ export interface ToolResult {
   stderr: string;
   exitCode: number;
 }
+
+/**
+ * Result of an agent session execution
+ */
+export interface SessionResult {
+  sessionId: string;
+  status: 'success' | 'failed' | 'timeout' | 'turn_limit';
+  turnCount: number;
+  duration: number;      // milliseconds
+  finalResponse: string; // Claude's final text response
+  error?: string;        // Error message if failed
+}

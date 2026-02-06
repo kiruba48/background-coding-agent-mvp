@@ -1,12 +1,16 @@
 import * as nodePath from 'path';
+import * as crypto from 'crypto';
+import pino from 'pino';
 import { ContainerManager } from './container.js';
 import { AgentClient, Tool } from './agent.js';
-import { ContainerConfig } from '../types.js';
+import { ContainerConfig, SessionResult } from '../types.js';
 
 export interface SessionConfig {
   workspaceDir: string;
   image?: string;
   model?: string;
+  turnLimit?: number;    // default: 10
+  timeoutMs?: number;    // default: 300000 (5 minutes)
 }
 
 /**
@@ -74,6 +78,7 @@ export class AgentSession {
   private config: SessionConfig;
   private workspaceDir: string = '';
   private started = false;
+  private sessionId: string = '';
 
   constructor(config: SessionConfig) {
     this.config = config;
@@ -108,19 +113,105 @@ export class AgentSession {
    * Execute the agentic loop with Claude
    *
    * @param userMessage - Initial instruction for Claude
-   * @returns Final text response from Claude after completing task
+   * @param logger - Optional Pino logger for structured logging
+   * @returns SessionResult with status, turnCount, duration, and finalResponse
    * @throws Error if session not started
    */
-  async run(userMessage: string): Promise<string> {
+  async run(userMessage: string, logger?: pino.Logger): Promise<SessionResult> {
     if (!this.started) {
       throw new Error('Session not started. Call start() first.');
     }
 
-    return this.agent.runAgenticLoop(
-      userMessage,
-      TOOLS,
-      async (name, input) => this.executeTool(name, input),
+    // Create no-op logger if not provided
+    const log = logger ?? pino({ level: 'silent' });
+
+    // Generate session ID
+    this.sessionId = crypto.randomUUID();
+
+    // Log session created (pending state)
+    log.info({ sessionId: this.sessionId, status: 'pending' }, 'Session created');
+
+    const startTime = Date.now();
+    let turnCount = 0;
+    let finalResponse = '';
+    let status: SessionResult['status'] = 'success';
+    let error: string | undefined;
+
+    // Set up timeout
+    const turnLimit = this.config.turnLimit ?? 10;
+    const timeoutMs = this.config.timeoutMs ?? 300000;
+
+    const abortController = new AbortController();
+    let timeoutHandle: NodeJS.Timeout | undefined;
+    let timedOut = false;
+
+    try {
+      // Log session started (running state)
+      log.info({ sessionId: this.sessionId, status: 'running' }, 'Session started');
+
+      // Set timeout
+      timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        log.warn({ sessionId: this.sessionId, turnCount }, 'Session timeout reached');
+        abortController.abort();
+      }, timeoutMs);
+
+      // Run agentic loop with turn limit
+      finalResponse = await this.agent.runAgenticLoop(
+        userMessage,
+        TOOLS,
+        async (name, input) => {
+          if (abortController.signal.aborted) {
+            throw new Error('Session timeout');
+          }
+          turnCount++;
+          return this.executeTool(name, input);
+        },
+        undefined,
+        turnLimit
+      );
+
+      status = 'success';
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      error = errorMessage;
+
+      // Determine failure reason
+      if (timedOut || errorMessage.includes('timeout')) {
+        status = 'timeout';
+        error = 'Session timeout';
+        log.error({ sessionId: this.sessionId, err, turnCount }, 'Session timeout');
+      } else if (errorMessage.includes('Maximum iterations') || errorMessage.includes('Turn limit')) {
+        status = 'turn_limit';
+        error = 'Turn limit exceeded';
+        log.error({ sessionId: this.sessionId, err, turnCount }, 'Turn limit exceeded');
+      } else {
+        status = 'failed';
+        log.error({ sessionId: this.sessionId, err, turnCount }, 'Session failed');
+      }
+    } finally {
+      // Clear timeout
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+    }
+
+    const duration = Date.now() - startTime;
+
+    // Log session completed
+    log.info(
+      { sessionId: this.sessionId, status, turnCount, duration },
+      'Session completed'
     );
+
+    return {
+      sessionId: this.sessionId,
+      status,
+      turnCount,
+      duration,
+      finalResponse,
+      error
+    };
   }
 
   /**

@@ -35,7 +35,26 @@ export class ContainerManager {
     this.docker = new Docker({ socketPath });
   }
 
+  /**
+   * Verify Docker daemon is running and accessible.
+   * Call this before create() to provide a clear error message.
+   *
+   * @throws Error with actionable message if Docker is not available
+   */
+  async checkHealth(): Promise<void> {
+    try {
+      await this.docker.ping();
+    } catch (error) {
+      throw new Error(
+        'Docker daemon is not running or not accessible. ' +
+        'Please ensure Docker is installed and running. ' +
+        'Try: docker ps'
+      );
+    }
+  }
+
   async create(config: ContainerConfig): Promise<void> {
+    await this.checkHealth();
     const absWorkspace = path.resolve(config.workspaceDir);
     this.workspaceDir = absWorkspace;
 
