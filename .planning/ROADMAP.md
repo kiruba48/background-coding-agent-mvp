@@ -56,9 +56,9 @@ Plans:
 **Plans**: 3 plans in 2 waves
 
 Plans:
-- [ ] 02-01-PLAN.md — Structured logging (Pino) + session lifecycle enhancement (Wave 1)
+- [x] 02-01-PLAN.md — Structured logging (Pino) + session lifecycle enhancement (Wave 1)
 - [ ] 02-02-PLAN.md — CLI entry point with Commander.js + run command (Wave 2)
-- [ ] 02-03-PLAN.md — Metrics collector + Docker health check (Wave 1)
+- [x] 02-03-PLAN.md — Metrics collector + Docker health check (Wave 1)
 
 ### Phase 3: Agent Tool Access
 **Goal**: Agent can read files, edit code, and perform Git operations within safe boundaries
@@ -198,7 +198,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation & Security | 4/4 | Complete | 2026-01-27 |
-| 2. CLI & Orchestration | 0/0 | Not started | - |
+| 2. CLI & Orchestration | 2/3 | In progress | - |
 | 3. Agent Tool Access | 0/0 | Not started | - |
 | 4. Retry & Context Engineering | 0/0 | Not started | - |
 | 5. Deterministic Verification | 0/0 | Not started | - |
