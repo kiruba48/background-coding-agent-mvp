@@ -6,8 +6,8 @@
 
 - [x] **EXEC-01**: Agent executes in isolated Docker container with non-root user
 - [x] **EXEC-02**: Container has no external network access (network isolation)
-- [ ] **EXEC-03**: Turn limit caps agent sessions at 10 turns maximum
-- [ ] **EXEC-04**: Timeout terminates sessions exceeding 5 minutes
+- [x] **EXEC-03**: Turn limit caps agent sessions at 10 turns maximum
+- [x] **EXEC-04**: Timeout terminates sessions exceeding 5 minutes
 - [ ] **EXEC-05**: Agent can retry on failure with error context (max 3 retries)
 - [ ] **EXEC-06**: Verification errors are summarized, not dumped raw (context engineering)
 
@@ -38,11 +38,11 @@
 
 ### CLI & Orchestration
 
-- [ ] **CLI-01**: CLI command triggers agent run with task type and target repo
-- [ ] **CLI-02**: Orchestrator spawns, monitors, and tears down containers
-- [ ] **CLI-03**: Structured JSON logging captures full session for debugging
-- [ ] **CLI-04**: Session state tracked (pending, running, success, failed, vetoed)
-- [ ] **CLI-05**: Metrics tracked: merge rate, veto rate, cost per run, time per session
+- [x] **CLI-01**: CLI command triggers agent run with task type and target repo
+- [x] **CLI-02**: Orchestrator spawns, monitors, and tears down containers
+- [x] **CLI-03**: Structured JSON logging captures full session for debugging
+- [x] **CLI-04**: Session state tracked (pending, running, success, failed, vetoed)
+- [x] **CLI-05**: Metrics tracked: merge rate, veto rate, cost per run, time per session
 
 ### Task Types
 
@@ -89,8 +89,8 @@
 |-------------|-------|--------|
 | EXEC-01 | Phase 1 | Complete |
 | EXEC-02 | Phase 1 | Complete |
-| EXEC-03 | Phase 2 | Pending |
-| EXEC-04 | Phase 2 | Pending |
+| EXEC-03 | Phase 2 | Complete |
+| EXEC-04 | Phase 2 | Complete |
 | EXEC-05 | Phase 4 | Pending |
 | EXEC-06 | Phase 4 | Pending |
 | TOOL-01 | Phase 3 | Pending |
@@ -109,15 +109,15 @@
 | PR-03 | Phase 7 | Pending |
 | PR-04 | Phase 7 | Pending |
 | PR-05 | Phase 7 | Pending |
-| CLI-01 | Phase 2 | Pending |
-| CLI-02 | Phase 2 | Pending |
-| CLI-03 | Phase 2 | Pending |
-| CLI-04 | Phase 2 | Pending |
-| CLI-05 | Phase 2 | Pending |
+| CLI-01 | Phase 2 | Complete |
+| CLI-02 | Phase 2 | Complete |
+| CLI-03 | Phase 2 | Complete |
+| CLI-04 | Phase 2 | Complete |
+| CLI-05 | Phase 2 | Complete |
 | TASK-01 | Phase 8 | Pending |
 | TASK-02 | Phase 9 | Pending |
 | TASK-03 | Phase 8 | Pending |
 | TASK-04 | Phase 8 | Pending |
 
 ---
-*Last updated: 2026-01-27 after Phase 1 completion*
+*Last updated: 2026-02-06 after Phase 2 completion*

@@ -13,7 +13,7 @@ Building a trustworthy background coding agent platform in 10 phases. Starting w
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Foundation & Security** - Docker isolation and Anthropic SDK integration
-- [ ] **Phase 2: CLI & Orchestration** - User interface and session lifecycle management
+- [x] **Phase 2: CLI & Orchestration** - User interface and session lifecycle management
 - [ ] **Phase 3: Agent Tool Access** - Safe file, Git, and Bash operations
 - [ ] **Phase 4: Retry & Context Engineering** - Resilient execution with error context
 - [ ] **Phase 5: Deterministic Verification** - Build, test, and lint checks
@@ -57,7 +57,7 @@ Plans:
 
 Plans:
 - [x] 02-01-PLAN.md — Structured logging (Pino) + session lifecycle enhancement (Wave 1)
-- [ ] 02-02-PLAN.md — CLI entry point with Commander.js + run command (Wave 2)
+- [x] 02-02-PLAN.md — CLI entry point with Commander.js + run command (Wave 2)
 - [x] 02-03-PLAN.md — Metrics collector + Docker health check (Wave 1)
 
 ### Phase 3: Agent Tool Access
@@ -198,7 +198,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation & Security | 4/4 | Complete | 2026-01-27 |
-| 2. CLI & Orchestration | 2/3 | In progress | - |
+| 2. CLI & Orchestration | 3/3 | Complete | 2026-02-06 |
 | 3. Agent Tool Access | 0/0 | Not started | - |
 | 4. Retry & Context Engineering | 0/0 | Not started | - |
 | 5. Deterministic Verification | 0/0 | Not started | - |
