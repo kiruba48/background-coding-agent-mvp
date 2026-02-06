@@ -53,12 +53,12 @@ Plans:
   4. Session respects timeout (5 minutes maximum)
   5. Structured JSON logs capture full session for debugging
   6. Session state tracked (pending, running, success, failed, vetoed)
-**Plans**: TBD
+**Plans**: 3 plans in 2 waves
 
 Plans:
-- [ ] 02-01: TBD
-- [ ] 02-02: TBD
-- [ ] 02-03: TBD
+- [ ] 02-01-PLAN.md — Structured logging (Pino) + session lifecycle enhancement (Wave 1)
+- [ ] 02-02-PLAN.md — CLI entry point with Commander.js + run command (Wave 2)
+- [ ] 02-03-PLAN.md — Metrics collector + Docker health check (Wave 1)
 
 ### Phase 3: Agent Tool Access
 **Goal**: Agent can read files, edit code, and perform Git operations within safe boundaries
