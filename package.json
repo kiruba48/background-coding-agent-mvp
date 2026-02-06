@@ -24,7 +24,8 @@
   "license": "MIT",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.2",
-    "dockerode": "^4.0.2"
+    "dockerode": "^4.0.2",
+    "pino": "^10.3.0"
   },
   "devDependencies": {
     "@types/dockerode": "^3.3.36",
