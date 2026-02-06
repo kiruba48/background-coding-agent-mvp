@@ -10,6 +10,7 @@
 export { ContainerManager } from './container.js';
 export { AgentClient } from './agent.js';
 export { AgentSession } from './session.js';
+export { MetricsCollector } from './metrics.js';
 export type {
   Tool,
   ToolCall,
@@ -19,3 +20,4 @@ export type {
   AgentClientOptions
 } from './agent.js';
 export type { SessionConfig } from './session.js';
+export type { SessionMetrics, ComputedMetrics } from './metrics.js';
