@@ -2,6 +2,7 @@ import Docker from 'dockerode';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { Writable } from 'stream';
+import pino from 'pino';
 import { ContainerConfig, ToolResult } from '../types.js';
 
 /**
@@ -30,9 +31,11 @@ export class ContainerManager {
   private docker: Docker;
   private container: Docker.Container | null = null;
   private workspaceDir: string = '';
+  private log: pino.Logger;
 
-  constructor(socketPath = '/var/run/docker.sock') {
+  constructor(socketPath = '/var/run/docker.sock', logger?: pino.Logger) {
     this.docker = new Docker({ socketPath });
+    this.log = logger ?? pino({ level: 'silent' });
   }
 
   /**
@@ -87,7 +90,7 @@ export class ContainerManager {
         WorkingDir: absWorkspace,
         Cmd: ['sleep', 'infinity'],
       });
-      console.log('Container created:', this.container.id);
+      this.log.info({ containerId: this.container.id }, 'Container created');
     } catch (error) {
       throw new Error(`Failed to create container: ${getErrorMessage(error)}`);
     }
@@ -100,7 +103,7 @@ export class ContainerManager {
 
     try {
       await this.container.start();
-      console.log('Container started:', this.container.id);
+      this.log.info({ containerId: this.container.id }, 'Container started');
     } catch (error) {
       throw new Error(`Failed to start container: ${getErrorMessage(error)}`);
     }
@@ -145,19 +148,24 @@ export class ContainerManager {
       });
 
       // Create timeout promise for command execution
+      let timeoutId: NodeJS.Timeout;
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error(`Command timed out after ${timeoutMs}ms`)), timeoutMs);
+        timeoutId = setTimeout(() => reject(new Error(`Command timed out after ${timeoutMs}ms`)), timeoutMs);
       });
 
       // Race between command completion and timeout
-      await Promise.race([
-        new Promise<void>((resolve, reject) => {
-          this.docker.modem.demuxStream(stream, stdoutStream, stderrStream);
-          stream.on('end', resolve);
-          stream.on('error', reject);
-        }),
-        timeoutPromise
-      ]);
+      try {
+        await Promise.race([
+          new Promise<void>((resolve, reject) => {
+            this.docker.modem.demuxStream(stream, stdoutStream, stderrStream);
+            stream.on('end', resolve);
+            stream.on('error', reject);
+          }),
+          timeoutPromise
+        ]);
+      } finally {
+        clearTimeout(timeoutId!);
+      }
 
       const inspection = await exec.inspect();
       return {
@@ -177,15 +185,15 @@ export class ContainerManager {
 
     try {
       await this.container.stop({ t: timeoutSeconds });
-      console.log('Container stopped gracefully');
+      this.log.info('Container stopped gracefully');
     } catch (error: unknown) {
       if (isDockerError(error) && error.statusCode === 304) {
-        console.log('Container already stopped');
+        this.log.info('Container already stopped');
       } else {
-        console.warn('Failed to stop container gracefully, forcing kill:', getErrorMessage(error));
+        this.log.warn({ err: getErrorMessage(error) }, 'Failed to stop container gracefully, forcing kill');
         try {
           await this.container.kill({ signal: 'SIGKILL' });
-          console.log('Container killed forcefully');
+          this.log.info('Container killed forcefully');
         } catch (killError) {
           throw new Error(`Failed to kill container: ${getErrorMessage(killError)}`);
         }
@@ -200,12 +208,12 @@ export class ContainerManager {
 
     try {
       await this.container.remove({ force: true });
-      console.log('Container removed');
+      this.log.info('Container removed');
     } catch (error: unknown) {
       if (isDockerError(error) && error.statusCode === 404) {
-        console.log('Container already removed');
+        this.log.info('Container already removed');
       } else {
-        console.warn('Failed to remove container:', getErrorMessage(error));
+        this.log.warn({ err: getErrorMessage(error) }, 'Failed to remove container');
       }
     }
   }

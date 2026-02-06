@@ -36,6 +36,7 @@ export async function runAgent(options: RunOptions): Promise<number> {
     workspaceDir: options.repo,
     turnLimit: options.turnLimit,
     timeoutMs: options.timeout * 1000,  // convert seconds to ms
+    logger: childLogger,
   });
 
   // Create metrics collector
@@ -77,7 +78,7 @@ export async function runAgent(options: RunOptions): Promise<number> {
     const result = await session.run(prompt, childLogger);
 
     // Record metrics
-    metrics.recordSession(result.status, result.turnCount, result.duration);
+    metrics.recordSession(result.status, result.toolCallCount, result.duration);
 
     // Log session result as structured JSON
     childLogger.info(

@@ -1,4 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
+import pino from 'pino';
+import { TurnLimitError } from '../errors.js';
 
 /**
  * Tool definition interface matching Anthropic API format
@@ -53,6 +55,8 @@ export interface AgentClientOptions {
   apiKey?: string;
   /** Claude model to use (defaults to claude-sonnet-4-5-20250929) */
   model?: string;
+  /** Optional Pino logger for structured logging */
+  logger?: pino.Logger;
 }
 
 /**
@@ -66,6 +70,7 @@ export interface AgentClientOptions {
 export class AgentClient {
   private client: Anthropic;
   private model: string;
+  private log: pino.Logger;
 
   constructor(options: AgentClientOptions = {}) {
     const apiKey = options.apiKey ?? process.env.ANTHROPIC_API_KEY;
@@ -79,6 +84,7 @@ export class AgentClient {
 
     this.client = new Anthropic({ apiKey });
     this.model = options.model ?? process.env.CLAUDE_MODEL ?? DEFAULT_MODEL;
+    this.log = options.logger ?? pino({ level: 'silent' });
   }
 
   /**
@@ -195,10 +201,7 @@ export class AgentClient {
     }
 
     // Max iterations reached
-    throw new Error(
-      `Maximum iterations (${maxIterations}) reached. ` +
-      'This may indicate an infinite loop. Check tool implementations.'
-    );
+    throw new TurnLimitError(maxIterations);
   }
 
   /**
@@ -228,7 +231,7 @@ export class AgentClient {
           // Handle rate limits (429)
           if (error.status === 429) {
             const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
-            console.error(`Rate limited (429). Retrying in ${delay}ms... (attempt ${attempt}/${maxRetries})`);
+            this.log.warn({ status: 429, delay, attempt, maxRetries }, 'Rate limited, retrying');
             await this.sleep(delay);
             lastError = error;
             continue;
@@ -237,7 +240,7 @@ export class AgentClient {
           // Handle overload (529)
           if (error.status === 529) {
             const delay = 5000; // Fixed 5s delay for overload
-            console.error(`Service overloaded (529). Retrying in ${delay}ms... (attempt ${attempt}/${maxRetries})`);
+            this.log.warn({ status: 529, delay, attempt, maxRetries }, 'Service overloaded, retrying');
             await this.sleep(delay);
             lastError = error;
             continue;

@@ -21,6 +21,13 @@ export function createLogger(): pino.Logger {
         '*.token',
         'password',
         '*.password',
+        'secret',
+        '*.secret',
+        'authorization',
+        '*.authorization',
+        'credentials',
+        '*.credentials',
+        'ANTHROPIC_API_KEY',
         'env.ANTHROPIC_API_KEY',
         'config.anthropicApiKey'
       ],

@@ -4,6 +4,7 @@ import pino from 'pino';
 import { ContainerManager } from './container.js';
 import { AgentClient, Tool } from './agent.js';
 import { ContainerConfig, SessionResult } from '../types.js';
+import { TurnLimitError } from '../errors.js';
 
 export interface SessionConfig {
   workspaceDir: string;
@@ -11,6 +12,7 @@ export interface SessionConfig {
   model?: string;
   turnLimit?: number;    // default: 10
   timeoutMs?: number;    // default: 300000 (5 minutes)
+  logger?: pino.Logger;
 }
 
 /**
@@ -82,8 +84,8 @@ export class AgentSession {
 
   constructor(config: SessionConfig) {
     this.config = config;
-    this.container = new ContainerManager();
-    this.agent = new AgentClient({ model: config.model });
+    this.container = new ContainerManager(undefined, config.logger);
+    this.agent = new AgentClient({ model: config.model, logger: config.logger });
   }
 
   /**
@@ -114,7 +116,7 @@ export class AgentSession {
    *
    * @param userMessage - Initial instruction for Claude
    * @param logger - Optional Pino logger for structured logging
-   * @returns SessionResult with status, turnCount, duration, and finalResponse
+   * @returns SessionResult with status, toolCallCount (number of tool invocations), duration, and finalResponse
    * @throws Error if session not started
    */
   async run(userMessage: string, logger?: pino.Logger): Promise<SessionResult> {
@@ -132,7 +134,7 @@ export class AgentSession {
     log.info({ sessionId: this.sessionId, status: 'pending' }, 'Session created');
 
     const startTime = Date.now();
-    let turnCount = 0;
+    let toolCallCount = 0;
     let finalResponse = '';
     let status: SessionResult['status'] = 'success';
     let error: string | undefined;
@@ -152,7 +154,7 @@ export class AgentSession {
       // Set timeout
       timeoutHandle = setTimeout(() => {
         timedOut = true;
-        log.warn({ sessionId: this.sessionId, turnCount }, 'Session timeout reached');
+        log.warn({ sessionId: this.sessionId, toolCallCount }, 'Session timeout reached');
         abortController.abort();
       }, timeoutMs);
 
@@ -164,7 +166,7 @@ export class AgentSession {
           if (abortController.signal.aborted) {
             throw new Error('Session timeout');
           }
-          turnCount++;
+          toolCallCount++;
           return this.executeTool(name, input);
         },
         undefined,
@@ -176,18 +178,18 @@ export class AgentSession {
       const errorMessage = err instanceof Error ? err.message : String(err);
       error = errorMessage;
 
-      // Determine failure reason
-      if (timedOut || errorMessage.includes('timeout')) {
+      // Determine failure reason using typed errors
+      if (timedOut || err instanceof Error && err.message.includes('Session timeout')) {
         status = 'timeout';
         error = 'Session timeout';
-        log.error({ sessionId: this.sessionId, err, turnCount }, 'Session timeout');
-      } else if (errorMessage.includes('Maximum iterations') || errorMessage.includes('Turn limit')) {
+        log.error({ sessionId: this.sessionId, err, toolCallCount }, 'Session timeout');
+      } else if (err instanceof TurnLimitError) {
         status = 'turn_limit';
         error = 'Turn limit exceeded';
-        log.error({ sessionId: this.sessionId, err, turnCount }, 'Turn limit exceeded');
+        log.error({ sessionId: this.sessionId, err, toolCallCount }, 'Turn limit exceeded');
       } else {
         status = 'failed';
-        log.error({ sessionId: this.sessionId, err, turnCount }, 'Session failed');
+        log.error({ sessionId: this.sessionId, err, toolCallCount }, 'Session failed');
       }
     } finally {
       // Clear timeout
@@ -200,14 +202,14 @@ export class AgentSession {
 
     // Log session completed
     log.info(
-      { sessionId: this.sessionId, status, turnCount, duration },
+      { sessionId: this.sessionId, status, toolCallCount, duration },
       'Session completed'
     );
 
     return {
       sessionId: this.sessionId,
       status,
-      turnCount,
+      toolCallCount,
       duration,
       finalResponse,
       error

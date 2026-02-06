@@ -6,18 +6,6 @@ export interface ContainerConfig {
   timeoutSeconds?: number;
 }
 
-/**
- * Session state tracking for orchestrator (used in Phase 2 CLI)
- */
-export interface SessionState {
-  id: string;
-  containerId: string;
-  workspaceDir: string;
-  status: 'pending' | 'running' | 'success' | 'failed' | 'vetoed';
-  startedAt: Date;
-  endedAt?: Date;
-}
-
 export interface ToolResult {
   stdout: string;
   stderr: string;
@@ -30,7 +18,7 @@ export interface ToolResult {
 export interface SessionResult {
   sessionId: string;
   status: 'success' | 'failed' | 'timeout' | 'turn_limit';
-  turnCount: number;
+  toolCallCount: number;
   duration: number;      // milliseconds
   finalResponse: string; // Claude's final text response
   error?: string;        // Error message if failed

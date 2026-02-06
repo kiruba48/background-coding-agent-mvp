@@ -5,6 +5,8 @@
  * Tracks merge rate, veto rate, failure rate, and averages.
  */
 
+export type SessionStatus = 'success' | 'failed' | 'timeout' | 'turn_limit' | 'vetoed';
+
 export interface SessionMetrics {
   totalSessions: number;
   successCount: number;
@@ -50,13 +52,13 @@ export class MetricsCollector {
   /**
    * Record a completed session
    *
-   * @param status - Session outcome: 'success' | 'failed' | 'timeout' | 'turn_limit' | 'vetoed'
-   * @param turnCount - Number of turns executed in session
+   * @param status - Session outcome
+   * @param toolCallCount - Number of tool calls executed in session
    * @param durationMs - Session duration in milliseconds
    */
-  recordSession(status: string, turnCount: number, durationMs: number): void {
+  recordSession(status: SessionStatus, toolCallCount: number, durationMs: number): void {
     this.metrics.totalSessions++;
-    this.metrics.totalTurns += turnCount;
+    this.metrics.totalTurns += toolCallCount;
     this.metrics.totalDurationMs += durationMs;
 
     switch (status) {
