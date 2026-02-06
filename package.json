@@ -4,8 +4,12 @@
   "type": "module",
   "description": "AI coding agent that creates pull requests by autonomously coding in isolated Docker containers",
   "main": "dist/index.js",
+  "bin": {
+    "background-agent": "./bin/cli.js"
+  },
   "scripts": {
     "build": "tsc",
+    "start:cli": "npx tsx src/cli/index.ts",
     "test": "echo \"Error: no test specified\" && exit 1",
     "test:agent": "npx tsx src/orchestrator/agent.test.ts",
     "test:container": "npx tsx src/orchestrator/container.test.ts",
@@ -24,7 +28,9 @@
   "license": "MIT",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.2",
+    "commander": "^14.0.3",
     "dockerode": "^4.0.2",
+    "picocolors": "^1.1.1",
     "pino": "^10.3.0"
   },
   "devDependencies": {
