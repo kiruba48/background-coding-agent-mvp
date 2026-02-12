@@ -28,6 +28,11 @@ const COMMAND_PATHS: Record<string, string> = {
   'wc': '/usr/bin/wc'
 };
 
+// Dangerous find flags that enable arbitrary execution or deletion
+const BLOCKED_FIND_FLAGS = new Set([
+  '-exec', '-execdir', '-delete', '-ok', '-okdir'
+]);
+
 export interface SessionConfig {
   workspaceDir: string;
   image?: string;
@@ -299,394 +304,342 @@ export class AgentSession {
 
   /**
    * Validate and resolve a path, ensuring it stays within the workspace.
-   * Prevents path traversal attacks (e.g., ../../../etc/passwd).
-   *
-   * @param inputPath - User-provided path (relative or absolute)
-   * @returns Resolved absolute path within workspace
-   * @throws Error if path escapes workspace
+   * Returns error string on failure instead of throwing.
    */
-  private validatePath(inputPath: string): string {
-    // Reject null bytes (often used in path injection attacks)
+  private safeValidatePath(inputPath: string): { path: string } | { error: string } {
     if (inputPath.includes('\0')) {
-      throw new Error('Null byte in path - access denied');
+      return { error: 'Null byte in path - access denied' };
     }
 
-    // Resolve path relative to workspace
     const resolved = nodePath.resolve(this.workspaceDir, inputPath);
 
-    // Ensure resolved path is within workspace (prevent traversal)
     if (!resolved.startsWith(this.workspaceDir + nodePath.sep) && resolved !== this.workspaceDir) {
-      throw new Error('Path traversal detected - access denied');
+      return { error: 'Path traversal detected - access denied' };
     }
 
-    // Get relative path for additional checks
     const relativePath = nodePath.relative(this.workspaceDir, resolved);
 
-    // Block .git/hooks access (prevents git hook privilege escalation)
     if (relativePath.startsWith('.git/hooks') || relativePath.startsWith('.git\\hooks')) {
-      throw new Error('Access to .git/hooks is denied');
+      return { error: 'Access to .git/hooks is denied' };
     }
 
-    // Block node_modules/.bin access (prevents execution of npm scripts)
     if (relativePath.includes('node_modules/.bin') || relativePath.includes('node_modules\\.bin')) {
-      throw new Error('Access to node_modules/.bin is denied');
+      return { error: 'Access to node_modules/.bin is denied' };
     }
 
-    return resolved;
+    return { path: resolved };
   }
 
   /**
-   * Execute a tool in the isolated container or on host
-   *
-   * Routes tool calls to appropriate execution:
-   * - read_file: cat <path> (container)
-   * - edit_file: str_replace or create via writeFileAtomic (host)
-   * - git_operation: git commands via execFileAsync (host)
-   * - grep: ripgrep /usr/bin/rg (container)
-   * - bash_command: allowlisted commands (cat, head, tail, find, wc) (container)
-   * - list_files: ls -la <path> (container)
-   *
-   * @param name - Tool name
-   * @param input - Tool input parameters
-   * @returns Tool execution result (stdout, or stderr if failed)
+   * Throwing version for backward compatibility (used in git_operation arg loops).
+   */
+  private validatePath(inputPath: string): string {
+    const result = this.safeValidatePath(inputPath);
+    if ('error' in result) {
+      throw new Error(result.error);
+    }
+    return result.path;
+  }
+
+  /**
+   * Route tool calls to the appropriate handler.
    */
   private async executeTool(
     name: string,
     input: Record<string, unknown>
   ): Promise<string> {
     switch (name) {
-      case 'read_file': {
-        // Validate input type
-        if (typeof input.path !== 'string') {
-          return 'Error: path must be a string';
-        }
+      case 'read_file': return this.handleReadFile(input);
+      case 'edit_file': return this.handleEditFile(input);
+      case 'git_operation': return this.handleGitOperation(input);
+      case 'grep': return this.handleGrep(input);
+      case 'bash_command': return this.handleBashCommand(input);
+      case 'list_files': return this.handleListFiles(input);
+      default: return `Unknown tool: ${name}`;
+    }
+  }
 
-        // Validate path stays within workspace
-        let safePath: string;
-        try {
-          safePath = this.validatePath(input.path);
-        } catch (error) {
-          return `Error: ${error instanceof Error ? error.message : 'Invalid path'}`;
-        }
+  private async handleReadFile(input: Record<string, unknown>): Promise<string> {
+    if (typeof input.path !== 'string') {
+      return 'Error: path must be a string';
+    }
 
-        const result = await this.container.exec(['cat', safePath]);
-        if (result.exitCode !== 0) {
-          return `Error reading file: ${result.stderr}`;
-        }
-        return result.stdout;
+    const validated = this.safeValidatePath(input.path);
+    if ('error' in validated) return `Error: ${validated.error}`;
+
+    const result = await this.container.exec([COMMAND_PATHS['cat'], validated.path]);
+    if (result.exitCode !== 0) {
+      return `Error reading file: ${result.stderr}`;
+    }
+    return result.stdout;
+  }
+
+  private async handleEditFile(input: Record<string, unknown>): Promise<string> {
+    if (typeof input.command !== 'string') {
+      return 'Error: command must be a string';
+    }
+    if (typeof input.path !== 'string') {
+      return 'Error: path must be a string';
+    }
+
+    const validated = this.safeValidatePath(input.path);
+    if ('error' in validated) return `Error: ${validated.error}`;
+    const safePath = validated.path;
+
+    if (input.command === 'str_replace') {
+      if (typeof input.old_str !== 'string') {
+        return 'Error: old_str must be a string for str_replace';
+      }
+      if (typeof input.new_str !== 'string') {
+        return 'Error: new_str must be a string for str_replace';
       }
 
-      case 'edit_file': {
-        // Validate input types
-        if (typeof input.command !== 'string') {
-          return 'Error: command must be a string';
+      // Read file via container
+      const readResult = await this.container.exec([COMMAND_PATHS['cat'], safePath]);
+      if (readResult.exitCode !== 0) {
+        return `Error reading file: ${readResult.stderr}`;
+      }
+      const content = readResult.stdout;
+      const occurrences = content.split(input.old_str).length - 1;
+
+      if (occurrences === 0) {
+        return 'Error: old_str not found in file';
+      }
+
+      if (occurrences > 1) {
+        // Find match positions using indexOf loop on FULL content (multi-line safe)
+        let pos = 0;
+        const matchPositions: number[] = [];
+        while ((pos = content.indexOf(input.old_str, pos)) !== -1) {
+          const lineNum = content.substring(0, pos).split('\n').length;
+          matchPositions.push(lineNum);
+          pos += input.old_str.length;
         }
-        if (typeof input.path !== 'string') {
-          return 'Error: path must be a string';
-        }
+        return `Error: old_str found ${occurrences} times at lines ${matchPositions.join(', ')}. Provide more context for unique match.`;
+      }
 
-        // Validate path stays within workspace
-        let safePath: string;
-        try {
-          safePath = this.validatePath(input.path);
-        } catch (error) {
-          return `Error: ${error instanceof Error ? error.message : 'Invalid path'}`;
-        }
+      // Exactly 1 match - perform replacement
+      const newContent = content.replace(input.old_str, input.new_str);
 
-        if (input.command === 'str_replace') {
-          // Validate str_replace parameters
-          if (typeof input.old_str !== 'string') {
-            return 'Error: old_str must be a string for str_replace';
-          }
-          if (typeof input.new_str !== 'string') {
-            return 'Error: new_str must be a string for str_replace';
-          }
+      try {
+        await writeFileAtomic(safePath, newContent, { encoding: 'utf-8', mode: 0o644 });
+        return 'File edited successfully';
+      } catch (err: unknown) {
+        return `Error writing file: ${err instanceof Error ? err.message : 'Unknown error'}`;
+      }
+    } else if (input.command === 'create') {
+      if (typeof input.content !== 'string') {
+        return 'Error: content must be a string for create';
+      }
 
-          // Read file via container
-          const readResult = await this.container.exec(['cat', safePath]);
-          if (readResult.exitCode !== 0) {
-            return `Error reading file: ${readResult.stderr}`;
-          }
-          const content = readResult.stdout;
-
-          // Count occurrences
-          const old_str = input.old_str as string;
-          const new_str = input.new_str as string;
-          const occurrences = content.split(old_str).length - 1;
-
-          if (occurrences === 0) {
-            return 'Error: old_str not found in file';
-          }
-
-          if (occurrences > 1) {
-            // Find match positions using indexOf loop on FULL content (multi-line safe)
-            let pos = 0;
-            const matchPositions: number[] = [];
-            while ((pos = content.indexOf(old_str, pos)) !== -1) {
-              const lineNum = content.substring(0, pos).split('\n').length;
-              matchPositions.push(lineNum);
-              pos += old_str.length;
-            }
-            return `Error: old_str found ${occurrences} times at lines ${matchPositions.join(', ')}. Provide more context for unique match.`;
-          }
-
-          // Exactly 1 match - perform replacement
-          const newContent = content.replace(old_str, new_str);
-
-          // Write atomically via host filesystem with mode 0o644
-          try {
-            await writeFileAtomic(safePath, newContent, { encoding: 'utf-8', mode: 0o644 });
-            return 'File edited successfully';
-          } catch (err) {
-            return `Error writing file: ${err instanceof Error ? err.message : 'Unknown error'}`;
-          }
-        } else if (input.command === 'create') {
-          // Validate create parameters
-          if (typeof input.content !== 'string') {
-            return 'Error: content must be a string for create';
-          }
-
-          const content = input.content as string;
-
-          // Check if file already exists using fs.access
-          try {
-            await fs.access(safePath);
-            return 'Error: File already exists. Use str_replace to edit existing files.';
-          } catch (err: any) {
-            // File doesn't exist (ENOENT) - proceed with creation
-            if (err.code !== 'ENOENT') {
-              return `Error checking file existence: ${err.message}`;
-            }
-          }
-
-          // Create file atomically with mode 0o644
-          try {
-            await writeFileAtomic(safePath, content, { encoding: 'utf-8', mode: 0o644 });
-            return 'File created successfully';
-          } catch (err) {
-            return `Error creating file: ${err instanceof Error ? err.message : 'Unknown error'}`;
-          }
-        } else {
-          return `Error: Unknown edit command '${input.command}'. Use 'str_replace' or 'create'.`;
+      // Check if file already exists using fs.access
+      try {
+        await fs.access(safePath);
+        return 'Error: File already exists. Use str_replace to edit existing files.';
+      } catch (err: unknown) {
+        // File doesn't exist (ENOENT) - proceed with creation
+        const isNodeErr = err && typeof err === 'object' && 'code' in err;
+        if (isNodeErr && (err as NodeJS.ErrnoException).code !== 'ENOENT') {
+          return `Error checking file existence: ${err instanceof Error ? err.message : 'Unknown error'}`;
         }
       }
 
-      case 'git_operation': {
-        const operation = input.operation as string;
-        const args = (input.args as string[]) || [];
-
-        let command: string[];
-
-        switch (operation) {
-          case 'status':
-            command = ['git', '-C', this.workspaceDir, 'status', '--porcelain'];
-            break;
-
-          case 'diff': {
-            // Validate flags — only allow known-safe flags and file paths
-            const diffArgs: string[] = [];
-            for (const arg of args) {
-              if (arg.startsWith('-')) {
-                if (!ALLOWED_GIT_DIFF_FLAGS.has(arg)) {
-                  return `Error: Flag '${arg}' is not allowed for git diff. Allowed: ${[...ALLOWED_GIT_DIFF_FLAGS].join(', ')}`;
-                }
-                diffArgs.push(arg);
-              } else {
-                // File path — validate it
-                try {
-                  this.validatePath(arg);
-                  diffArgs.push(arg);
-                } catch (e) {
-                  return `Error: ${e instanceof Error ? e.message : 'Invalid path'}`;
-                }
-              }
-            }
-            command = ['git', '-C', this.workspaceDir, 'diff', ...diffArgs];
-            break;
-          }
-
-          case 'add': {
-            // All args must be validated file paths
-            const validatedPaths: string[] = [];
-            for (const arg of args) {
-              try {
-                validatedPaths.push(this.validatePath(arg));
-              } catch (e) {
-                return `Error: ${e instanceof Error ? e.message : 'Invalid path'}`;
-              }
-            }
-            if (validatedPaths.length === 0) {
-              return 'Error: git add requires at least one file path';
-            }
-            command = ['git', '-C', this.workspaceDir, 'add', '--', ...validatedPaths];
-            break;
-          }
-
-          case 'commit': {
-            // Only allow -m flag and its value
-            const commitArgs: string[] = ['--no-verify']; // ALWAYS prevent hook execution
-            let i = 0;
-            while (i < args.length) {
-              const arg = args[i];
-              if (arg === '-m' || arg === '--message') {
-                if (i + 1 >= args.length) {
-                  return 'Error: -m flag requires a message argument';
-                }
-                commitArgs.push(arg, args[i + 1]);
-                i += 2;
-              } else if (arg.startsWith('-')) {
-                return `Error: Flag '${arg}' is not allowed for git commit. Allowed: -m, --message`;
-              } else {
-                // File path — validate it
-                try {
-                  this.validatePath(arg);
-                  commitArgs.push(arg);
-                } catch (e) {
-                  return `Error: ${e instanceof Error ? e.message : 'Invalid path'}`;
-                }
-                i++;
-              }
-            }
-            command = ['git', '-C', this.workspaceDir, 'commit', ...commitArgs];
-            break;
-          }
-
-          default:
-            return `Error: Unknown git operation '${operation}'. Allowed: status, diff, add, commit`;
-        }
-
-        // Execute on HOST via execFileAsync (NOT container.exec)
-        try {
-          const { stdout, stderr } = await execFileAsync(command[0], command.slice(1), {
-            cwd: this.workspaceDir,
-            timeout: 30000
-          });
-          const output = (stdout + stderr).trim();
-          return output || (operation === 'status' ? '(no changes)' : operation === 'diff' ? '(no differences)' : 'Done');
-        } catch (err: any) {
-          // execFile throws on non-zero exit code
-          if (err.stdout || err.stderr) {
-            return `Error: ${(err.stderr || err.stdout || '').trim()}`;
-          }
-          return `Error: ${err.message}`;
-        }
+      try {
+        await writeFileAtomic(safePath, input.content, { encoding: 'utf-8', mode: 0o644 });
+        return 'File created successfully';
+      } catch (err: unknown) {
+        return `Error creating file: ${err instanceof Error ? err.message : 'Unknown error'}`;
       }
+    } else {
+      return `Error: Unknown edit command '${input.command}'. Use 'str_replace' or 'create'.`;
+    }
+  }
 
-      case 'grep': {
-        // Validate input type
-        if (typeof input.pattern !== 'string') {
-          return 'Error: pattern must be a string';
-        }
+  private async handleGitOperation(input: Record<string, unknown>): Promise<string> {
+    if (typeof input.operation !== 'string') {
+      return 'Error: operation must be a string';
+    }
+    const operation = input.operation;
+    const args = (Array.isArray(input.args) ? input.args as string[] : []);
 
-        const pattern = input.pattern as string;
-        let searchPath = this.workspaceDir; // Default to workspace root
+    let command: string[];
 
-        // Validate path if provided
-        if (input.path !== undefined) {
-          if (typeof input.path !== 'string') {
-            return 'Error: path must be a string';
-          }
-          try {
-            searchPath = this.validatePath(input.path);
-          } catch (error) {
-            return `Error: ${error instanceof Error ? error.message : 'Invalid path'}`;
-          }
-        }
+    switch (operation) {
+      case 'status':
+        command = ['git', '-C', this.workspaceDir, 'status', '--porcelain'];
+        break;
 
-        // Build ripgrep command array
-        const cmd = ['/usr/bin/rg', '--color', 'never', '--no-heading', '--with-filename', '--line-number'];
-
-        // Add case-insensitive flag if requested
-        if (input.case_insensitive === true) {
-          cmd.push('-i');
-        }
-
-        // Add context lines if requested
-        if (typeof input.context_lines === 'number' && input.context_lines > 0) {
-          cmd.push('-C', String(input.context_lines));
-        }
-
-        // Add pattern separator to prevent flag injection
-        cmd.push('--', pattern, searchPath);
-
-        // Execute grep
-        const result = await this.container.exec(cmd);
-
-        // Handle exit codes: 0 = matches, 1 = no matches, 2+ = error
-        if (result.exitCode === 0) {
-          return result.stdout;
-        } else if (result.exitCode === 1) {
-          return '(no matches found)';
-        } else {
-          return `Error: ${result.stderr}`;
-        }
-      }
-
-      case 'bash_command': {
-        // Validate input type
-        if (typeof input.command !== 'string') {
-          return 'Error: command must be a string';
-        }
-
-        const cmdName = input.command as string;
-        const cmdArgs = (input.args as string[]) || [];
-
-        // Look up command in allowlist
-        const cmdPath = COMMAND_PATHS[cmdName];
-        if (!cmdPath) {
-          return 'Error: Command not allowed. Allowed commands: cat, head, tail, find, wc';
-        }
-
-        // Validate file path arguments (those that don't start with -)
-        const validatedArgs: string[] = [];
-        for (const arg of cmdArgs) {
-          if (!arg.startsWith('-')) {
-            // Looks like a file path - validate it
-            try {
-              validatedArgs.push(this.validatePath(arg));
-            } catch (error) {
-              return `Error: ${error instanceof Error ? error.message : 'Invalid path'}`;
+      case 'diff': {
+        const diffArgs: string[] = [];
+        for (const arg of args) {
+          if (arg.startsWith('-')) {
+            if (!ALLOWED_GIT_DIFF_FLAGS.has(arg)) {
+              return `Error: Flag '${arg}' is not allowed for git diff. Allowed: ${[...ALLOWED_GIT_DIFF_FLAGS].join(', ')}`;
             }
+            diffArgs.push(arg);
           } else {
-            // Flag - pass through as-is
-            validatedArgs.push(arg);
+            try {
+              this.validatePath(arg);
+              diffArgs.push(arg);
+            } catch (e) {
+              return `Error: ${e instanceof Error ? e.message : 'Invalid path'}`;
+            }
           }
         }
-
-        // Build command array with absolute path
-        const command = [cmdPath, ...validatedArgs];
-
-        // Execute via container
-        const result = await this.container.exec(command, 30000);
-        const output = result.stdout + result.stderr;
-        return output || `(exit code: ${result.exitCode})`;
+        command = ['git', '-C', this.workspaceDir, 'diff', ...diffArgs];
+        break;
       }
 
-      case 'list_files': {
-        // Validate input type (path is optional, defaults to '.')
-        const inputPath = input.path;
-        if (inputPath !== undefined && typeof inputPath !== 'string') {
-          return 'Error: path must be a string';
+      case 'add': {
+        const validatedPaths: string[] = [];
+        for (const arg of args) {
+          try {
+            validatedPaths.push(this.validatePath(arg));
+          } catch (e) {
+            return `Error: ${e instanceof Error ? e.message : 'Invalid path'}`;
+          }
         }
+        if (validatedPaths.length === 0) {
+          return 'Error: git add requires at least one file path';
+        }
+        command = ['git', '-C', this.workspaceDir, 'add', '--', ...validatedPaths];
+        break;
+      }
 
-        // Validate path stays within workspace
-        let safePath: string;
-        try {
-          safePath = this.validatePath(inputPath || '.');
-        } catch (error) {
-          return `Error: ${error instanceof Error ? error.message : 'Invalid path'}`;
+      case 'commit': {
+        const commitArgs: string[] = ['--no-verify']; // ALWAYS prevent hook execution
+        let i = 0;
+        while (i < args.length) {
+          const arg = args[i];
+          if (arg === '-m' || arg === '--message') {
+            if (i + 1 >= args.length) {
+              return 'Error: -m flag requires a message argument';
+            }
+            commitArgs.push(arg, args[i + 1]);
+            i += 2;
+          } else if (arg.startsWith('-')) {
+            return `Error: Flag '${arg}' is not allowed for git commit. Allowed: -m, --message`;
+          } else {
+            try {
+              this.validatePath(arg);
+              commitArgs.push(arg);
+            } catch (e) {
+              return `Error: ${e instanceof Error ? e.message : 'Invalid path'}`;
+            }
+            i++;
+          }
         }
-
-        const result = await this.container.exec(['ls', '-la', safePath]);
-        if (result.exitCode !== 0) {
-          return `Error listing files: ${result.stderr}`;
-        }
-        return result.stdout;
+        command = ['git', '-C', this.workspaceDir, 'commit', ...commitArgs];
+        break;
       }
 
       default:
-        return `Unknown tool: ${name}`;
+        return `Error: Unknown git operation '${operation}'. Allowed: status, diff, add, commit`;
     }
+
+    // Execute on HOST via execFileAsync (NOT container.exec)
+    try {
+      const { stdout, stderr } = await execFileAsync(command[0], command.slice(1), {
+        cwd: this.workspaceDir,
+        timeout: 30000
+      });
+      const output = (stdout + stderr).trim();
+      return output || (operation === 'status' ? '(no changes)' : operation === 'diff' ? '(no differences)' : 'Done');
+    } catch (err: unknown) {
+      const execErr = err as { stdout?: string; stderr?: string; message?: string };
+      if (execErr.stdout || execErr.stderr) {
+        return `Error: ${(execErr.stderr || execErr.stdout || '').trim()}`;
+      }
+      return `Error: ${err instanceof Error ? err.message : 'Unknown error'}`;
+    }
+  }
+
+  private async handleGrep(input: Record<string, unknown>): Promise<string> {
+    if (typeof input.pattern !== 'string') {
+      return 'Error: pattern must be a string';
+    }
+
+    let searchPath = this.workspaceDir;
+    if (input.path !== undefined) {
+      if (typeof input.path !== 'string') {
+        return 'Error: path must be a string';
+      }
+      const validated = this.safeValidatePath(input.path);
+      if ('error' in validated) return `Error: ${validated.error}`;
+      searchPath = validated.path;
+    }
+
+    const cmd = ['/usr/bin/rg', '--color', 'never', '--no-heading', '--with-filename', '--line-number'];
+
+    if (input.case_insensitive === true) {
+      cmd.push('-i');
+    }
+
+    // Cap context_lines at 50 to prevent OOM
+    if (typeof input.context_lines === 'number' && input.context_lines > 0) {
+      const contextLines = Math.min(input.context_lines, 50);
+      cmd.push('-C', String(contextLines));
+    }
+
+    cmd.push('--', input.pattern, searchPath);
+
+    const result = await this.container.exec(cmd);
+    if (result.exitCode === 0) {
+      return result.stdout;
+    } else if (result.exitCode === 1) {
+      return '(no matches found)';
+    } else {
+      return `Error: ${result.stderr}`;
+    }
+  }
+
+  private async handleBashCommand(input: Record<string, unknown>): Promise<string> {
+    if (typeof input.command !== 'string') {
+      return 'Error: command must be a string';
+    }
+
+    const cmdName = input.command;
+    const cmdArgs = (Array.isArray(input.args) ? input.args as string[] : []);
+
+    const cmdPath = COMMAND_PATHS[cmdName];
+    if (!cmdPath) {
+      return 'Error: Command not allowed. Allowed commands: cat, head, tail, find, wc';
+    }
+
+    // Validate arguments: block dangerous flags for find, validate paths
+    const validatedArgs: string[] = [];
+    for (const arg of cmdArgs) {
+      if (arg.startsWith('-')) {
+        if (cmdName === 'find' && BLOCKED_FIND_FLAGS.has(arg)) {
+          return `Error: Flag '${arg}' is not allowed for find. Blocked flags: ${[...BLOCKED_FIND_FLAGS].join(', ')}`;
+        }
+        validatedArgs.push(arg);
+      } else {
+        const validated = this.safeValidatePath(arg);
+        if ('error' in validated) return `Error: ${validated.error}`;
+        validatedArgs.push(validated.path);
+      }
+    }
+
+    const result = await this.container.exec([cmdPath, ...validatedArgs], 30000);
+    const output = result.stdout + result.stderr;
+    return output || `(exit code: ${result.exitCode})`;
+  }
+
+  private async handleListFiles(input: Record<string, unknown>): Promise<string> {
+    const inputPath = input.path;
+    if (inputPath !== undefined && typeof inputPath !== 'string') {
+      return 'Error: path must be a string';
+    }
+
+    const validated = this.safeValidatePath((inputPath as string) || '.');
+    if ('error' in validated) return `Error: ${validated.error}`;
+
+    const result = await this.container.exec(['/bin/ls', '-la', validated.path]);
+    if (result.exitCode !== 0) {
+      return `Error listing files: ${result.stderr}`;
+    }
+    return result.stdout;
   }
 
   /**
