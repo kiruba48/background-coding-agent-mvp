@@ -268,6 +268,266 @@ async function runToolUnitTests() {
       await session.stop();
     });
 
+    // ===== PRECONDITION TEST (1 test) =====
+    console.log('\n--- Precondition Tests ---');
+
+    await test('Precondition: ripgrep available in container', async () => {
+      const session = new AgentSession({ workspaceDir: testDir });
+      await session.start();
+
+      // Check rg is installed in container
+      const container = (session as any).container;
+      const result = await container.exec(['/usr/bin/rg', '--version']);
+      assert(result.exitCode === 0, 'ripgrep should be available in container');
+      assert(result.stdout.includes('ripgrep'), 'Should return ripgrep version info');
+
+      await session.stop();
+    });
+
+    // ===== GIT_OPERATION TESTS (6 tests) =====
+    console.log('\n--- git_operation Tests ---');
+
+    // Create git repo test directory
+    const gitTestDir = await fs.mkdtemp(path.join(os.tmpdir(), 'git-tests-'));
+    try {
+      // Initialize git repo
+      await execFileAsync('git', ['-C', gitTestDir, 'init']);
+      await execFileAsync('git', ['-C', gitTestDir, 'config', 'user.email', 'test@test.com']);
+      await execFileAsync('git', ['-C', gitTestDir, 'config', 'user.name', 'Test']);
+
+      await test('git_operation: status works', async () => {
+        const session = new AgentSession({ workspaceDir: gitTestDir });
+        await session.start();
+        (session as any).workspaceDir = gitTestDir;
+
+        const result = await (session as any).executeTool('git_operation', { operation: 'status' });
+        assert(!result.includes('Error'), 'Should not return error');
+        // Should return porcelain output or "(no changes)"
+
+        await session.stop();
+      });
+
+      await test('git_operation: diff works', async () => {
+        const session = new AgentSession({ workspaceDir: gitTestDir });
+        await session.start();
+        (session as any).workspaceDir = gitTestDir;
+
+        // Create and commit a file, then modify it
+        await fs.writeFile(path.join(gitTestDir, 'test.txt'), 'original content\n');
+        await execFileAsync('git', ['-C', gitTestDir, 'add', 'test.txt']);
+        await execFileAsync('git', ['-C', gitTestDir, 'commit', '-m', 'initial']);
+        await fs.writeFile(path.join(gitTestDir, 'test.txt'), 'modified content\n');
+
+        const result = await (session as any).executeTool('git_operation', { operation: 'diff' });
+        assert(!result.includes('Error'), 'Should not return error');
+        assert(result.includes('modified') || result.includes('original'), 'Should show diff output');
+
+        await session.stop();
+      });
+
+      await test('git_operation: add and commit works', async () => {
+        const session = new AgentSession({ workspaceDir: gitTestDir });
+        await session.start();
+        (session as any).workspaceDir = gitTestDir;
+
+        // Create a new file
+        await fs.writeFile(path.join(gitTestDir, 'new.txt'), 'new file content\n');
+
+        // Add file
+        const addResult = await (session as any).executeTool('git_operation', {
+          operation: 'add',
+          args: ['new.txt']
+        });
+        assert(!addResult.includes('Error'), 'git add should not return error');
+
+        // Commit
+        const commitResult = await (session as any).executeTool('git_operation', {
+          operation: 'commit',
+          args: ['-m', 'Add new file']
+        });
+        assert(!commitResult.includes('Error'), 'git commit should not return error');
+
+        await session.stop();
+      });
+
+      await test('git_operation: unknown operation rejected', async () => {
+        const session = new AgentSession({ workspaceDir: gitTestDir });
+        await session.start();
+        (session as any).workspaceDir = gitTestDir;
+
+        const result = await (session as any).executeTool('git_operation', { operation: 'push' });
+        assert(result.includes('Unknown git operation'), 'Should reject unknown operation');
+        assert(result.includes('push'), 'Should mention the rejected operation');
+
+        await session.stop();
+      });
+
+      await test('git_operation: diff rejects disallowed flags', async () => {
+        const session = new AgentSession({ workspaceDir: gitTestDir });
+        await session.start();
+        (session as any).workspaceDir = gitTestDir;
+
+        const result = await (session as any).executeTool('git_operation', {
+          operation: 'diff',
+          args: ['--output=/tmp/evil']
+        });
+        assert(result.includes('not allowed'), 'Should reject disallowed flag');
+        assert(result.includes('--output=/tmp/evil'), 'Should mention the rejected flag');
+
+        await session.stop();
+      });
+
+      await test('git_operation: commit rejects disallowed flags', async () => {
+        const session = new AgentSession({ workspaceDir: gitTestDir });
+        await session.start();
+        (session as any).workspaceDir = gitTestDir;
+
+        const result = await (session as any).executeTool('git_operation', {
+          operation: 'commit',
+          args: ['--amend', '-m', 'evil']
+        });
+        assert(result.includes('not allowed'), 'Should reject --amend flag');
+        assert(result.includes('--amend'), 'Should mention the rejected flag');
+
+        await session.stop();
+      });
+
+    } finally {
+      // Cleanup git test directory
+      await fs.rm(gitTestDir, { recursive: true, force: true });
+    }
+
+    // ===== GREP TESTS (3 tests) =====
+    console.log('\n--- grep Tests ---');
+
+    await test('grep: pattern found', async () => {
+      const session = new AgentSession({ workspaceDir: testDir });
+      await session.start();
+      (session as any).workspaceDir = testDir;
+
+      // Create test file with known content
+      await fs.writeFile(path.join(testDir, 'search.txt'), 'line one\nfind this line\nline three\n');
+
+      const result = await (session as any).executeTool('grep', { pattern: 'find this' });
+      assert(!result.includes('Error'), 'Should not return error');
+      assert(result.includes('find this'), 'Should return matching line');
+      assert(result.includes('search.txt'), 'Should include filename');
+
+      await session.stop();
+    });
+
+    await test('grep: pattern not found', async () => {
+      const session = new AgentSession({ workspaceDir: testDir });
+      await session.start();
+      (session as any).workspaceDir = testDir;
+
+      const result = await (session as any).executeTool('grep', { pattern: 'nonexistentpattern' });
+      assert(result.includes('no matches found'), 'Should report no matches');
+
+      await session.stop();
+    });
+
+    await test('grep: case insensitive search', async () => {
+      const session = new AgentSession({ workspaceDir: testDir });
+      await session.start();
+      (session as any).workspaceDir = testDir;
+
+      // Create test file with uppercase content
+      await fs.writeFile(path.join(testDir, 'case.txt'), 'HELLO WORLD\n');
+
+      const result = await (session as any).executeTool('grep', {
+        pattern: 'hello',
+        case_insensitive: true
+      });
+      assert(!result.includes('Error'), 'Should not return error');
+      assert(result.includes('HELLO'), 'Should match case-insensitively');
+
+      await session.stop();
+    });
+
+    // ===== BASH_COMMAND TESTS (4 tests) =====
+    console.log('\n--- bash_command Tests ---');
+
+    await test('bash_command: allowed command cat works', async () => {
+      const session = new AgentSession({ workspaceDir: testDir });
+      await session.start();
+      (session as any).workspaceDir = testDir;
+
+      // Create test file
+      await fs.writeFile(path.join(testDir, 'cat_test.txt'), 'cat test content\n');
+
+      const result = await (session as any).executeTool('bash_command', {
+        command: 'cat',
+        args: ['cat_test.txt']
+      });
+      assert(!result.includes('Error'), 'Should not return error');
+      assert(result.includes('cat test content'), 'Should return file content');
+
+      await session.stop();
+    });
+
+    await test('bash_command: allowed command wc works', async () => {
+      const session = new AgentSession({ workspaceDir: testDir });
+      await session.start();
+      (session as any).workspaceDir = testDir;
+
+      // Create test file with multiple lines
+      await fs.writeFile(path.join(testDir, 'wc_test.txt'), 'line1\nline2\nline3\n');
+
+      const result = await (session as any).executeTool('bash_command', {
+        command: 'wc',
+        args: ['-l', 'wc_test.txt']
+      });
+      assert(!result.includes('Error'), 'Should not return error');
+      assert(result.includes('3'), 'Should count 3 lines');
+
+      await session.stop();
+    });
+
+    await test('bash_command: disallowed command rm rejected', async () => {
+      const session = new AgentSession({ workspaceDir: testDir });
+      await session.start();
+      (session as any).workspaceDir = testDir;
+
+      const result = await (session as any).executeTool('bash_command', {
+        command: 'rm',
+        args: ['test.txt']
+      });
+      assert(result.includes('not allowed'), 'Should reject disallowed command');
+      assert(result.includes('cat') && result.includes('wc'), 'Should list allowed commands');
+
+      await session.stop();
+    });
+
+    await test('bash_command: disallowed command bash rejected', async () => {
+      const session = new AgentSession({ workspaceDir: testDir });
+      await session.start();
+      (session as any).workspaceDir = testDir;
+
+      const result = await (session as any).executeTool('bash_command', {
+        command: 'bash',
+        args: ['-c', 'echo evil']
+      });
+      assert(result.includes('not allowed'), 'Should reject bash command');
+
+      await session.stop();
+    });
+
+    // ===== UNKNOWN TOOL TEST (1 test) =====
+    console.log('\n--- Unknown Tool Tests ---');
+
+    await test('Unknown tool returns clear error', async () => {
+      const session = new AgentSession({ workspaceDir: testDir });
+      await session.start();
+      (session as any).workspaceDir = testDir;
+
+      const result = await (session as any).executeTool('nonexistent_tool', {});
+      assert(result.includes('Unknown tool'), 'Should report unknown tool');
+      assert(result.includes('nonexistent_tool'), 'Should mention the tool name');
+
+      await session.stop();
+    });
+
   } finally {
     // Cleanup test directory
     await fs.rm(testDir, { recursive: true, force: true });
