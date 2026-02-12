@@ -3,9 +3,285 @@ import { AgentSession } from './session.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 
-async function runTests() {
-  console.log('=== Agent Session End-to-End Tests ===\n');
+const execFileAsync = promisify(execFile);
+
+// Simple test framework
+let testsPassed = 0;
+let testsFailed = 0;
+
+function assert(condition: boolean, message: string) {
+  if (!condition) {
+    console.error(`  ✗ FAIL: ${message}`);
+    testsFailed++;
+    throw new Error(message);
+  } else {
+    console.log(`  ✓ PASS: ${message}`);
+    testsPassed++;
+  }
+}
+
+async function test(name: string, fn: () => Promise<void>) {
+  console.log(`\nTest: ${name}`);
+  try {
+    await fn();
+  } catch (err) {
+    console.error(`  Error: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+async function runToolUnitTests() {
+  console.log('=== Phase 3 Tool Unit Tests ===\n');
+
+  // Create temp workspace for unit tests
+  const testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'tool-tests-'));
+
+  try {
+    // ===== PATH VALIDATION TESTS (5 tests) =====
+    console.log('\n--- Path Validation Tests ---');
+
+    await test('Path validation: null byte rejected', async () => {
+      const session = new AgentSession({ workspaceDir: testDir });
+      await session.start();
+      (session as any).workspaceDir = testDir;
+
+      const result = await (session as any).executeTool('read_file', { path: 'test\0.txt' });
+      assert(result.includes('Null byte'), 'Should reject null byte in path');
+      assert(result.includes('access denied'), 'Should deny access');
+
+      await session.stop();
+    });
+
+    await test('Path validation: .git/hooks access denied', async () => {
+      const session = new AgentSession({ workspaceDir: testDir });
+      await session.start();
+      (session as any).workspaceDir = testDir;
+
+      const result = await (session as any).executeTool('read_file', { path: '.git/hooks/pre-commit' });
+      assert(result.includes('.git/hooks'), 'Should mention .git/hooks');
+      assert(result.includes('denied'), 'Should deny access');
+
+      await session.stop();
+    });
+
+    await test('Path validation: node_modules/.bin access denied', async () => {
+      const session = new AgentSession({ workspaceDir: testDir });
+      await session.start();
+      (session as any).workspaceDir = testDir;
+
+      const result = await (session as any).executeTool('read_file', { path: 'node_modules/.bin/something' });
+      assert(result.includes('node_modules/.bin'), 'Should mention node_modules/.bin');
+      assert(result.includes('denied'), 'Should deny access');
+
+      await session.stop();
+    });
+
+    await test('Path validation: path traversal blocked', async () => {
+      const session = new AgentSession({ workspaceDir: testDir });
+      await session.start();
+      (session as any).workspaceDir = testDir;
+
+      const result = await (session as any).executeTool('read_file', { path: '../../etc/passwd' });
+      assert(result.includes('Path traversal') || result.includes('access denied'), 'Should block path traversal');
+
+      await session.stop();
+    });
+
+    await test('Path validation: valid workspace path succeeds', async () => {
+      const session = new AgentSession({ workspaceDir: testDir });
+      await session.start();
+      (session as any).workspaceDir = testDir;
+
+      // Create a valid test file
+      await fs.writeFile(path.join(testDir, 'valid.txt'), 'test content');
+
+      const result = await (session as any).executeTool('read_file', { path: 'valid.txt' });
+      assert(!result.includes('Error'), 'Should not return error for valid path');
+      assert(result.includes('test content'), 'Should return file content');
+
+      await session.stop();
+    });
+
+    // ===== EDIT_FILE STR_REPLACE TESTS (5 tests) =====
+    console.log('\n--- edit_file str_replace Tests ---');
+
+    await test('edit_file str_replace: single-line replacement success', async () => {
+      const session = new AgentSession({ workspaceDir: testDir });
+      await session.start();
+      (session as any).workspaceDir = testDir;
+
+      // Create test file
+      await fs.writeFile(path.join(testDir, 'single.txt'), 'Hello World\nGoodbye World\n');
+
+      const result = await (session as any).executeTool('edit_file', {
+        command: 'str_replace',
+        path: 'single.txt',
+        old_str: 'Hello World',
+        new_str: 'Hi Universe'
+      });
+      assert(result.includes('successfully'), 'Should report success');
+
+      // Verify file was actually modified
+      const content = await fs.readFile(path.join(testDir, 'single.txt'), 'utf-8');
+      assert(content.includes('Hi Universe'), 'File should contain new text');
+      assert(!content.includes('Hello World'), 'File should not contain old text');
+
+      await session.stop();
+    });
+
+    await test('edit_file str_replace: multi-line replacement success', async () => {
+      const session = new AgentSession({ workspaceDir: testDir });
+      await session.start();
+      (session as any).workspaceDir = testDir;
+
+      // Create test file with multi-line content
+      await fs.writeFile(path.join(testDir, 'multi.txt'), 'Start\nLine1\nLine2\nEnd\n');
+
+      const result = await (session as any).executeTool('edit_file', {
+        command: 'str_replace',
+        path: 'multi.txt',
+        old_str: 'Line1\nLine2',
+        new_str: 'SingleLine'
+      });
+      assert(result.includes('successfully'), 'Should report success');
+
+      // Verify multi-line replacement worked
+      const content = await fs.readFile(path.join(testDir, 'multi.txt'), 'utf-8');
+      assert(content.includes('SingleLine'), 'File should contain new text');
+      assert(!content.includes('Line1'), 'File should not contain old line 1');
+      assert(!content.includes('Line2'), 'File should not contain old line 2');
+
+      await session.stop();
+    });
+
+    await test('edit_file str_replace: old_str not found error', async () => {
+      const session = new AgentSession({ workspaceDir: testDir });
+      await session.start();
+      (session as any).workspaceDir = testDir;
+
+      // Create test file
+      await fs.writeFile(path.join(testDir, 'notfound.txt'), 'Some content here\n');
+
+      const result = await (session as any).executeTool('edit_file', {
+        command: 'str_replace',
+        path: 'notfound.txt',
+        old_str: 'NonexistentText',
+        new_str: 'Replacement'
+      });
+      assert(result.includes('not found'), 'Should report old_str not found');
+
+      await session.stop();
+    });
+
+    await test('edit_file str_replace: multiple matches with line numbers', async () => {
+      const session = new AgentSession({ workspaceDir: testDir });
+      await session.start();
+      (session as any).workspaceDir = testDir;
+
+      // Create file with repeated text
+      await fs.writeFile(path.join(testDir, 'repeated.txt'), 'duplicate\nother line\nduplicate\n');
+
+      const result = await (session as any).executeTool('edit_file', {
+        command: 'str_replace',
+        path: 'repeated.txt',
+        old_str: 'duplicate',
+        new_str: 'unique'
+      });
+      assert(result.includes('found 2 times'), 'Should report count of matches');
+      assert(result.includes('lines'), 'Should mention line numbers');
+      assert(result.includes('1') && result.includes('3'), 'Should include correct line numbers');
+
+      await session.stop();
+    });
+
+    await test('edit_file str_replace: non-existent file error', async () => {
+      const session = new AgentSession({ workspaceDir: testDir });
+      await session.start();
+      (session as any).workspaceDir = testDir;
+
+      const result = await (session as any).executeTool('edit_file', {
+        command: 'str_replace',
+        path: 'nonexistent.txt',
+        old_str: 'old',
+        new_str: 'new'
+      });
+      assert(result.includes('Error'), 'Should report error for non-existent file');
+
+      await session.stop();
+    });
+
+    // ===== EDIT_FILE CREATE TESTS (3 tests) =====
+    console.log('\n--- edit_file create Tests ---');
+
+    await test('edit_file create: successful file creation', async () => {
+      const session = new AgentSession({ workspaceDir: testDir });
+      await session.start();
+      (session as any).workspaceDir = testDir;
+
+      const result = await (session as any).executeTool('edit_file', {
+        command: 'create',
+        path: 'newfile.txt',
+        content: 'Fresh content\n'
+      });
+      assert(result.includes('successfully'), 'Should report success');
+
+      // Verify file exists with correct content
+      const content = await fs.readFile(path.join(testDir, 'newfile.txt'), 'utf-8');
+      assert(content === 'Fresh content\n', 'File should have correct content');
+
+      await session.stop();
+    });
+
+    await test('edit_file create: file already exists error', async () => {
+      const session = new AgentSession({ workspaceDir: testDir });
+      await session.start();
+      (session as any).workspaceDir = testDir;
+
+      // Create file first
+      await fs.writeFile(path.join(testDir, 'existing.txt'), 'existing content');
+
+      const result = await (session as any).executeTool('edit_file', {
+        command: 'create',
+        path: 'existing.txt',
+        content: 'new content'
+      });
+      assert(result.includes('already exists'), 'Should report file already exists');
+
+      await session.stop();
+    });
+
+    await test('edit_file create: path validation applies', async () => {
+      const session = new AgentSession({ workspaceDir: testDir });
+      await session.start();
+      (session as any).workspaceDir = testDir;
+
+      const result = await (session as any).executeTool('edit_file', {
+        command: 'create',
+        path: '../../evil.txt',
+        content: 'malicious'
+      });
+      assert(result.includes('Error'), 'Should reject path traversal');
+      assert(result.includes('traversal') || result.includes('denied'), 'Should mention security issue');
+
+      await session.stop();
+    });
+
+  } finally {
+    // Cleanup test directory
+    await fs.rm(testDir, { recursive: true, force: true });
+  }
+
+  console.log(`\n=== Test Results: ${testsPassed} passed, ${testsFailed} failed ===\n`);
+
+  if (testsFailed > 0) {
+    process.exit(1);
+  }
+}
+
+async function runE2ETests() {
+  console.log('\n=== Agent Session End-to-End Tests ===\n');
 
   // Check prerequisites
   if (!process.env.ANTHROPIC_API_KEY) {
@@ -100,7 +376,18 @@ async function runTests() {
   }
 }
 
-runTests().catch(err => {
+// Main test runner
+async function main() {
+  const runE2E = process.env.RUN_E2E === 'true';
+
+  if (runE2E) {
+    await runE2ETests();
+  } else {
+    await runToolUnitTests();
+  }
+}
+
+main().catch(err => {
   console.error('Test failed:', err);
   process.exit(1);
 });
