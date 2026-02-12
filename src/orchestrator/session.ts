@@ -12,6 +12,13 @@ import { TurnLimitError } from '../errors.js';
 
 const execFileAsync = promisify(execFile);
 
+// Allowed git flags for diff and commit operations
+const ALLOWED_GIT_DIFF_FLAGS = new Set([
+  '--cached', '--staged', '--stat', '--name-only', '--name-status',
+  '--shortstat', '--numstat', '--no-color'
+]);
+const ALLOWED_GIT_COMMIT_FLAGS = new Set(['-m', '--message']);
+
 export interface SessionConfig {
   workspaceDir: string;
   image?: string;
@@ -56,6 +63,26 @@ const TOOLS: Tool[] = [
         content: { type: 'string', description: 'File content (create only)' }
       },
       required: ['command', 'path']
+    }
+  },
+  {
+    name: 'git_operation',
+    description: 'Execute safe Git operations: status, diff, add, commit. Push is not allowed.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        operation: {
+          type: 'string',
+          enum: ['status', 'diff', 'add', 'commit'],
+          description: 'Git operation to perform'
+        },
+        args: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Arguments for the operation (e.g., file paths for add, -m "message" for commit)'
+        }
+      },
+      required: ['operation']
     }
   },
   {
@@ -409,6 +436,107 @@ export class AgentSession {
           }
         } else {
           return `Error: Unknown edit command '${input.command}'. Use 'str_replace' or 'create'.`;
+        }
+      }
+
+      case 'git_operation': {
+        const operation = input.operation as string;
+        const args = (input.args as string[]) || [];
+
+        let command: string[];
+
+        switch (operation) {
+          case 'status':
+            command = ['git', '-C', this.workspaceDir, 'status', '--porcelain'];
+            break;
+
+          case 'diff': {
+            // Validate flags — only allow known-safe flags and file paths
+            const diffArgs: string[] = [];
+            for (const arg of args) {
+              if (arg.startsWith('-')) {
+                if (!ALLOWED_GIT_DIFF_FLAGS.has(arg)) {
+                  return `Error: Flag '${arg}' is not allowed for git diff. Allowed: ${[...ALLOWED_GIT_DIFF_FLAGS].join(', ')}`;
+                }
+                diffArgs.push(arg);
+              } else {
+                // File path — validate it
+                try {
+                  this.validatePath(arg);
+                  diffArgs.push(arg);
+                } catch (e) {
+                  return `Error: ${e instanceof Error ? e.message : 'Invalid path'}`;
+                }
+              }
+            }
+            command = ['git', '-C', this.workspaceDir, 'diff', ...diffArgs];
+            break;
+          }
+
+          case 'add': {
+            // All args must be validated file paths
+            const validatedPaths: string[] = [];
+            for (const arg of args) {
+              try {
+                validatedPaths.push(this.validatePath(arg));
+              } catch (e) {
+                return `Error: ${e instanceof Error ? e.message : 'Invalid path'}`;
+              }
+            }
+            if (validatedPaths.length === 0) {
+              return 'Error: git add requires at least one file path';
+            }
+            command = ['git', '-C', this.workspaceDir, 'add', '--', ...validatedPaths];
+            break;
+          }
+
+          case 'commit': {
+            // Only allow -m flag and its value
+            const commitArgs: string[] = ['--no-verify']; // ALWAYS prevent hook execution
+            let i = 0;
+            while (i < args.length) {
+              const arg = args[i];
+              if (arg === '-m' || arg === '--message') {
+                if (i + 1 >= args.length) {
+                  return 'Error: -m flag requires a message argument';
+                }
+                commitArgs.push(arg, args[i + 1]);
+                i += 2;
+              } else if (arg.startsWith('-')) {
+                return `Error: Flag '${arg}' is not allowed for git commit. Allowed: -m, --message`;
+              } else {
+                // File path — validate it
+                try {
+                  this.validatePath(arg);
+                  commitArgs.push(arg);
+                } catch (e) {
+                  return `Error: ${e instanceof Error ? e.message : 'Invalid path'}`;
+                }
+                i++;
+              }
+            }
+            command = ['git', '-C', this.workspaceDir, 'commit', ...commitArgs];
+            break;
+          }
+
+          default:
+            return `Error: Unknown git operation '${operation}'. Allowed: status, diff, add, commit`;
+        }
+
+        // Execute on HOST via execFileAsync (NOT container.exec)
+        try {
+          const { stdout, stderr } = await execFileAsync(command[0], command.slice(1), {
+            cwd: this.workspaceDir,
+            timeout: 30000
+          });
+          const output = (stdout + stderr).trim();
+          return output || (operation === 'status' ? '(no changes)' : operation === 'diff' ? '(no differences)' : 'Done');
+        } catch (err: any) {
+          // execFile throws on non-zero exit code
+          if (err.stdout || err.stderr) {
+            return `Error: ${(err.stderr || err.stdout || '').trim()}`;
+          }
+          return `Error: ${err.message}`;
         }
       }
 
