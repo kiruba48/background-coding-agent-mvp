@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Foundation & Security** - Docker isolation and Anthropic SDK integration
 - [x] **Phase 2: CLI & Orchestration** - User interface and session lifecycle management
-- [ ] **Phase 3: Agent Tool Access** - Safe file, Git, and Bash operations
+- [x] **Phase 3: Agent Tool Access** - Safe file, Git, and Bash operations
 - [ ] **Phase 4: Retry & Context Engineering** - Resilient execution with error context
 - [ ] **Phase 5: Deterministic Verification** - Build, test, and lint checks
 - [ ] **Phase 6: LLM Judge Integration** - Scope control and quality gate
@@ -73,8 +73,8 @@ Plans:
 **Plans**: 2 plans in 2 waves
 
 Plans:
-- [ ] 03-01-PLAN.md — Safe tool implementations: edit_file, git_operation, grep, bash_command allowlist (Wave 1)
-- [ ] 03-02-PLAN.md — Comprehensive tests for all Phase 3 tools (Wave 2)
+- [x] 03-01-PLAN.md — Safe tool implementations: edit_file, git_operation, grep, bash_command allowlist (Wave 1)
+- [x] 03-02-PLAN.md — Comprehensive tests for all Phase 3 tools (Wave 2)
 
 ### Phase 4: Retry & Context Engineering
 **Goal**: Agent can recover from failures with summarized error context and retry intelligently
@@ -199,7 +199,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 |-------|----------------|--------|-----------|
 | 1. Foundation & Security | 4/4 | Complete | 2026-01-27 |
 | 2. CLI & Orchestration | 3/3 | Complete | 2026-02-06 |
-| 3. Agent Tool Access | 0/0 | Not started | - |
+| 3. Agent Tool Access | 2/2 | Complete | 2026-02-12 |
 | 4. Retry & Context Engineering | 0/0 | Not started | - |
 | 5. Deterministic Verification | 0/0 | Not started | - |
 | 6. LLM Judge Integration | 0/0 | Not started | - |
