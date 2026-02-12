@@ -1,10 +1,16 @@
 import * as nodePath from 'path';
 import * as crypto from 'crypto';
 import pino from 'pino';
+import writeFileAtomic from 'write-file-atomic';
+import * as fs from 'fs/promises';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { ContainerManager } from './container.js';
 import { AgentClient, Tool } from './agent.js';
 import { ContainerConfig, SessionResult } from '../types.js';
 import { TurnLimitError } from '../errors.js';
+
+const execFileAsync = promisify(execFile);
 
 export interface SessionConfig {
   workspaceDir: string;
@@ -225,12 +231,30 @@ export class AgentSession {
    * @throws Error if path escapes workspace
    */
   private validatePath(inputPath: string): string {
+    // Reject null bytes (often used in path injection attacks)
+    if (inputPath.includes('\0')) {
+      throw new Error('Null byte in path - access denied');
+    }
+
     // Resolve path relative to workspace
     const resolved = nodePath.resolve(this.workspaceDir, inputPath);
 
     // Ensure resolved path is within workspace (prevent traversal)
     if (!resolved.startsWith(this.workspaceDir + nodePath.sep) && resolved !== this.workspaceDir) {
       throw new Error('Path traversal detected - access denied');
+    }
+
+    // Get relative path for additional checks
+    const relativePath = nodePath.relative(this.workspaceDir, resolved);
+
+    // Block .git/hooks access (prevents git hook privilege escalation)
+    if (relativePath.startsWith('.git/hooks') || relativePath.startsWith('.git\\hooks')) {
+      throw new Error('Access to .git/hooks is denied');
+    }
+
+    // Block node_modules/.bin access (prevents execution of npm scripts)
+    if (relativePath.includes('node_modules/.bin') || relativePath.includes('node_modules\\.bin')) {
+      throw new Error('Access to node_modules/.bin is denied');
     }
 
     return resolved;
