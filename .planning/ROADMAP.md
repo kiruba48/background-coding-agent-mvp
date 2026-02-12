@@ -70,11 +70,11 @@ Plans:
   3. Agent can run Git status, diff, add, and commit (but not push)
   4. Agent can run allowlisted Bash commands (rg, cat, head, tail, find, wc)
   5. Tool attempts outside allowlist are rejected with clear error
-**Plans**: TBD
+**Plans**: 2 plans in 2 waves
 
 Plans:
-- [ ] 03-01: TBD
-- [ ] 03-02: TBD
+- [ ] 03-01-PLAN.md — Safe tool implementations: edit_file, git_operation, grep, bash_command allowlist (Wave 1)
+- [ ] 03-02-PLAN.md — Comprehensive tests for all Phase 3 tools (Wave 2)
 
 ### Phase 4: Retry & Context Engineering
 **Goal**: Agent can recover from failures with summarized error context and retry intelligently
