@@ -72,15 +72,21 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'edit_file',
-    description: 'Edit a file using string replacement',
+    description: 'Edit a file using string replacement, or create a new file',
     input_schema: {
       type: 'object',
       properties: {
+        command: {
+          type: 'string',
+          enum: ['str_replace', 'create'],
+          description: 'Edit command: str_replace to edit existing, create to make new file'
+        },
         path: { type: 'string', description: 'File path relative to workspace' },
-        old_str: { type: 'string', description: 'Exact text to replace' },
-        new_str: { type: 'string', description: 'New text to insert' }
+        old_str: { type: 'string', description: 'Exact text to replace (str_replace only)' },
+        new_str: { type: 'string', description: 'New text to insert (str_replace only)' },
+        content: { type: 'string', description: 'File content (create only)' }
       },
-      required: ['path', 'old_str', 'new_str']
+      required: ['command', 'path']
     }
   },
   {
@@ -774,29 +780,23 @@ async function safeWriteFile(filePath: string, content: string): Promise<void> {
 - **Manual command string escaping**: Error-prone. Use array-based commands instead.
 - **Line-based file editing for AI agents**: Industry has moved to string-replacement pattern (Anthropic, others).
 
-## Open Questions
+## Resolved Questions
 
 1. **Should Git operations require explicit user approval?**
-   - What we know: Git commit creates permanent state in repository
-   - What's unclear: Whether Phase 3 should auto-commit or require user confirmation
-   - Recommendation: Phase 3 implements tool, Phase 4 (user approval) adds confirmation layer
+   - **Decision: Defer approval to Phase 4.** Phase 3 implements the git tool (status, diff, add, commit). Phase 4 adds the approval/confirmation layer.
 
 2. **Should Edit tool support create-file operation?**
-   - What we know: text_editor tool supports `create` command
-   - What's unclear: Whether Phase 3 scope includes file creation or just editing
-   - Recommendation: Phase 3 implements edit-only, Phase 4+ adds create if needed
+   - **Decision: Yes, support file creation.** Edit tool supports both editing existing files (str_replace) and creating new files. For creation: validate path, ensure file doesn't already exist (or use a `create` command variant), write atomically.
 
 3. **Container vs. host execution for file operations?**
-   - What we know: Read-only container rootfs requires host-side writes
-   - What's unclear: Best pattern for mixed read (container) / write (host) operations
-   - Recommendation: Document asymmetry, implement read via container, write via host
+   - **Decision: Read via container, write via host.** Document the asymmetry. Read-only container rootfs means writes must go through host filesystem. Path validation applies to both.
 
 4. **Should allowlist be configurable or hardcoded?**
-   - What we know: Hardcoded is more secure, configurable is more flexible
-   - What's unclear: Whether users need to customize allowed commands
-   - Recommendation: Phase 3 hardcodes, Phase 5+ could add configuration with security warnings
+   - **Decision: Hardcode for Phase 3, design for future configurability.** Use a `Set` or `Map` constant for the allowlist so it can be extracted into a config object in a future phase without changing the tool interface. Hardcoded is more secure for now.
 
-5. **Performance impact of multiple cat calls for large files?**
+## Open Questions
+
+1. **Performance impact of multiple cat calls for large files?**
    - What we know: Edit tool reads file via `cat` in container
    - What's unclear: Performance at scale (100+ KB files, frequent edits)
    - Recommendation: Implement and measure. Optimize later if needed.
