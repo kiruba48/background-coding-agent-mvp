@@ -19,6 +19,15 @@ const ALLOWED_GIT_DIFF_FLAGS = new Set([
 ]);
 const ALLOWED_GIT_COMMIT_FLAGS = new Set(['-m', '--message']);
 
+// Verified paths in agent-sandbox Alpine 3.18 image
+const COMMAND_PATHS: Record<string, string> = {
+  'cat': '/bin/cat',
+  'head': '/usr/bin/head',
+  'tail': '/usr/bin/tail',
+  'find': '/usr/bin/find',
+  'wc': '/usr/bin/wc'
+};
+
 export interface SessionConfig {
   workspaceDir: string;
   image?: string;
@@ -100,6 +109,26 @@ const TOOLS: Tool[] = [
     }
   },
   {
+    name: 'bash_command',
+    description: 'Run an allowlisted bash command. Allowed: cat, head, tail, find, wc. Use grep tool for searching.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        command: {
+          type: 'string',
+          enum: ['cat', 'head', 'tail', 'find', 'wc'],
+          description: 'Command to run'
+        },
+        args: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Arguments for the command'
+        }
+      },
+      required: ['command']
+    }
+  },
+  {
     name: 'list_files',
     description: 'List files in a directory',
     input_schema: {
@@ -120,9 +149,9 @@ const TOOLS: Tool[] = [
  *
  * Integration architecture:
  * 1. Session creates ContainerManager and AgentClient
- * 2. Session defines tools (read_file, execute_bash, list_files)
+ * 2. Session defines tools (read_file, edit_file, git_operation, grep, bash_command, list_files)
  * 3. Session calls AgentClient.runAgenticLoop with tool executor
- * 4. Tool executor routes to ContainerManager.exec
+ * 4. Tool executor routes to ContainerManager.exec or host execution (git_operation, edit_file)
  * 5. Results flow back through the agentic loop
  * 6. Session cleans up container when done
  */
@@ -307,12 +336,15 @@ export class AgentSession {
   }
 
   /**
-   * Execute a tool in the isolated container
+   * Execute a tool in the isolated container or on host
    *
-   * Routes tool calls to appropriate container commands:
-   * - read_file: cat <path>
-   * - execute_bash: bash -c "<command>" (Note: container isolation is primary defense)
-   * - list_files: ls -la <path>
+   * Routes tool calls to appropriate execution:
+   * - read_file: cat <path> (container)
+   * - edit_file: str_replace or create via writeFileAtomic (host)
+   * - git_operation: git commands via execFileAsync (host)
+   * - grep: ripgrep /usr/bin/rg (container)
+   * - bash_command: allowlisted commands (cat, head, tail, find, wc) (container)
+   * - list_files: ls -la <path> (container)
    *
    * @param name - Tool name
    * @param input - Tool input parameters
@@ -590,16 +622,42 @@ export class AgentSession {
         }
       }
 
-      case 'execute_bash': {
+      case 'bash_command': {
         // Validate input type
         if (typeof input.command !== 'string') {
           return 'Error: command must be a string';
         }
 
-        // Note: Command injection is mitigated by container isolation (network: none,
-        // read-only rootfs, non-root user, dropped capabilities). Phase 3 will add
-        // command allowlisting for defense-in-depth.
-        const result = await this.container.exec(['bash', '-c', input.command]);
+        const cmdName = input.command as string;
+        const cmdArgs = (input.args as string[]) || [];
+
+        // Look up command in allowlist
+        const cmdPath = COMMAND_PATHS[cmdName];
+        if (!cmdPath) {
+          return 'Error: Command not allowed. Allowed commands: cat, head, tail, find, wc';
+        }
+
+        // Validate file path arguments (those that don't start with -)
+        const validatedArgs: string[] = [];
+        for (const arg of cmdArgs) {
+          if (!arg.startsWith('-')) {
+            // Looks like a file path - validate it
+            try {
+              validatedArgs.push(this.validatePath(arg));
+            } catch (error) {
+              return `Error: ${error instanceof Error ? error.message : 'Invalid path'}`;
+            }
+          } else {
+            // Flag - pass through as-is
+            validatedArgs.push(arg);
+          }
+        }
+
+        // Build command array with absolute path
+        const command = [cmdPath, ...validatedArgs];
+
+        // Execute via container
+        const result = await this.container.exec(command, 30000);
         const output = result.stdout + result.stderr;
         return output || `(exit code: ${result.exitCode})`;
       }
