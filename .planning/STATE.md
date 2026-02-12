@@ -11,17 +11,17 @@ See: .planning/PROJECT.md (updated 2025-01-25)
 
 Phase: 3 of 10 (Agent Tool Access)
 Plan: 2 of 2
-Status: In progress
-Last activity: 2026-02-12 — Phase 3 Plan 1 complete
+Status: Complete
+Last activity: 2026-02-12 — Phase 3 Plan 2 complete (Tool test suite)
 
-Progress: [████░░░░░░] 35% (8/23 plans)
+Progress: [████░░░░░░] 39% (9/23 plans)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 8
-- Average duration: 4.7 min
-- Total execution time: 0.63 hours
+- Total plans completed: 9
+- Average duration: 5.6 min
+- Total execution time: 0.87 hours
 
 **By Phase:**
 
@@ -29,11 +29,11 @@ Progress: [████░░░░░░] 35% (8/23 plans)
 |-------|-------|-------|----------|
 | Phase 1 | 4/4 | 13 min | 3.3 min |
 | Phase 2 | 3/3 | 10.3 min | 3.4 min |
-| Phase 3 | 1/2 | 13 min | 13 min |
+| Phase 3 | 2/2 | 27.4 min | 13.7 min |
 
 **Recent Trend:**
-- Last 5 plans: 03-01 (13 min), 02-03 (2 min), 02-01 (3.1 min), 02-02 (5.2 min)
-- Trend: Increased complexity in Phase 3 (multi-tool implementation)
+- Last 5 plans: 03-02 (14.4 min), 03-01 (13 min), 02-03 (2 min), 02-01 (3.1 min), 02-02 (5.2 min)
+- Trend: Phase 3 plans more complex (multi-tool implementation + comprehensive testing)
 
 *Updated after each plan completion*
 
@@ -75,6 +75,8 @@ Recent decisions affecting current work:
 - File write mode 0o644: Container user reads via 'other' permission, avoiding ownership mismatch — Implemented (03-01)
 - Minimal bash allowlist: Only cat, head, tail, find, wc (read-only operations) with verified absolute paths — Implemented (03-01)
 - Remove execute_bash: Replaced unrestricted bash execution with five specialized secure tools — Implemented (03-01)
+- Unit tests via executeTool casting: Direct tool testing via (session as any).executeTool() avoids API costs while maintaining test isolation — Implemented (03-02)
+- Separate E2E and unit tests: RUN_E2E flag preserves both test types for different purposes — Implemented (03-02)
 
 ### Pending Todos
 
@@ -90,9 +92,9 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-12 (phase execution)
-Stopped at: Completed 03-01-PLAN.md (Agent Tool Access - Safe tool implementations)
+Stopped at: Completed 03-02-PLAN.md (Agent Tool Access - Comprehensive tool testing)
 Resume file: None
 
 **Phase 1 Complete:** Foundation & Security architecture fully implemented and verified (2026-01-27)
 **Phase 2 Complete:** CLI & Orchestration — Pino logging, session safety limits, MetricsCollector, Docker health check, Commander.js CLI (2026-02-06)
-**Phase 3 Progress:** Plan 1/2 complete — Safe agent tools (edit_file, git_operation, grep, bash_command) with hardened path validation (2026-02-12)
+**Phase 3 Complete:** Agent Tool Access — Safe tool implementations (edit_file, git_operation, grep, bash_command) with hardened path validation and comprehensive test suite (28 tests) (2026-02-12)
