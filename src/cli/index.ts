@@ -13,6 +13,7 @@ program
   .requiredOption('-r, --repo <path>', 'Target repository path (absolute or relative)')
   .option('--turn-limit <number>', 'Maximum agent turns (default: 10)', '10')
   .option('--timeout <seconds>', 'Session timeout in seconds (default: 300)', '300')
+  .option('--max-retries <number>', 'Maximum retry attempts on verification failure (default: 3)', '3')
   .action(async (options) => {
     // Validate turn-limit
     const turnLimit = parseInt(options.turnLimit, 10);
@@ -25,6 +26,13 @@ program
     const timeout = parseInt(options.timeout, 10);
     if (isNaN(timeout) || timeout < 30 || timeout > 3600) {
       console.error(pc.red('Error: --timeout must be a number between 30 and 3600 seconds'));
+      process.exit(2);
+    }
+
+    // Validate max-retries
+    const maxRetries = parseInt(options.maxRetries, 10);
+    if (isNaN(maxRetries) || maxRetries < 1 || maxRetries > 10) {
+      console.error(pc.red('Error: --max-retries must be a number between 1 and 10'));
       process.exit(2);
     }
 
@@ -42,6 +50,7 @@ program
       repo: options.repo,
       turnLimit,
       timeout,
+      maxRetries,
     });
 
     process.exit(exitCode);

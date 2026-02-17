@@ -11,6 +11,8 @@ export { ContainerManager } from './container.js';
 export { AgentClient } from './agent.js';
 export { AgentSession } from './session.js';
 export { MetricsCollector } from './metrics.js';
+export { RetryOrchestrator } from './retry.js';
+export { ErrorSummarizer } from './summarizer.js';
 export type {
   Tool,
   ToolCall,
@@ -21,4 +23,4 @@ export type {
 } from './agent.js';
 export type { SessionConfig } from './session.js';
 export type { SessionMetrics, ComputedMetrics } from './metrics.js';
-export type { SessionResult } from '../types.js';
+export type { SessionResult, VerificationError, VerificationResult, RetryConfig, RetryResult } from '../types.js';
