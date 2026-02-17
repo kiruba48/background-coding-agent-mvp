@@ -86,11 +86,11 @@ Plans:
   3. Agent receives actionable feedback ("3 tests failed in AuthModule" not 10K lines)
   4. Retry counter is enforced (max 3 retries)
   5. Session terminates cleanly after max retries exhausted
-**Plans**: TBD
+**Plans**: 2 plans in 2 waves
 
 Plans:
-- [ ] 04-01: TBD
-- [ ] 04-02: TBD
+- [ ] 04-01-PLAN.md — RetryOrchestrator + ErrorSummarizer + verification types (Wave 1)
+- [ ] 04-02-PLAN.md — CLI integration + comprehensive tests (Wave 2)
 
 ### Phase 5: Deterministic Verification
 **Goal**: Changes are automatically verified for buildability, test pass rate, and lint compliance
