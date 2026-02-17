@@ -49,16 +49,18 @@ export async function runAgent(options: RunOptions): Promise<number> {
   // Create metrics collector
   const metrics = new MetricsCollector();
 
-  // Register signal handlers for graceful cleanup
-  // RetryOrchestrator manages session lifecycle internally (start/stop per attempt),
-  // so we just log and exit — the finally block in RetryOrchestrator.run handles cleanup.
-  process.once('SIGINT', () => {
+  // Register signal handlers for graceful cleanup.
+  // Must await orchestrator.stop() to tear down the active Docker container
+  // before exiting — process.exit() alone skips async cleanup.
+  process.once('SIGINT', async () => {
     childLogger.info('Received SIGINT, cleaning up...');
+    await orchestrator.stop();
     process.exit(130);
   });
 
-  process.once('SIGTERM', () => {
+  process.once('SIGTERM', async () => {
     childLogger.info('Received SIGTERM, cleaning up...');
+    await orchestrator.stop();
     process.exit(143);
   });
 

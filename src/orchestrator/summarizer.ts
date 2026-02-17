@@ -44,8 +44,8 @@ export class ErrorSummarizer {
    * Output: structured summary of up to 5 failures with counts.
    */
   static summarizeTestFailures(rawOutput: string): string {
-    // Jest/Vitest failure lines: "  ● TestSuite > testName" or "  ✕ testName"
-    const bulletFailures = rawOutput.match(/[●✕✗]\s+[^\n]+/g) ?? [];
+    // Jest/Vitest failure lines: "  ● TestSuite > testName", "  ✕ testName", or "  × testName"
+    const bulletFailures = rawOutput.match(/[●✕✗×]\s+[^\n]+/g) ?? [];
 
     // Jest summary line: "Tests: 3 failed, 12 passed, 15 total"
     const summaryLine = rawOutput.match(/Tests:\s+\d+ failed[^\n]*/)?.[0] ?? '';
@@ -82,7 +82,9 @@ export class ErrorSummarizer {
   static summarizeLintErrors(rawOutput: string): string {
     // ESLint format: "  3:10  error  no-unused-vars  description"
     const errorLines = rawOutput.match(/\d+:\d+\s+error\s+[^\n]+/g) ?? [];
-    const fileCount = new Set(rawOutput.match(/\S+\.(?:ts|js|tsx|jsx)/g) ?? []).size;
+    // Match ESLint file header lines (paths without leading whitespace), not filenames inside errors
+    const fileHeaders = rawOutput.match(/^\/?\S+\.(?:ts|js|tsx|jsx|mts|mjs|cts|cjs)$/gm) ?? [];
+    const fileCount = new Set(fileHeaders).size;
 
     if (errorLines.length === 0) {
       return 'Lint failed (unable to extract specific errors)';

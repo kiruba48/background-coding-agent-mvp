@@ -24,10 +24,22 @@ import { ErrorSummarizer } from './summarizer.js';
 export class RetryOrchestrator {
   private config: SessionConfig;
   private retryConfig: RetryConfig;
+  private activeSession: AgentSession | null = null;
 
   constructor(sessionConfig: SessionConfig, retryConfig: RetryConfig = { maxRetries: 3 }) {
     this.config = sessionConfig;
     this.retryConfig = retryConfig;
+  }
+
+  /**
+   * Stop the currently active session, if any.
+   * Called from signal handlers to ensure Docker containers are cleaned up.
+   */
+  async stop(): Promise<void> {
+    if (this.activeSession) {
+      await this.activeSession.stop();
+      this.activeSession = null;
+    }
   }
 
   /**
@@ -38,7 +50,7 @@ export class RetryOrchestrator {
    * @returns RetryResult with final status, attempt count, and all session/verification results
    */
   async run(originalTask: string, logger?: pino.Logger): Promise<RetryResult> {
-    const maxRetries = this.retryConfig.maxRetries ?? 3;
+    const maxRetries = this.retryConfig.maxRetries;
     const sessionResults: SessionResult[] = [];
     const verificationResults: VerificationResult[] = [];
 
@@ -55,14 +67,16 @@ export class RetryOrchestrator {
       // Never reuse sessions — prior conversation history accumulates and
       // fills the context window, causing the model to forget the original task.
       const session = new AgentSession(this.config);
-      await session.start();
+      this.activeSession = session;
 
       let sessionResult: SessionResult;
       try {
+        await session.start();
         sessionResult = await session.run(message, logger);
       } finally {
-        // Always clean up container, even on error
+        // Always clean up container, even on error (including start() failures)
         await session.stop();
+        this.activeSession = null;
       }
 
       sessionResults.push(sessionResult);
@@ -96,8 +110,21 @@ export class RetryOrchestrator {
         };
       }
 
-      // Run verification on the workspace
-      const verification = await this.retryConfig.verifier(this.config.workspaceDir);
+      // Run verification on the workspace — catch verifier crashes to return
+      // structured result instead of letting exceptions propagate unhandled
+      let verification: VerificationResult;
+      try {
+        verification = await this.retryConfig.verifier(this.config.workspaceDir);
+      } catch (err) {
+        logger?.error({ attempt, err }, 'Verifier crashed');
+        return {
+          finalStatus: 'failed',
+          attempts: attempt,
+          sessionResults,
+          verificationResults,
+          error: `Verifier error: ${err instanceof Error ? err.message : String(err)}`
+        };
+      }
       verificationResults.push(verification);
 
       if (verification.passed) {
@@ -141,8 +168,11 @@ export class RetryOrchestrator {
     attempt: number,
     priorVerificationResults: VerificationResult[]
   ): string {
+    // Only pass the LAST failed result — prior failures may contain stale errors
+    // that the agent already fixed in subsequent attempts
     const failedResults = priorVerificationResults.filter(r => !r.passed);
-    const errorDigest = ErrorSummarizer.buildDigest(failedResults);
+    const lastFailed = failedResults.length > 0 ? [failedResults[failedResults.length - 1]] : [];
+    const errorDigest = ErrorSummarizer.buildDigest(lastFailed);
 
     return [
       // 1. Original task ALWAYS comes first — primary directive

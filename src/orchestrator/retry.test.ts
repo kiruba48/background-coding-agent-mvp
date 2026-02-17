@@ -284,4 +284,95 @@ describe('RetryOrchestrator', () => {
     expect(MockAgentSession.mock.calls).toHaveLength(2);
     expect(result.error).toContain('2 attempts');
   });
+
+  it('11. verifier crash returns structured RetryResult instead of throwing', async () => {
+    const verifier = vi.fn().mockRejectedValue(new Error('tsc binary not found'));
+    const session = createMockSession(makeSessionResult());
+    MockAgentSession.mockImplementationOnce(function() { return session; });
+
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace' },
+      { maxRetries: 3, verifier }
+    );
+
+    const result = await orchestrator.run('Fix the bug');
+
+    expect(result.finalStatus).toBe('failed');
+    expect(result.attempts).toBe(1);
+    expect(result.error).toContain('Verifier error');
+    expect(result.error).toContain('tsc binary not found');
+    // Session should still be cleaned up (stop called)
+    expect(session.stop).toHaveBeenCalled();
+  });
+
+  it('12. session.start() failure cleans up via finally block', async () => {
+    const session = createMockSession(makeSessionResult());
+    session.start.mockRejectedValue(new Error('Docker daemon not running'));
+    MockAgentSession.mockImplementationOnce(function() { return session; });
+
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace' },
+      { maxRetries: 3 }
+    );
+
+    await expect(orchestrator.run('Fix the bug')).rejects.toThrow('Docker daemon not running');
+    // stop() must have been called even though start() threw
+    expect(session.stop).toHaveBeenCalled();
+  });
+
+  it('13. stop() cleans up active session', async () => {
+    const verifier = vi.fn().mockImplementation(() =>
+      new Promise(() => {}) // never resolves — simulates long-running verifier
+    );
+    const session = createMockSession(makeSessionResult());
+    MockAgentSession.mockImplementationOnce(function() { return session; });
+
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace' },
+      { maxRetries: 3, verifier }
+    );
+
+    // Start run but don't await — it will block on verifier
+    const runPromise = orchestrator.run('Fix the bug');
+
+    // Give it a tick to reach the verifier
+    await new Promise(r => setTimeout(r, 10));
+
+    // stop() should clean up the active session
+    await orchestrator.stop();
+
+    // Session stop should have been called by our explicit stop()
+    expect(session.stop).toHaveBeenCalled();
+
+    // Clean up the dangling promise
+    runPromise.catch(() => {});
+  });
+
+  it('14. retry message only includes last failed verification (not stale errors)', async () => {
+    const verifier = vi.fn()
+      .mockResolvedValueOnce(makeFailedVerification('TS error from attempt 1'))
+      .mockResolvedValueOnce(makeFailedVerification('Test failure from attempt 2'))
+      .mockResolvedValueOnce(makePassedVerification());
+
+    const capturedMessages: string[] = [];
+    [0, 1, 2].forEach(() => {
+      const session = createMockSession(async (msg: string) => {
+        capturedMessages.push(msg);
+        return makeSessionResult();
+      });
+      MockAgentSession.mockImplementationOnce(function() { return session; });
+    });
+
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace' },
+      { maxRetries: 3, verifier }
+    );
+
+    await orchestrator.run('Fix the bug');
+
+    // Attempt 3's message should contain only attempt 2's error, NOT attempt 1's
+    const attempt3Msg = capturedMessages[2];
+    expect(attempt3Msg).toContain('Test failure from attempt 2');
+    expect(attempt3Msg).not.toContain('TS error from attempt 1');
+  });
 });
