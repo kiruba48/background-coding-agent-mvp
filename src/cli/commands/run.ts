@@ -1,6 +1,7 @@
 import { RetryOrchestrator } from '../../orchestrator/retry.js';
 import { MetricsCollector } from '../../orchestrator/metrics.js';
 import { createLogger } from '../utils/logger.js';
+import { compositeVerifier } from '../../orchestrator/verifier.js';
 
 export interface RunOptions {
   taskType: string;
@@ -42,7 +43,7 @@ export async function runAgent(options: RunOptions): Promise<number> {
     },
     {
       maxRetries: options.maxRetries,
-      // No verifier in Phase 4 — Phase 5 verifiers plug in here
+      verifier: compositeVerifier,  // Phase 5: wire verifiers into retry loop
     }
   );
 
