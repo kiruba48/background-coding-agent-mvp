@@ -102,12 +102,11 @@ Plans:
   3. Lint verification confirms no new style issues introduced
   4. Failed verification triggers retry with summarized error context
   5. All three verifiers (build/test/lint) must pass to proceed
-**Plans**: TBD
+**Plans**: 2 plans in 2 waves
 
 Plans:
-- [ ] 05-01: TBD
-- [ ] 05-02: TBD
-- [ ] 05-03: TBD
+- [ ] 05-01-PLAN.md — ESLint v10 setup + verifier functions (build/test/lint/composite) (Wave 1)
+- [ ] 05-02-PLAN.md — CLI wiring + comprehensive unit tests (Wave 2)
 
 ### Phase 6: LLM Judge Integration
 **Goal**: Changes are evaluated for scope creep and intent alignment, with veto power over PRs
