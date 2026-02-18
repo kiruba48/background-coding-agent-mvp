@@ -13,6 +13,7 @@ export { AgentSession } from './session.js';
 export { MetricsCollector } from './metrics.js';
 export { RetryOrchestrator } from './retry.js';
 export { ErrorSummarizer } from './summarizer.js';
+export { buildVerifier, testVerifier, lintVerifier, compositeVerifier } from './verifier.js';
 export type {
   Tool,
   ToolCall,
