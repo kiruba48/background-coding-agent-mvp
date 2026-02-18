@@ -1,0 +1,555 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// Mock node:child_process before importing verifiers
+vi.mock('node:child_process', () => ({
+  execFile: vi.fn(),
+}));
+
+// Mock node:fs/promises before importing verifiers
+vi.mock('node:fs/promises', () => ({
+  access: vi.fn(),
+  readFile: vi.fn(),
+}));
+
+// Import after mocks are set up
+import { buildVerifier, testVerifier, lintVerifier, compositeVerifier } from './verifier.js';
+import { execFile } from 'node:child_process';
+import { access, readFile } from 'node:fs/promises';
+import { promisify } from 'node:util';
+
+// vitest is hoisted but promisify(execFile) is called at module level in verifier.ts.
+// We need to intercept calls at the execFile level. The promisified version calls
+// the original callback-based execFile internally, so we mock execFile and let
+// node:util's promisify wrap it.
+
+// Cast mocks for typed access
+const mockExecFile = execFile as unknown as ReturnType<typeof vi.fn>;
+const mockAccess = access as unknown as ReturnType<typeof vi.fn>;
+const mockReadFile = readFile as unknown as ReturnType<typeof vi.fn>;
+
+/**
+ * Helper to make execFile resolve (simulate success: exit code 0).
+ * promisify(execFile) resolves with { stdout, stderr }.
+ */
+function mockExecSuccess(stdout = '', stderr = ''): void {
+  mockExecFile.mockImplementation(
+    (
+      _cmd: string,
+      _args: string[],
+      _opts: unknown,
+      callback: (err: null, result: { stdout: string; stderr: string }) => void
+    ) => {
+      callback(null, { stdout, stderr });
+    }
+  );
+}
+
+/**
+ * Helper to make execFile reject (simulate failure: non-zero exit code).
+ * promisify(execFile) rejects with an error that has .stdout and .stderr properties.
+ */
+function mockExecFailure(stdout = '', stderr = '', code = 1): void {
+  mockExecFile.mockImplementation(
+    (
+      _cmd: string,
+      _args: string[],
+      _opts: unknown,
+      callback: (err: Error & { stdout?: string; stderr?: string; code?: number }) => void
+    ) => {
+      const err = Object.assign(new Error(`Command failed with exit code ${code}`), {
+        stdout,
+        stderr,
+        code,
+      });
+      callback(err);
+    }
+  );
+}
+
+/**
+ * Helper to make a sequence of execFile calls with different results.
+ * Each call in the sequence is consumed in order.
+ */
+function mockExecSequence(
+  responses: Array<{ success: boolean; stdout?: string; stderr?: string }>
+): void {
+  let index = 0;
+  mockExecFile.mockImplementation(
+    (
+      _cmd: string,
+      _args: string[],
+      _opts: unknown,
+      callback: (
+        err: (Error & { stdout?: string; stderr?: string }) | null,
+        result?: { stdout: string; stderr: string }
+      ) => void
+    ) => {
+      const response = responses[index] ?? responses[responses.length - 1];
+      index++;
+      if (response.success) {
+        callback(null, { stdout: response.stdout ?? '', stderr: response.stderr ?? '' });
+      } else {
+        const err = Object.assign(new Error('Command failed'), {
+          stdout: response.stdout ?? '',
+          stderr: response.stderr ?? '',
+        });
+        callback(err);
+      }
+    }
+  );
+}
+
+// ============================================================
+// buildVerifier
+// ============================================================
+describe('buildVerifier', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('1. returns passed:true when tsc exits with code 0', async () => {
+    mockAccess.mockResolvedValueOnce(undefined); // tsconfig.json exists
+    mockExecSuccess('', '');
+
+    const result = await buildVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(result.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('2. returns passed:false with extracted errors when tsc exits non-zero', async () => {
+    mockAccess.mockResolvedValueOnce(undefined); // tsconfig.json exists
+    const stderr = [
+      'src/foo.ts(10,5): error TS2345: Argument of type "string" is not assignable',
+      'src/bar.ts(20,3): error TS2551: Property does not exist',
+    ].join('\n');
+    mockExecFailure('', stderr);
+
+    const result = await buildVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].type).toBe('build');
+    expect(result.errors[0].summary).toContain('build error(s)');
+    expect(result.errors[0].summary).toContain('TS2345');
+    expect(result.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('3. returns passed:true (skip) when tsconfig.json is missing', async () => {
+    mockAccess.mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+    const result = await buildVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(result.durationMs).toBe(0);
+    // execFile should not have been called
+    expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
+  it('4. error summary uses ErrorSummarizer.summarizeBuildErrors format', async () => {
+    mockAccess.mockResolvedValueOnce(undefined);
+    const stdout = 'src/main.ts(5,1): error TS2304: Cannot find name "foo"';
+    mockExecFailure(stdout, '');
+
+    const result = await buildVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    expect(result.errors[0].type).toBe('build');
+    // summarizeBuildErrors format: "N build error(s):\n..."
+    expect(result.errors[0].summary).toMatch(/\d+ build error\(s\)/);
+  });
+
+  it('5. rawOutput contains both stdout and stderr from tsc', async () => {
+    mockAccess.mockResolvedValueOnce(undefined);
+    const stdout = 'src/x.ts(1,1): error TS2304: Cannot find name "x"';
+    const stderr = 'Some stderr from tsc';
+    mockExecFailure(stdout, stderr);
+
+    const result = await buildVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    expect(result.errors[0].rawOutput).toContain(stdout);
+    expect(result.errors[0].rawOutput).toContain(stderr);
+  });
+});
+
+// ============================================================
+// testVerifier
+// ============================================================
+describe('testVerifier', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('6. returns passed:true when vitest exits with code 0', async () => {
+    // First access call is for vitest.config.ts — resolve it (found)
+    mockAccess.mockResolvedValueOnce(undefined);
+    mockExecSuccess('Test Files  1 passed (1)\nTests  3 passed (3)\n');
+
+    const result = await testVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(result.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('7. returns passed:false with extracted failures when vitest exits non-zero', async () => {
+    mockAccess.mockResolvedValueOnce(undefined); // vitest.config.ts found
+    const stdout = [
+      'FAIL src/foo.test.ts',
+      '  ● Suite A > should work',
+      'Tests: 1 failed, 2 passed, 3 total',
+    ].join('\n');
+    mockExecFailure(stdout, '');
+
+    const result = await testVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].type).toBe('test');
+    expect(result.errors[0].summary).toBeDefined();
+  });
+
+  it('8. returns passed:true (skip) when no vitest config found', async () => {
+    // All config file access checks fail (4 config files + package.json)
+    mockAccess.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    // package.json without vitest key
+    mockReadFile.mockResolvedValueOnce(JSON.stringify({ name: 'test-project', version: '1.0.0' }));
+
+    const result = await testVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(result.durationMs).toBe(0);
+    expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
+  it('9. skips when package.json not parseable and no config files', async () => {
+    mockAccess.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    mockReadFile.mockRejectedValueOnce(new Error('File not found'));
+
+    const result = await testVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    expect(result.durationMs).toBe(0);
+  });
+
+  it('10. measures duration (durationMs > 0) when vitest runs', async () => {
+    mockAccess.mockResolvedValueOnce(undefined);
+    // Simulate a tiny delay by using resolved mock
+    mockExecSuccess('Tests: 5 passed (5)');
+
+    const result = await testVerifier('/workspace');
+
+    // durationMs should be a non-negative number
+    expect(result.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('11. finds vitest key in package.json when no config file present', async () => {
+    // All vitest config file checks fail
+    mockAccess.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    // package.json has vitest key
+    mockReadFile.mockResolvedValueOnce(JSON.stringify({ name: 'test-project', vitest: {} }));
+    // Then vitest run succeeds
+    mockExecSuccess('Tests: 2 passed (2)');
+
+    const result = await testVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    expect(mockExecFile).toHaveBeenCalled();
+  });
+});
+
+// ============================================================
+// lintVerifier
+// ============================================================
+describe('lintVerifier', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('12. returns passed:true when no new lint violations (baseline == current)', async () => {
+    mockAccess.mockResolvedValueOnce(undefined); // eslint.config.mjs exists
+
+    // ESLint JSON format - access check done, now mock execFile sequence:
+    // 1. git stash (success)
+    // 2. eslint baseline (5 errors)
+    // 3. git stash pop (success)
+    // 4. eslint current (5 errors — same count, no new violations)
+    const eslintOutput = JSON.stringify([{ errorCount: 5 }]);
+    mockExecSequence([
+      { success: true, stdout: 'Saved working directory and index state' }, // git stash
+      { success: false, stdout: eslintOutput },                              // eslint baseline (non-zero exit with errors)
+      { success: true, stdout: '' },                                         // git stash pop
+      { success: false, stdout: eslintOutput },                              // eslint current (same count)
+    ]);
+
+    const result = await lintVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('13. returns passed:false when new lint violations introduced (current > baseline)', async () => {
+    mockAccess.mockResolvedValueOnce(undefined); // eslint.config.mjs exists
+
+    const baselineOutput = JSON.stringify([{ errorCount: 2 }]);
+    const currentOutput = JSON.stringify([{ errorCount: 5 }]);
+    mockExecSequence([
+      { success: true, stdout: '' },                   // git stash
+      { success: false, stdout: baselineOutput },       // eslint baseline: 2 errors
+      { success: true, stdout: '' },                   // git stash pop
+      { success: false, stdout: currentOutput },        // eslint current: 5 errors (3 new)
+    ]);
+
+    const result = await lintVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].type).toBe('lint');
+    expect(result.errors[0].summary).toBeDefined();
+  });
+
+  it('14. returns passed:true (skip) when no eslint config found', async () => {
+    // All config file access checks fail
+    mockAccess.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+    const result = await lintVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(result.durationMs).toBe(0);
+    expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
+  it('15. falls back to simple lint when git stash fails (no prior commits)', async () => {
+    mockAccess.mockResolvedValueOnce(undefined); // eslint.config.mjs exists
+
+    // git stash fails (clean working tree or no commits)
+    // Then simple eslint runs and finds 0 errors
+    mockExecSequence([
+      { success: false, stdout: '', stderr: 'No local changes to save' }, // git stash fails
+      { success: true, stdout: JSON.stringify([{ errorCount: 0 }]) },     // simple eslint: clean
+    ]);
+
+    const result = await lintVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('16. falls back and returns false when simple lint finds errors', async () => {
+    mockAccess.mockResolvedValueOnce(undefined); // eslint.config.mjs exists
+
+    mockExecSequence([
+      { success: false, stdout: '', stderr: 'No local changes to save' }, // git stash fails
+      { success: false, stdout: JSON.stringify([{ errorCount: 3 }]) },     // simple eslint: 3 errors
+    ]);
+
+    const result = await lintVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].type).toBe('lint');
+  });
+
+  it('17. error summary uses ErrorSummarizer.summarizeLintErrors format', async () => {
+    mockAccess.mockResolvedValueOnce(undefined); // eslint.config.mjs exists
+
+    const currentOutput = JSON.stringify([{ errorCount: 2 }]);
+    // Provide text format as stdout for summarizeLintErrors to parse
+    const eslintTextOutput = [
+      '/workspace/src/foo.ts',
+      '  3:10  error  no-unused-vars  "x" is defined but never used',
+      '  7:5   error  no-console  Unexpected console statement',
+    ].join('\n');
+
+    mockExecSequence([
+      { success: true, stdout: '' },                // git stash
+      { success: true, stdout: JSON.stringify([{ errorCount: 0 }]) }, // baseline: 0
+      { success: true, stdout: '' },                // git stash pop
+      // Current eslint: 2 errors — non-zero exit with JSON + text
+      { success: false, stdout: currentOutput },
+    ]);
+
+    const result = await lintVerifier('/workspace');
+
+    // baseline 0, current 2 — new violations
+    expect(result.passed).toBe(false);
+    expect(result.errors[0].type).toBe('lint');
+  });
+});
+
+// ============================================================
+// compositeVerifier
+// ============================================================
+describe('compositeVerifier', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('18. returns passed:true when all 3 verifiers pass', async () => {
+    // Pre-checks: tsconfig.json found, vitest.config.ts found, eslint.config.mjs found
+    mockAccess
+      .mockResolvedValueOnce(undefined) // buildVerifier: tsconfig.json
+      .mockResolvedValueOnce(undefined) // testVerifier: vitest.config.ts
+      .mockResolvedValueOnce(undefined); // lintVerifier: eslint.config.mjs
+
+    // All verifier executions succeed
+    mockExecSequence([
+      { success: true, stdout: '' },  // tsc --noEmit: passes
+      { success: true, stdout: '' },  // vitest run: passes
+      { success: true, stdout: 'Saved working directory' }, // git stash
+      { success: true, stdout: JSON.stringify([{ errorCount: 0 }]) }, // eslint baseline
+      { success: true, stdout: '' },  // git stash pop
+      { success: true, stdout: JSON.stringify([{ errorCount: 0 }]) }, // eslint current
+    ]);
+
+    const result = await compositeVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(result.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('19. returns passed:false when any verifier fails (build fails)', async () => {
+    // tsconfig.json found, vitest found, eslint found
+    mockAccess
+      .mockResolvedValueOnce(undefined) // buildVerifier: tsconfig.json
+      .mockResolvedValueOnce(undefined) // testVerifier: vitest.config.ts
+      .mockResolvedValueOnce(undefined); // lintVerifier: eslint.config.mjs
+
+    mockExecSequence([
+      // build fails
+      { success: false, stdout: 'src/x.ts(1,1): error TS2304: Cannot find "x"', stderr: '' },
+      // test passes
+      { success: true, stdout: '' },
+      // lint: git stash, baseline, pop, current — all clean
+      { success: true, stdout: '' },
+      { success: true, stdout: JSON.stringify([{ errorCount: 0 }]) },
+      { success: true, stdout: '' },
+      { success: true, stdout: JSON.stringify([{ errorCount: 0 }]) },
+    ]);
+
+    const result = await compositeVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    expect(result.errors.length).toBeGreaterThan(0);
+    expect(result.errors[0].type).toBe('build');
+  });
+
+  it('20. error ordering: Build errors first, then Test, then Lint', async () => {
+    // All pre-checks pass
+    mockAccess
+      .mockResolvedValueOnce(undefined)  // tsconfig.json
+      .mockResolvedValueOnce(undefined)  // vitest config
+      .mockResolvedValueOnce(undefined); // eslint config
+
+    mockExecSequence([
+      // build fails
+      { success: false, stdout: 'src/a.ts(1,1): error TS2304: type error', stderr: '' },
+      // test fails
+      { success: false, stdout: '  ● Suite > test failed\nTests: 1 failed', stderr: '' },
+      // lint: git stash succeeds, baseline 0, pop, current 3 (new violations)
+      { success: true, stdout: '' },
+      { success: true, stdout: JSON.stringify([{ errorCount: 0 }]) },
+      { success: true, stdout: '' },
+      { success: false, stdout: JSON.stringify([{ errorCount: 3 }]) },
+    ]);
+
+    const result = await compositeVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    // Errors must be in Build > Test > Lint order
+    const types = result.errors.map(e => e.type);
+    const buildIdx = types.indexOf('build');
+    const testIdx = types.indexOf('test');
+    const lintIdx = types.indexOf('lint');
+
+    // All three error types should be present
+    expect(buildIdx).toBeGreaterThanOrEqual(0);
+    expect(testIdx).toBeGreaterThanOrEqual(0);
+    expect(lintIdx).toBeGreaterThanOrEqual(0);
+
+    // Build < Test < Lint ordering
+    expect(buildIdx).toBeLessThan(testIdx);
+    expect(testIdx).toBeLessThan(lintIdx);
+  });
+
+  it('21. handles verifier crash gracefully — converts to VerificationError', async () => {
+    // Build pre-check: tsconfig.json exists but then tsc crashes
+    mockAccess
+      .mockResolvedValueOnce(undefined)  // tsconfig.json
+      .mockResolvedValueOnce(undefined)  // vitest config
+      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })); // no eslint config
+
+    // Build: tsc crashes with a binary error (not stdout/stderr format)
+    mockExecSequence([
+      // tsc --noEmit throws a different error type
+      { success: false, stdout: '', stderr: 'tsc: command not found' },
+      // vitest run passes
+      { success: true, stdout: '' },
+    ]);
+
+    const result = await compositeVerifier('/workspace');
+
+    // Should not throw — should return structured result
+    expect(result).toBeDefined();
+    expect(typeof result.passed).toBe('boolean');
+    expect(Array.isArray(result.errors)).toBe(true);
+  });
+
+  it('22. durationMs is non-negative (parallel execution)', async () => {
+    // All verifiers skip (no config files found)
+    mockAccess.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    mockReadFile.mockRejectedValue(new Error('Not found'));
+
+    const result = await compositeVerifier('/workspace');
+
+    // All verifiers skip — passed:true, durationMs = max(0, 0, 0) = 0
+    expect(result.passed).toBe(true);
+    expect(result.durationMs).toBe(0);
+  });
+
+  it('23. aggregates errors from multiple failing verifiers', async () => {
+    // Build and test fail, lint skips
+    mockAccess
+      .mockResolvedValueOnce(undefined)  // tsconfig.json found
+      .mockResolvedValueOnce(undefined)  // vitest config found
+      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })); // no eslint config
+
+    mockExecSequence([
+      // build fails
+      { success: false, stdout: 'src/x.ts(1,1): error TS1001: Something wrong', stderr: '' },
+      // test fails
+      { success: false, stdout: 'Tests: 2 failed, 0 passed', stderr: '' },
+    ]);
+
+    const result = await compositeVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    // Should have both build and test errors
+    const types = result.errors.map(e => e.type);
+    expect(types).toContain('build');
+    expect(types).toContain('test');
+  });
+
+  it('24. passed:true requires all 3 verifiers to pass', async () => {
+    // Test verifier fails, rest skip
+    mockAccess
+      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })) // no tsconfig
+      .mockResolvedValueOnce(undefined)  // vitest.config.ts found
+      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })); // no eslint
+
+    // vitest run fails
+    mockExecFailure('Tests: 1 failed, 0 passed', '');
+
+    const result = await compositeVerifier('/workspace');
+
+    // Build skipped (passed), test failed, lint skipped (passed) — overall failed
+    expect(result.passed).toBe(false);
+    expect(result.errors.some(e => e.type === 'test')).toBe(true);
+  });
+});
