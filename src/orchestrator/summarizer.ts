@@ -96,6 +96,44 @@ export class ErrorSummarizer {
   }
 
   /**
+   * Summarize lint errors from ESLint JSON output (--format json).
+   * Parses the JSON array to extract file paths, line numbers, and rule IDs.
+   * Falls back to text-based summarizeLintErrors if JSON parsing fails.
+   */
+  static summarizeLintErrorsFromJson(rawJsonOutput: string): string {
+    try {
+      const parsed = JSON.parse(rawJsonOutput) as Array<{
+        filePath: string;
+        errorCount: number;
+        messages: Array<{ severity: number; ruleId: string | null; message: string; line: number; column: number }>;
+      }>;
+      const filesWithErrors = parsed.filter(f => f.errorCount > 0);
+      const fileCount = filesWithErrors.length;
+      const totalErrors = filesWithErrors.reduce((sum, f) => sum + f.errorCount, 0);
+
+      const errorLines: string[] = [];
+      for (const file of filesWithErrors) {
+        for (const msg of file.messages) {
+          if (msg.severity === 2) { // errors only (severity 2)
+            errorLines.push(`  ${msg.line}:${msg.column}  error  ${msg.ruleId ?? 'unknown'}  ${msg.message}`);
+          }
+        }
+      }
+
+      if (errorLines.length === 0) {
+        return 'Lint failed (unable to extract specific errors from JSON)';
+      }
+
+      const sample = errorLines.slice(0, 5).join('\n');
+      const more = errorLines.length > 5 ? `\n...and ${errorLines.length - 5} more` : '';
+      return `${totalErrors} lint error(s) in ${fileCount} file(s):\n${sample}${more}`;
+    } catch {
+      // JSON parse failed — fall back to text-based parsing
+      return ErrorSummarizer.summarizeLintErrors(rawJsonOutput);
+    }
+  }
+
+  /**
    * Build a complete error digest from all verification results.
    * Collects summaries from all failed results into [TYPE] summary sections.
    * Hard-caps output at 2000 chars (well under 500 tokens) with truncation notice.

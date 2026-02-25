@@ -173,6 +173,22 @@ describe('buildVerifier', () => {
     expect(result.errors[0].rawOutput).toContain(stdout);
     expect(result.errors[0].rawOutput).toContain(stderr);
   });
+
+  it('5b. returns timeout error when process is killed', async () => {
+    mockAccess.mockResolvedValueOnce(undefined);
+    mockExecFile.mockImplementation(
+      (_cmd: string, _args: string[], _opts: unknown,
+        callback: (err: Error & { killed?: boolean; signal?: string }) => void) => {
+        const err = Object.assign(new Error('Process timed out'), { killed: true, signal: 'SIGKILL' });
+        callback(err);
+      }
+    );
+
+    const result = await buildVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    expect(result.errors[0].summary).toContain('timed out');
+  });
 });
 
 // ============================================================
@@ -247,6 +263,23 @@ describe('testVerifier', () => {
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
   });
 
+  it('10b. returns timeout error when vitest process is killed', async () => {
+    mockAccess.mockResolvedValueOnce(undefined); // vitest.config.ts found
+    mockExecFile.mockImplementation(
+      (_cmd: string, _args: string[], _opts: unknown,
+        callback: (err: Error & { killed?: boolean; signal?: string }) => void) => {
+        const err = Object.assign(new Error('Process timed out'), { killed: true, signal: 'SIGKILL' });
+        callback(err);
+      }
+    );
+
+    const result = await testVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    expect(result.errors[0].summary).toContain('timed out');
+    expect(result.errors[0].type).toBe('test');
+  });
+
   it('11. finds vitest key in package.json when no config file present', async () => {
     // All vitest config file checks fail
     mockAccess.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
@@ -273,17 +306,28 @@ describe('lintVerifier', () => {
   it('12. returns passed:true when no new lint violations (baseline == current)', async () => {
     mockAccess.mockResolvedValueOnce(undefined); // eslint.config.mjs exists
 
-    // ESLint JSON format - access check done, now mock execFile sequence:
-    // 1. git stash (success)
-    // 2. eslint baseline (5 errors)
-    // 3. git stash pop (success)
-    // 4. eslint current (5 errors — same count, no new violations)
+    // Sequence: git stash push -m → eslint baseline → git stash pop → eslint current
     const eslintOutput = JSON.stringify([{ errorCount: 5 }]);
     mockExecSequence([
-      { success: true, stdout: 'Saved working directory and index state' }, // git stash
-      { success: false, stdout: eslintOutput },                              // eslint baseline (non-zero exit with errors)
+      { success: true, stdout: 'Saved working directory and index state' }, // git stash push -m
+      { success: false, stdout: eslintOutput },                              // eslint baseline
       { success: true, stdout: '' },                                         // git stash pop
       { success: false, stdout: eslintOutput },                              // eslint current (same count)
+    ]);
+
+    const result = await lintVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('12b. falls back to simple lint when stash saves nothing (clean tree)', async () => {
+    mockAccess.mockResolvedValueOnce(undefined); // eslint.config.mjs exists
+
+    // git stash push -m returns success but no "Saved" (clean working tree)
+    mockExecSequence([
+      { success: true, stdout: 'No local changes to save' }, // git stash push -m (nothing saved)
+      { success: true, stdout: JSON.stringify([{ errorCount: 0 }]) }, // simple eslint: clean
     ]);
 
     const result = await lintVerifier('/workspace');
@@ -296,9 +340,13 @@ describe('lintVerifier', () => {
     mockAccess.mockResolvedValueOnce(undefined); // eslint.config.mjs exists
 
     const baselineOutput = JSON.stringify([{ errorCount: 2 }]);
-    const currentOutput = JSON.stringify([{ errorCount: 5 }]);
+    const currentOutput = JSON.stringify([{ errorCount: 5, filePath: '/workspace/src/foo.ts', messages: [
+      { severity: 2, ruleId: 'no-unused-vars', message: '"x" is defined but never used', line: 3, column: 10 },
+      { severity: 2, ruleId: 'no-console', message: 'Unexpected console statement', line: 7, column: 5 },
+      { severity: 2, ruleId: 'no-debugger', message: 'Unexpected debugger statement', line: 10, column: 1 },
+    ] }]);
     mockExecSequence([
-      { success: true, stdout: '' },                   // git stash
+      { success: true, stdout: 'Saved working directory and index state' }, // git stash push -m
       { success: false, stdout: baselineOutput },       // eslint baseline: 2 errors
       { success: true, stdout: '' },                   // git stash pop
       { success: false, stdout: currentOutput },        // eslint current: 5 errors (3 new)
@@ -324,13 +372,13 @@ describe('lintVerifier', () => {
     expect(mockExecFile).not.toHaveBeenCalled();
   });
 
-  it('15. falls back to simple lint when git stash fails (no prior commits)', async () => {
+  it('15. falls back to simple lint when git stash push fails (no prior commits)', async () => {
     mockAccess.mockResolvedValueOnce(undefined); // eslint.config.mjs exists
 
-    // git stash fails (clean working tree or no commits)
+    // git stash push -m fails (no commits yet)
     // Then simple eslint runs and finds 0 errors
     mockExecSequence([
-      { success: false, stdout: '', stderr: 'No local changes to save' }, // git stash fails
+      { success: false, stdout: '', stderr: 'You do not have the initial commit yet' }, // git stash push fails
       { success: true, stdout: JSON.stringify([{ errorCount: 0 }]) },     // simple eslint: clean
     ]);
 
@@ -344,7 +392,7 @@ describe('lintVerifier', () => {
     mockAccess.mockResolvedValueOnce(undefined); // eslint.config.mjs exists
 
     mockExecSequence([
-      { success: false, stdout: '', stderr: 'No local changes to save' }, // git stash fails
+      { success: false, stdout: '', stderr: 'You do not have the initial commit yet' }, // git stash push fails
       { success: false, stdout: JSON.stringify([{ errorCount: 3 }]) },     // simple eslint: 3 errors
     ]);
 
@@ -355,30 +403,32 @@ describe('lintVerifier', () => {
     expect(result.errors[0].type).toBe('lint');
   });
 
-  it('17. error summary uses ErrorSummarizer.summarizeLintErrors format', async () => {
+  it('17. error summary uses summarizeLintErrorsFromJson for JSON output', async () => {
     mockAccess.mockResolvedValueOnce(undefined); // eslint.config.mjs exists
 
-    const currentOutput = JSON.stringify([{ errorCount: 2 }]);
-    // Provide text format as stdout for summarizeLintErrors to parse
-    const eslintTextOutput = [
-      '/workspace/src/foo.ts',
-      '  3:10  error  no-unused-vars  "x" is defined but never used',
-      '  7:5   error  no-console  Unexpected console statement',
-    ].join('\n');
+    const currentOutput = JSON.stringify([{
+      filePath: '/workspace/src/foo.ts',
+      errorCount: 2,
+      messages: [
+        { severity: 2, ruleId: 'no-unused-vars', message: '"x" is defined but never used', line: 3, column: 10 },
+        { severity: 2, ruleId: 'no-console', message: 'Unexpected console statement', line: 7, column: 5 },
+      ],
+    }]);
 
     mockExecSequence([
-      { success: true, stdout: '' },                // git stash
+      { success: true, stdout: 'Saved working directory and index state' }, // git stash push -m
       { success: true, stdout: JSON.stringify([{ errorCount: 0 }]) }, // baseline: 0
       { success: true, stdout: '' },                // git stash pop
-      // Current eslint: 2 errors — non-zero exit with JSON + text
-      { success: false, stdout: currentOutput },
+      { success: false, stdout: currentOutput },    // current: 2 new errors
     ]);
 
     const result = await lintVerifier('/workspace');
 
-    // baseline 0, current 2 — new violations
     expect(result.passed).toBe(false);
     expect(result.errors[0].type).toBe('lint');
+    // Should contain structured error info from JSON parsing
+    expect(result.errors[0].summary).toContain('lint error');
+    expect(result.errors[0].summary).toContain('no-unused-vars');
   });
 });
 
@@ -401,7 +451,7 @@ describe('compositeVerifier', () => {
     mockExecSequence([
       { success: true, stdout: '' },  // tsc --noEmit: passes
       { success: true, stdout: '' },  // vitest run: passes
-      { success: true, stdout: 'Saved working directory' }, // git stash
+      { success: true, stdout: 'Saved working directory and index state' }, // git stash push -m
       { success: true, stdout: JSON.stringify([{ errorCount: 0 }]) }, // eslint baseline
       { success: true, stdout: '' },  // git stash pop
       { success: true, stdout: JSON.stringify([{ errorCount: 0 }]) }, // eslint current
@@ -426,8 +476,8 @@ describe('compositeVerifier', () => {
       { success: false, stdout: 'src/x.ts(1,1): error TS2304: Cannot find "x"', stderr: '' },
       // test passes
       { success: true, stdout: '' },
-      // lint: git stash, baseline, pop, current — all clean
-      { success: true, stdout: '' },
+      // lint: git stash push -m, baseline, pop, current — all clean
+      { success: true, stdout: 'Saved working directory and index state' },
       { success: true, stdout: JSON.stringify([{ errorCount: 0 }]) },
       { success: true, stdout: '' },
       { success: true, stdout: JSON.stringify([{ errorCount: 0 }]) },
@@ -452,8 +502,8 @@ describe('compositeVerifier', () => {
       { success: false, stdout: 'src/a.ts(1,1): error TS2304: type error', stderr: '' },
       // test fails
       { success: false, stdout: '  ● Suite > test failed\nTests: 1 failed', stderr: '' },
-      // lint: git stash succeeds, baseline 0, pop, current 3 (new violations)
-      { success: true, stdout: '' },
+      // lint: git stash push -m succeeds, baseline 0, pop, current 3 (new violations)
+      { success: true, stdout: 'Saved working directory and index state' },
       { success: true, stdout: JSON.stringify([{ errorCount: 0 }]) },
       { success: true, stdout: '' },
       { success: false, stdout: JSON.stringify([{ errorCount: 3 }]) },

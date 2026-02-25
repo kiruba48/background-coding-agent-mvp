@@ -8,6 +8,18 @@ import { ErrorSummarizer } from './summarizer.js';
 const execFileAsync = promisify(execFile);
 
 /**
+ * Check if an execFileAsync error was caused by a timeout kill signal.
+ */
+function isTimeoutError(err: unknown): boolean {
+  const e = err as Record<string, unknown>;
+  return e.killed === true || e.signal === 'SIGTERM' || e.signal === 'SIGKILL';
+}
+
+// Note: Verifier functions use console.info/console.error instead of Pino because
+// they have a fixed signature (workspaceDir: string) => Promise<VerificationResult>
+// matching RetryConfig.verifier. Adding a logger parameter would break this contract.
+
+/**
  * Build verifier: runs tsc --noEmit against the workspace.
  * Skips gracefully if tsconfig.json is not present.
  */
@@ -18,7 +30,7 @@ export async function buildVerifier(workspaceDir: string): Promise<VerificationR
   try {
     await access(join(workspaceDir, 'tsconfig.json'));
   } catch {
-    console.log('[Build] No tsconfig.json found — skipping build verification');
+    console.info('[Build] No tsconfig.json found — skipping build verification');
     return { passed: true, errors: [], durationMs: 0 };
   }
 
@@ -27,11 +39,19 @@ export async function buildVerifier(workspaceDir: string): Promise<VerificationR
       cwd: workspaceDir,
       timeout: 60_000,
       maxBuffer: 10 * 1024 * 1024,
+      killSignal: 'SIGKILL',
     });
     const durationMs = Date.now() - start;
     return { passed: true, errors: [], durationMs };
   } catch (err: unknown) {
     const durationMs = Date.now() - start;
+    if (isTimeoutError(err)) {
+      return {
+        passed: false,
+        errors: [{ type: 'build', summary: 'Build timed out (60s limit exceeded)', rawOutput: 'Process killed after timeout' }],
+        durationMs,
+      };
+    }
     const error = err as { stdout?: string; stderr?: string };
     const rawOutput = [error.stdout ?? '', error.stderr ?? ''].join('\n').trim();
     const summary = ErrorSummarizer.summarizeBuildErrors(rawOutput);
@@ -84,7 +104,7 @@ export async function testVerifier(workspaceDir: string): Promise<VerificationRe
   }
 
   if (!hasVitestConfig) {
-    console.log('[Test] No vitest config found — skipping test verification');
+    console.info('[Test] No vitest config found — skipping test verification');
     return { passed: true, errors: [], durationMs: 0 };
   }
 
@@ -93,11 +113,19 @@ export async function testVerifier(workspaceDir: string): Promise<VerificationRe
       cwd: workspaceDir,
       timeout: 120_000,
       maxBuffer: 10 * 1024 * 1024,
+      killSignal: 'SIGKILL',
     });
     const durationMs = Date.now() - start;
     return { passed: true, errors: [], durationMs };
   } catch (err: unknown) {
     const durationMs = Date.now() - start;
+    if (isTimeoutError(err)) {
+      return {
+        passed: false,
+        errors: [{ type: 'test', summary: 'Tests timed out (120s limit exceeded)', rawOutput: 'Process killed after timeout' }],
+        durationMs,
+      };
+    }
     const error = err as { stdout?: string; stderr?: string };
     const rawOutput = [error.stdout ?? '', error.stderr ?? ''].join('\n').trim();
     const summary = ErrorSummarizer.summarizeTestFailures(rawOutput);
@@ -139,7 +167,7 @@ export async function lintVerifier(workspaceDir: string): Promise<VerificationRe
   }
 
   if (!hasEslintConfig) {
-    console.log('[Lint] No ESLint config found — skipping lint verification');
+    console.info('[Lint] No ESLint config found — skipping lint verification');
     return { passed: true, errors: [], durationMs: 0 };
   }
 
@@ -156,6 +184,7 @@ export async function lintVerifier(workspaceDir: string): Promise<VerificationRe
           cwd: workspaceDir,
           timeout: 60_000,
           maxBuffer: 10 * 1024 * 1024,
+          killSignal: 'SIGKILL',
         }
       );
       // Exit code 0 means no errors (only warnings or clean)
@@ -184,16 +213,39 @@ export async function lintVerifier(workspaceDir: string): Promise<VerificationRe
 
   // Diff-based approach: stash → baseline → pop → current
   try {
-    // Save current changes
-    await execFileAsync('git', ['stash'], { cwd: workspaceDir });
+    // Use labeled stash so we can identify it for recovery
+    const stashResult = await execFileAsync('git', ['stash', 'push', '-m', 'lint-verifier-baseline'], { cwd: workspaceDir });
+    const stashSaved = (stashResult.stdout ?? '').includes('Saved');
+
+    if (!stashSaved) {
+      // git stash did nothing (clean working tree) — run simple lint
+      // No recovery needed since nothing was stashed
+      console.info('[Lint] Clean working tree — running simple lint check');
+      return await runSimpleLint(start);
+    }
 
     let baselineCount = 0;
     try {
       const baseline = await runEslintErrorCount();
       baselineCount = baseline.count;
     } finally {
-      // Always restore changes
-      await execFileAsync('git', ['stash', 'pop'], { cwd: workspaceDir });
+      // Always restore changes — with defensive recovery
+      try {
+        await execFileAsync('git', ['stash', 'pop'], { cwd: workspaceDir });
+      } catch (popErr: unknown) {
+        // CRITICAL: agent changes may be stuck in stash — attempt recovery
+        console.error('[Lint] CRITICAL: git stash pop failed, attempting recovery');
+        try {
+          // Abort any merge state, then force-apply the stash
+          await execFileAsync('git', ['checkout', '--', '.'], { cwd: workspaceDir }).catch(() => {});
+          await execFileAsync('git', ['stash', 'pop'], { cwd: workspaceDir });
+        } catch {
+          // Last resort: drop stash to avoid corruption, but changes are lost
+          console.error('[Lint] CRITICAL: stash recovery failed — agent changes may be lost in git stash');
+          await execFileAsync('git', ['stash', 'drop'], { cwd: workspaceDir }).catch(() => {});
+          throw popErr; // Re-throw to fall into outer catch
+        }
+      }
     }
 
     // Now run eslint on restored (modified) workspace
@@ -206,7 +258,7 @@ export async function lintVerifier(workspaceDir: string): Promise<VerificationRe
     }
 
     // New errors detected
-    const summary = ErrorSummarizer.summarizeLintErrors(current.rawOutput);
+    const summary = ErrorSummarizer.summarizeLintErrorsFromJson(current.rawOutput);
     const verificationError: VerificationError = {
       type: 'lint',
       summary,
@@ -215,17 +267,21 @@ export async function lintVerifier(workspaceDir: string): Promise<VerificationRe
     return { passed: false, errors: [verificationError], durationMs };
 
   } catch (gitErr: unknown) {
-    // Git stash failed (e.g., no commits yet, clean working tree)
+    // Git stash failed (e.g., no commits yet)
     // Fall back to simple lint check
-    console.log('[Lint] Git stash failed — falling back to simple lint check');
+    console.info('[Lint] Git stash failed — falling back to simple lint check');
+    return await runSimpleLint(start);
+  }
+
+  async function runSimpleLint(startTime: number): Promise<VerificationResult> {
     const current = await runEslintErrorCount();
-    const durationMs = Date.now() - start;
+    const durationMs = Date.now() - startTime;
 
     if (current.count === 0) {
       return { passed: true, errors: [], durationMs };
     }
 
-    const summary = ErrorSummarizer.summarizeLintErrors(current.rawOutput);
+    const summary = ErrorSummarizer.summarizeLintErrorsFromJson(current.rawOutput);
     const verificationError: VerificationError = {
       type: 'lint',
       summary,
@@ -236,43 +292,50 @@ export async function lintVerifier(workspaceDir: string): Promise<VerificationRe
 }
 
 /**
- * Composite verifier: runs build, test, and lint verifiers in parallel.
+ * Composite verifier: runs build and test in parallel, then lint sequentially.
+ * Lint runs after build+test because it uses git stash which would corrupt the
+ * workspace for concurrent build/test verifiers reading source files.
  * Aggregates results with Build > Test > Lint ordering.
  * Uses Promise.allSettled so a verifier crash doesn't block others.
  */
 export async function compositeVerifier(workspaceDir: string): Promise<VerificationResult> {
-  const [buildResult, testResult, lintResult] = await Promise.allSettled([
+  // Build and test run in parallel (both are read-only on workspace)
+  const [buildResult, testResult] = await Promise.allSettled([
     buildVerifier(workspaceDir),
     testVerifier(workspaceDir),
-    lintVerifier(workspaceDir),
   ]);
+
+  // Lint runs sequentially after build+test to avoid git stash race condition (P2)
+  const lintResult = await lintVerifier(workspaceDir)
+    .then((v): PromiseSettledResult<VerificationResult> => ({ status: 'fulfilled', value: v }))
+    .catch((r): PromiseSettledResult<VerificationResult> => ({ status: 'rejected', reason: r }));
 
   // Resolve each settled result (convert rejections to failed VerificationResult)
   function resolveResult(
     settled: PromiseSettledResult<VerificationResult>,
-    type: VerificationError['type']
+    label: string
   ): VerificationResult {
     if (settled.status === 'fulfilled') {
       return settled.value;
     }
-    // Verifier crashed
+    // Verifier crashed — use 'custom' type to distinguish from actual verification failures
     const message = settled.reason instanceof Error
       ? settled.reason.message
       : String(settled.reason);
     return {
       passed: false,
       errors: [{
-        type,
-        summary: `Verifier crashed: ${message}`,
+        type: 'custom',
+        summary: `${label} verifier crashed: ${message}`,
         rawOutput: message,
       }],
       durationMs: 0,
     };
   }
 
-  const build = resolveResult(buildResult, 'build');
-  const test = resolveResult(testResult, 'test');
-  const lint = resolveResult(lintResult, 'lint');
+  const build = resolveResult(buildResult, 'Build');
+  const test = resolveResult(testResult, 'Test');
+  const lint = resolveResult(lintResult, 'Lint');
 
   // Log timing info per locked decision
   const buildSecs = (build.durationMs / 1000).toFixed(1);
