@@ -51,7 +51,8 @@ export class ContainerManager {
       throw new Error(
         'Docker daemon is not running or not accessible. ' +
         'Please ensure Docker is installed and running. ' +
-        'Try: docker ps'
+        'Try: docker ps',
+        { cause: error }
       );
     }
   }
@@ -92,7 +93,7 @@ export class ContainerManager {
       });
       this.log.info({ containerId: this.container.id }, 'Container created');
     } catch (error) {
-      throw new Error(`Failed to create container: ${getErrorMessage(error)}`);
+      throw new Error(`Failed to create container: ${getErrorMessage(error)}`, { cause: error });
     }
   }
 
@@ -105,7 +106,7 @@ export class ContainerManager {
       await this.container.start();
       this.log.info({ containerId: this.container.id }, 'Container started');
     } catch (error) {
-      throw new Error(`Failed to start container: ${getErrorMessage(error)}`);
+      throw new Error(`Failed to start container: ${getErrorMessage(error)}`, { cause: error });
     }
   }
 
@@ -174,7 +175,7 @@ export class ContainerManager {
         exitCode: inspection.ExitCode ?? 0,
       };
     } catch (error) {
-      throw new Error(`Failed to execute command: ${getErrorMessage(error)}`);
+      throw new Error(`Failed to execute command: ${getErrorMessage(error)}`, { cause: error });
     }
   }
 
@@ -195,7 +196,7 @@ export class ContainerManager {
           await this.container.kill({ signal: 'SIGKILL' });
           this.log.info('Container killed forcefully');
         } catch (killError) {
-          throw new Error(`Failed to kill container: ${getErrorMessage(killError)}`);
+          throw new Error(`Failed to kill container: ${getErrorMessage(killError)}`, { cause: killError });
         }
       }
     }

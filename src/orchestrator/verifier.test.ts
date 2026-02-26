@@ -15,7 +15,6 @@ vi.mock('node:fs/promises', () => ({
 import { buildVerifier, testVerifier, lintVerifier, compositeVerifier } from './verifier.js';
 import { execFile } from 'node:child_process';
 import { access, readFile } from 'node:fs/promises';
-import { promisify } from 'node:util';
 
 // vitest is hoisted but promisify(execFile) is called at module level in verifier.ts.
 // We need to intercept calls at the execFile level. The promisified version calls

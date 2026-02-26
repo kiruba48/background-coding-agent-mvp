@@ -17,7 +17,6 @@ const ALLOWED_GIT_DIFF_FLAGS = new Set([
   '--cached', '--staged', '--stat', '--name-only', '--name-status',
   '--shortstat', '--numstat', '--no-color'
 ]);
-const ALLOWED_GIT_COMMIT_FLAGS = new Set(['-m', '--message']);
 
 // Verified paths in agent-sandbox Alpine 3.18 image
 const COMMAND_PATHS: Record<string, string> = {
@@ -259,7 +258,6 @@ export class AgentSession {
         turnLimit
       );
 
-      status = 'success';
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       error = errorMessage;

@@ -39,7 +39,7 @@ program
     // Validate repo path exists
     try {
       await fs.access(options.repo);
-    } catch (error) {
+    } catch {
       console.error(pc.red(`Error: Repository path does not exist: ${options.repo}`));
       process.exit(2);
     }

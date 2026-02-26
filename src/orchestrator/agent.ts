@@ -248,7 +248,8 @@ export class AgentClient {
 
           // Other API errors - don't retry
           throw new Error(
-            `Anthropic API error (${error.status}): ${error.message}`
+            `Anthropic API error (${error.status}): ${error.message}`,
+            { cause: error }
           );
         }
 

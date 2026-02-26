@@ -225,6 +225,7 @@ export async function lintVerifier(workspaceDir: string): Promise<VerificationRe
     }
 
     let baselineCount = 0;
+    let stashRecoveryError: unknown = undefined;
     try {
       const baseline = await runEslintErrorCount();
       baselineCount = baseline.count;
@@ -243,9 +244,12 @@ export async function lintVerifier(workspaceDir: string): Promise<VerificationRe
           // Last resort: drop stash to avoid corruption, but changes are lost
           console.error('[Lint] CRITICAL: stash recovery failed — agent changes may be lost in git stash');
           await execFileAsync('git', ['stash', 'drop'], { cwd: workspaceDir }).catch(() => {});
-          throw popErr; // Re-throw to fall into outer catch
+          stashRecoveryError = popErr;
         }
       }
+    }
+    if (stashRecoveryError) {
+      throw stashRecoveryError;
     }
 
     // Now run eslint on restored (modified) workspace
@@ -266,7 +270,7 @@ export async function lintVerifier(workspaceDir: string): Promise<VerificationRe
     };
     return { passed: false, errors: [verificationError], durationMs };
 
-  } catch (gitErr: unknown) {
+  } catch {
     // Git stash failed (e.g., no commits yet)
     // Fall back to simple lint check
     console.info('[Lint] Git stash failed — falling back to simple lint check');

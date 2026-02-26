@@ -15,7 +15,6 @@ import { AgentSession } from './session.js';
 const MockAgentSession = AgentSession as ReturnType<typeof vi.fn>;
 
 // Helper to create a mock session object with configurable run result
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function createMockSession(runResult: SessionResult | ((...args: any[]) => Promise<SessionResult>)) {
   const session = {
     start: vi.fn().mockResolvedValue(undefined),
