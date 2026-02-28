@@ -34,6 +34,9 @@ export const MIN_DIFF_CHARS = 10;
 /** Default judge model if JUDGE_MODEL env var is not set. */
 export const DEFAULT_JUDGE_MODEL = 'claude-haiku-4-5-20251001';
 
+/** Timeout for judge API calls in milliseconds (30 seconds). */
+export const JUDGE_TIMEOUT_MS = 30_000;
+
 /** Lockfile filename patterns to replace with a summary note. */
 export const LOCKFILE_PATTERNS = [
   'package-lock.json',
@@ -181,9 +184,7 @@ export async function llmJudge(workspaceDir: string, originalTask: string): Prom
   const processedDiff = truncateDiff(truncateLockfileDiffs(rawDiff));
 
   // Build judge prompt using XML tags (Pattern 3 from research)
-  const judgePrompt = `You are a code review judge evaluating whether an AI agent stayed within the scope of its assigned task.
-
-<original_task>
+  const judgePrompt = `<original_task>
 ${originalTask}
 </original_task>
 
@@ -207,7 +208,7 @@ Return your analysis as JSON with:
   const startTime = Date.now();
 
   try {
-    const client = new Anthropic();
+    const client = new Anthropic({ timeout: JUDGE_TIMEOUT_MS });
     const model = process.env.JUDGE_MODEL ?? DEFAULT_JUDGE_MODEL;
 
     const response = await client.beta.messages.create({
@@ -254,9 +255,13 @@ Return your analysis as JSON with:
       response.content[0].type === 'text' ? response.content[0].text : '';
     const parsed = JSON.parse(text) as {
       reasoning: string;
-      verdict: 'APPROVE' | 'VETO';
+      verdict: string;
       veto_reason: string;
     };
+
+    if (parsed.verdict !== 'APPROVE' && parsed.verdict !== 'VETO') {
+      throw new Error(`Unexpected judge verdict: ${parsed.verdict}`);
+    }
 
     return {
       verdict: parsed.verdict,
@@ -264,9 +269,9 @@ Return your analysis as JSON with:
       veto_reason: parsed.veto_reason,
       durationMs,
     };
-  } catch (err) {
+  } catch {
     const durationMs = Date.now() - startTime;
-    console.error('[LLM Judge] Judge unavailable, failing open:', err instanceof Error ? err.message : String(err));
+    // Fail open — caller (RetryOrchestrator) logs judge crashes via structured logger
     return {
       verdict: 'APPROVE',
       reasoning: 'Judge unavailable — failing open due to API error',

@@ -136,12 +136,12 @@ export class RetryOrchestrator {
 
         // Judge runs AFTER verification passes — separate semantic check
         if (this.retryConfig.judge) {
-          const maxJudgeRetries = this.retryConfig.maxJudgeRetries ?? 1;
+          const maxJudgeVetoes = this.retryConfig.maxJudgeVetoes ?? 1;
 
           // Check if we've already exhausted judge retries
           const judgeVetoCount = judgeResults.filter(r => r.verdict === 'VETO' && !r.skipped).length;
-          if (judgeVetoCount >= maxJudgeRetries) {
-            logger?.warn({ judgeVetoCount, maxJudgeRetries }, 'Judge retry budget exhausted');
+          if (judgeVetoCount >= maxJudgeVetoes) {
+            logger?.warn({ judgeVetoCount, maxJudgeVetoes }, 'Judge retry budget exhausted');
             return {
               finalStatus: 'vetoed',
               attempts: attempt,

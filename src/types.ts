@@ -61,7 +61,7 @@ export interface RetryConfig {
   maxRetries: number;  // default: 3
   verifier?: (workspaceDir: string) => Promise<VerificationResult>;
   judge?: (workspaceDir: string, originalTask: string) => Promise<JudgeResult>;
-  maxJudgeRetries?: number;  // default: 1, separate from maxRetries
+  maxJudgeVetoes?: number;  // default: 1, separate from maxRetries
 }
 
 /**

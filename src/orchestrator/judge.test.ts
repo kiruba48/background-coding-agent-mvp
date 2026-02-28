@@ -50,7 +50,7 @@ const mockExecFile = execFile as unknown as ReturnType<typeof vi.fn>;
 /**
  * Helper to make execFile resolve (simulate success).
  */
-function mockExecSuccess(stdout = '', _stderr = ''): void {
+function mockExecSuccess(stdout = ''): void {
   mockExecFile.mockImplementation(
     (
       _cmd: string,
@@ -58,7 +58,7 @@ function mockExecSuccess(stdout = '', _stderr = ''): void {
       _opts: unknown,
       callback: (err: null, result: { stdout: string; stderr: string }) => void
     ) => {
-      callback(null, { stdout, stderr: _stderr });
+      callback(null, { stdout, stderr: '' });
     }
   );
 }
@@ -91,13 +91,6 @@ function buildApiResponse(verdict: 'APPROVE' | 'VETO', reasoning = 'analysis', v
       },
     ],
   };
-}
-
-/**
- * Get the mock create function (module-level singleton).
- */
-function getMockCreate(): ReturnType<typeof vi.fn> {
-  return mockCreate;
 }
 
 describe('truncateDiff', () => {
@@ -262,7 +255,7 @@ describe('getWorkspaceDiff', () => {
 describe('llmJudge', () => {
   beforeEach(() => {
     mockExecFile.mockReset();
-    getMockCreate().mockReset();
+    mockCreate.mockReset();
   });
 
   it('returns APPROVE verdict when API responds with APPROVE', async () => {
@@ -487,7 +480,7 @@ describe('RetryOrchestrator with judge', () => {
 
     const orchestrator = new RetryOrchestrator(
       { workspaceDir: '/tmp/workspace' },
-      { maxRetries: 3, verifier, judge, maxJudgeRetries: 1 }
+      { maxRetries: 3, verifier, judge, maxJudgeVetoes: 1 }
     );
 
     const result = await orchestrator.run('Fix the bug');
@@ -499,7 +492,7 @@ describe('RetryOrchestrator with judge', () => {
     expect(judge).toHaveBeenCalledWith('/tmp/workspace', 'Fix the bug');
   });
 
-  it('returns vetoed when judge vetoes maxJudgeRetries times', async () => {
+  it('returns vetoed when judge vetoes maxJudgeVetoes times', async () => {
     // Verifier always passes, judge always vetoes
     const verifier = vi.fn().mockResolvedValue(makePassedVerification());
     const judge = vi.fn().mockResolvedValue(makeVetoResult('Changed unrelated files'));
@@ -513,7 +506,7 @@ describe('RetryOrchestrator with judge', () => {
 
     const orchestrator = new RetryOrchestrator(
       { workspaceDir: '/tmp/workspace' },
-      { maxRetries: 3, verifier, judge, maxJudgeRetries: 1 }
+      { maxRetries: 3, verifier, judge, maxJudgeVetoes: 1 }
     );
 
     const result = await orchestrator.run('Fix the bug');
@@ -537,10 +530,10 @@ describe('RetryOrchestrator with judge', () => {
       .mockImplementationOnce(function() { return session1; })
       .mockImplementationOnce(function() { return session2; });
 
-    // maxJudgeRetries: 2 — allows 1 veto retry before declaring vetoed
+    // maxJudgeVetoes: 2 — allows 1 veto retry before declaring vetoed
     const orchestrator = new RetryOrchestrator(
       { workspaceDir: '/tmp/workspace' },
-      { maxRetries: 3, verifier, judge, maxJudgeRetries: 2 }
+      { maxRetries: 3, verifier, judge, maxJudgeVetoes: 2 }
     );
 
     const result = await orchestrator.run('Fix the bug');
@@ -598,10 +591,10 @@ describe('RetryOrchestrator with judge', () => {
       .mockImplementationOnce(function() { return session1; })
       .mockImplementationOnce(function() { return session2; });
 
-    // maxJudgeRetries: 2 — allows judge to run on attempt 2 (first veto used only 1 of 2 retries)
+    // maxJudgeVetoes: 2 — allows judge to run on attempt 2 (first veto used only 1 of 2 retries)
     const orchestrator = new RetryOrchestrator(
       { workspaceDir: '/tmp/workspace' },
-      { maxRetries: 3, verifier, judge, maxJudgeRetries: 2 }
+      { maxRetries: 3, verifier, judge, maxJudgeVetoes: 2 }
     );
 
     await orchestrator.run('Fix the bug');
@@ -622,7 +615,7 @@ describe('RetryOrchestrator with judge', () => {
 
     const orchestrator = new RetryOrchestrator(
       { workspaceDir: '/tmp/workspace' },
-      { maxRetries: 3, verifier, judge, maxJudgeRetries: 1 }
+      { maxRetries: 3, verifier, judge, maxJudgeVetoes: 1 }
     );
 
     const result = await orchestrator.run('Fix the bug');

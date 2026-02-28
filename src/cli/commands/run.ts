@@ -53,7 +53,7 @@ export async function runAgent(options: RunOptions): Promise<number> {
       maxRetries: options.maxRetries,
       verifier: compositeVerifier,  // Phase 5: wire verifiers into retry loop
       judge: judgeDisabled ? undefined : llmJudge,  // Phase 6: LLM Judge after verification
-      maxJudgeRetries: 1,
+      maxJudgeVetoes: 1,
     }
   );
 
@@ -82,10 +82,12 @@ export async function runAgent(options: RunOptions): Promise<number> {
     // Run the retry orchestration loop
     const retryResult = await orchestrator.run(prompt, childLogger);
 
-    // Record metrics using the final session result
+    // Record metrics using retryResult.finalStatus (not lastSession.status,
+    // which would incorrectly record 'vetoed' runs as 'success')
     if (retryResult.sessionResults.length > 0) {
       const lastSession = retryResult.sessionResults[retryResult.sessionResults.length - 1];
-      metrics.recordSession(lastSession.status, lastSession.toolCallCount, lastSession.duration);
+      const status = retryResult.finalStatus === 'max_retries_exhausted' ? 'failed' : retryResult.finalStatus;
+      metrics.recordSession(status, lastSession.toolCallCount, lastSession.duration);
     }
 
     // Log retry result as structured JSON
@@ -112,18 +114,6 @@ export async function runAgent(options: RunOptions): Promise<number> {
         break;
       case 'timeout':
         exitCode = 124;
-        break;
-      case 'max_retries_exhausted':
-        exitCode = 1;
-        break;
-      case 'turn_limit':
-        exitCode = 1;
-        break;
-      case 'failed':
-        exitCode = 1;
-        break;
-      case 'vetoed':
-        exitCode = 1;
         break;
       default:
         exitCode = 1;
