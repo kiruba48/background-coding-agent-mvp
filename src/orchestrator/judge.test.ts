@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { SessionResult, VerificationResult, JudgeResult } from '../types.js';
 
 // Shared mock for Anthropic client's beta.messages.create method
 const mockCreate = vi.fn();
@@ -23,6 +24,12 @@ vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
 }));
 
+// Mock AgentSession before importing RetryOrchestrator
+vi.mock('./session.js', () => {
+  const MockAgentSession = vi.fn();
+  return { AgentSession: MockAgentSession };
+});
+
 import { execFile } from 'node:child_process';
 import {
   llmJudge,
@@ -32,6 +39,10 @@ import {
   MAX_DIFF_CHARS,
   MIN_DIFF_CHARS,
 } from './judge.js';
+import { RetryOrchestrator } from './retry.js';
+import { AgentSession } from './session.js';
+
+const MockAgentSession = AgentSession as ReturnType<typeof vi.fn>;
 
 // Cast mocks for typed access
 const mockExecFile = execFile as unknown as ReturnType<typeof vi.fn>;
@@ -415,5 +426,211 @@ describe('llmJudge', () => {
 
     const callArgs = mockCreate.mock.calls[0][0];
     expect(callArgs.model).toBe('claude-sonnet-4-5-20250929');
+  });
+});
+
+// ============================================================
+// RetryOrchestrator with judge integration
+// ============================================================
+
+/** Helper to create a mock AgentSession with configurable run result */
+function createMockSession(result: SessionResult): object {
+  return {
+    start: vi.fn().mockResolvedValue(undefined),
+    stop: vi.fn().mockResolvedValue(undefined),
+    run: vi.fn().mockResolvedValue(result),
+  };
+}
+
+/** Helper to make a successful SessionResult */
+function makeSessionResult(overrides: Partial<SessionResult> = {}): SessionResult {
+  return {
+    sessionId: 'test-session',
+    status: 'success',
+    toolCallCount: 2,
+    duration: 1000,
+    finalResponse: 'Done.',
+    ...overrides,
+  };
+}
+
+/** Helper to make a passing VerificationResult */
+function makePassedVerification(): VerificationResult {
+  return { passed: true, errors: [], durationMs: 50 };
+}
+
+/** Helper to make a mock judge function that returns a specific verdict */
+function makeJudgeFn(result: JudgeResult): (workspaceDir: string, originalTask: string) => Promise<JudgeResult> {
+  return vi.fn().mockResolvedValue(result);
+}
+
+/** Helper to make an APPROVE JudgeResult */
+function makeApproveResult(): JudgeResult {
+  return { verdict: 'APPROVE', reasoning: 'Scope aligned', veto_reason: '', durationMs: 10 };
+}
+
+/** Helper to make a VETO JudgeResult */
+function makeVetoResult(reason = 'Scope creep detected'): JudgeResult {
+  return { verdict: 'VETO', reasoning: 'Agent exceeded scope', veto_reason: reason, durationMs: 10 };
+}
+
+describe('RetryOrchestrator with judge', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns success when verifier passes and judge approves', async () => {
+    const verifier = vi.fn().mockResolvedValue(makePassedVerification());
+    const judge = makeJudgeFn(makeApproveResult());
+    const session = createMockSession(makeSessionResult());
+    MockAgentSession.mockImplementationOnce(function() { return session; });
+
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace' },
+      { maxRetries: 3, verifier, judge, maxJudgeRetries: 1 }
+    );
+
+    const result = await orchestrator.run('Fix the bug');
+
+    expect(result.finalStatus).toBe('success');
+    expect(result.attempts).toBe(1);
+    expect(result.judgeResults).toHaveLength(1);
+    expect(result.judgeResults![0].verdict).toBe('APPROVE');
+    expect(judge).toHaveBeenCalledWith('/tmp/workspace', 'Fix the bug');
+  });
+
+  it('returns vetoed when judge vetoes maxJudgeRetries times', async () => {
+    // Verifier always passes, judge always vetoes
+    const verifier = vi.fn().mockResolvedValue(makePassedVerification());
+    const judge = vi.fn().mockResolvedValue(makeVetoResult('Changed unrelated files'));
+
+    // We need 2 sessions: attempt 1 (veto → retry) + attempt 2 (veto budget exhausted → vetoed)
+    const session1 = createMockSession(makeSessionResult());
+    const session2 = createMockSession(makeSessionResult());
+    MockAgentSession
+      .mockImplementationOnce(function() { return session1; })
+      .mockImplementationOnce(function() { return session2; });
+
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace' },
+      { maxRetries: 3, verifier, judge, maxJudgeRetries: 1 }
+    );
+
+    const result = await orchestrator.run('Fix the bug');
+
+    expect(result.finalStatus).toBe('vetoed');
+    expect(result.attempts).toBe(2);
+    expect(result.judgeResults).toHaveLength(1); // only 1 veto recorded before budget check
+    expect(result.error).toContain('vetoed');
+  });
+
+  it('returns success on second attempt after first veto then approve', async () => {
+    const verifier = vi.fn().mockResolvedValue(makePassedVerification());
+    // Judge vetoes on first call, approves on second
+    const judge = vi.fn()
+      .mockResolvedValueOnce(makeVetoResult('Unrelated change'))
+      .mockResolvedValueOnce(makeApproveResult());
+
+    const session1 = createMockSession(makeSessionResult());
+    const session2 = createMockSession(makeSessionResult());
+    MockAgentSession
+      .mockImplementationOnce(function() { return session1; })
+      .mockImplementationOnce(function() { return session2; });
+
+    // maxJudgeRetries: 2 — allows 1 veto retry before declaring vetoed
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace' },
+      { maxRetries: 3, verifier, judge, maxJudgeRetries: 2 }
+    );
+
+    const result = await orchestrator.run('Fix the bug');
+
+    expect(result.finalStatus).toBe('success');
+    expect(result.attempts).toBe(2);
+    expect(result.judgeResults).toHaveLength(2);
+    expect(result.judgeResults![0].verdict).toBe('VETO');
+    expect(result.judgeResults![1].verdict).toBe('APPROVE');
+    expect(judge).toHaveBeenCalledTimes(2);
+  });
+
+  it('skips judge when not configured (backward compatibility)', async () => {
+    const verifier = vi.fn().mockResolvedValue(makePassedVerification());
+    const session = createMockSession(makeSessionResult());
+    MockAgentSession.mockImplementationOnce(function() { return session; });
+
+    // No judge in config
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace' },
+      { maxRetries: 3, verifier }
+    );
+
+    const result = await orchestrator.run('Fix the bug');
+
+    expect(result.finalStatus).toBe('success');
+    expect(result.attempts).toBe(1);
+    expect(result.judgeResults).toHaveLength(0);
+  });
+
+  it('includes veto reason in retry message when judge vetoes', async () => {
+    const verifier = vi.fn().mockResolvedValue(makePassedVerification());
+    const judge = vi.fn()
+      .mockResolvedValueOnce(makeVetoResult('Modified unrelated config file'))
+      .mockResolvedValueOnce(makeApproveResult());
+
+    const capturedMessages: string[] = [];
+    const session1 = {
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      run: vi.fn().mockImplementation(async (msg: string) => {
+        capturedMessages.push(msg);
+        return makeSessionResult();
+      }),
+    };
+    const session2 = {
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      run: vi.fn().mockImplementation(async (msg: string) => {
+        capturedMessages.push(msg);
+        return makeSessionResult();
+      }),
+    };
+    MockAgentSession
+      .mockImplementationOnce(function() { return session1; })
+      .mockImplementationOnce(function() { return session2; });
+
+    // maxJudgeRetries: 2 — allows judge to run on attempt 2 (first veto used only 1 of 2 retries)
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace' },
+      { maxRetries: 3, verifier, judge, maxJudgeRetries: 2 }
+    );
+
+    await orchestrator.run('Fix the bug');
+
+    // Second message should contain the judge veto info
+    expect(capturedMessages).toHaveLength(2);
+    expect(capturedMessages[1]).toContain('VETOED BY LLM JUDGE');
+    expect(capturedMessages[1]).toContain('Modified unrelated config file');
+  });
+
+  it('continues normally when judge crashes (fail open)', async () => {
+    const verifier = vi.fn().mockResolvedValue(makePassedVerification());
+    // Judge throws an error (crash)
+    const judge = vi.fn().mockRejectedValue(new Error('Judge API unavailable'));
+
+    const session = createMockSession(makeSessionResult());
+    MockAgentSession.mockImplementationOnce(function() { return session; });
+
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace' },
+      { maxRetries: 3, verifier, judge, maxJudgeRetries: 1 }
+    );
+
+    const result = await orchestrator.run('Fix the bug');
+
+    // Should succeed despite judge crash (fail open)
+    expect(result.finalStatus).toBe('success');
+    expect(result.judgeResults).toHaveLength(1);
+    expect(result.judgeResults![0].verdict).toBe('APPROVE');
+    expect(result.judgeResults![0].skipped).toBe(true);
   });
 });
