@@ -1,27 +1,29 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// Shared mock for Anthropic client's beta.messages.create method
+const mockCreate = vi.fn();
+
+// Mock @anthropic-ai/sdk before importing judge
+vi.mock('@anthropic-ai/sdk', () => {
+  return {
+    default: function MockAnthropic() {
+      return {
+        beta: {
+          messages: {
+            create: mockCreate,
+          },
+        },
+      };
+    },
+  };
+});
+
 // Mock node:child_process before importing judge
 vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
 }));
 
-// Mock @anthropic-ai/sdk before importing judge
-vi.mock('@anthropic-ai/sdk', () => {
-  const mockCreate = vi.fn();
-  return {
-    default: vi.fn().mockImplementation(() => ({
-      beta: {
-        messages: {
-          create: mockCreate,
-        },
-      },
-    })),
-    __mockCreate: mockCreate,
-  };
-});
-
 import { execFile } from 'node:child_process';
-import Anthropic from '@anthropic-ai/sdk';
 import {
   llmJudge,
   getWorkspaceDiff,
@@ -67,14 +69,6 @@ function mockExecFailure(message = 'error'): void {
 }
 
 /**
- * Get the mock create function from the mocked Anthropic module.
- */
-function getMockCreate(): ReturnType<typeof vi.fn> {
-  const instance = new (Anthropic as unknown as new () => { beta: { messages: { create: ReturnType<typeof vi.fn> } } })();
-  return instance.beta.messages.create;
-}
-
-/**
  * Build a mock Anthropic API response with structured output JSON text.
  */
 function buildApiResponse(verdict: 'APPROVE' | 'VETO', reasoning = 'analysis', veto_reason = ''): object {
@@ -86,6 +80,13 @@ function buildApiResponse(verdict: 'APPROVE' | 'VETO', reasoning = 'analysis', v
       },
     ],
   };
+}
+
+/**
+ * Get the mock create function (module-level singleton).
+ */
+function getMockCreate(): ReturnType<typeof vi.fn> {
+  return mockCreate;
 }
 
 describe('truncateDiff', () => {
@@ -248,13 +249,9 @@ describe('getWorkspaceDiff', () => {
 });
 
 describe('llmJudge', () => {
-  let mockCreate: ReturnType<typeof vi.fn>;
-
   beforeEach(() => {
     mockExecFile.mockReset();
-    // Get the mock create function from new Anthropic() instance
-    mockCreate = getMockCreate();
-    mockCreate.mockReset();
+    getMockCreate().mockReset();
   });
 
   it('returns APPROVE verdict when API responds with APPROVE', async () => {

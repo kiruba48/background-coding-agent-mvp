@@ -14,6 +14,7 @@ export { MetricsCollector } from './metrics.js';
 export { RetryOrchestrator } from './retry.js';
 export { ErrorSummarizer } from './summarizer.js';
 export { buildVerifier, testVerifier, lintVerifier, compositeVerifier } from './verifier.js';
+export { llmJudge } from './judge.js';
 export type {
   Tool,
   ToolCall,
@@ -24,4 +25,4 @@ export type {
 } from './agent.js';
 export type { SessionConfig } from './session.js';
 export type { SessionMetrics, ComputedMetrics } from './metrics.js';
-export type { SessionResult, VerificationError, VerificationResult, RetryConfig, RetryResult } from '../types.js';
+export type { SessionResult, VerificationError, VerificationResult, RetryConfig, RetryResult, JudgeResult } from '../types.js';
