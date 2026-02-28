@@ -25,11 +25,11 @@ export interface SessionResult {
 }
 
 /**
- * A single verification error from a verifier (build, test, lint, or custom).
+ * A single verification error from a verifier (build, test, lint, judge, or custom).
  * Phase 5 verifiers will produce these; Phase 4 defines the interface.
  */
 export interface VerificationError {
-  type: 'build' | 'test' | 'lint' | 'custom';
+  type: 'build' | 'test' | 'lint' | 'judge' | 'custom';
   summary: string;       // LLM-digestible 1-line summary, max ~100 chars
   rawOutput?: string;    // Full output for logging only, NOT sent to LLM
 }
@@ -44,20 +44,34 @@ export interface VerificationResult {
 }
 
 /**
+ * Result from the LLM judge evaluation of agent-produced changes.
+ */
+export interface JudgeResult {
+  verdict: 'APPROVE' | 'VETO';
+  reasoning: string;
+  veto_reason: string;
+  durationMs: number;
+  skipped?: boolean;  // true if judge was bypassed due to API error
+}
+
+/**
  * Configuration for retry orchestration.
  */
 export interface RetryConfig {
   maxRetries: number;  // default: 3
   verifier?: (workspaceDir: string) => Promise<VerificationResult>;
+  judge?: (workspaceDir: string, originalTask: string) => Promise<JudgeResult>;
+  maxJudgeRetries?: number;  // default: 1, separate from maxRetries
 }
 
 /**
  * Result from a full retry-orchestrated run (may include multiple session attempts).
  */
 export interface RetryResult {
-  finalStatus: 'success' | 'failed' | 'timeout' | 'turn_limit' | 'max_retries_exhausted';
+  finalStatus: 'success' | 'failed' | 'timeout' | 'turn_limit' | 'max_retries_exhausted' | 'vetoed';
   attempts: number;           // 1-indexed, always >= 1
   sessionResults: SessionResult[];
   verificationResults: VerificationResult[];
+  judgeResults?: JudgeResult[];  // all judge invocations for logging
   error?: string;
 }
