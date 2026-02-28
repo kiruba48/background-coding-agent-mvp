@@ -22,12 +22,12 @@ See: .planning/PROJECT.md (updated 2025-01-25)
 
 ## Current Position
 
-Phase: 6 of 10 (LLM Judge Integration) — In Progress
-Plan: 1 of 2 (06-01 complete)
-Status: 06-01 complete — LLM Judge core (llmJudge function, JudgeResult type, 22 unit tests); ready for 06-02 (RetryOrchestrator integration)
-Last activity: 2026-02-28 — 06-01 complete (llmJudge with structured output, fail-open, lockfile truncation, 22 tests)
+Phase: 6 of 10 (LLM Judge Integration) — Complete
+Plan: 2 of 2 (06-02 complete)
+Status: 06-02 complete — Judge integration in RetryOrchestrator (post-verification judge check, separate 1-veto budget, --no-judge CLI flag, vetoed exit code, 6 new tests); Phase 6 fully complete
+Last activity: 2026-02-28 — 06-02 complete (judge wired into RetryOrchestrator, 28 judge tests total, 90 unit tests pass)
 
-Progress: [█████░░░░░] 61% (14/23 plans)
+Progress: [██████░░░░] 65% (15/23 plans)
 
 ## Performance Metrics
 
@@ -45,11 +45,11 @@ Progress: [█████░░░░░] 61% (14/23 plans)
 | Phase 3 | 2/2 | 27.4 min | 13.7 min |
 | Phase 4 | 2/2 | 6 min | 3 min |
 | Phase 5 | 2/2 | 6 min | 3 min |
-| Phase 6 | 1/2 | 4 min | 4 min |
+| Phase 6 | 2/2 | 9 min | 4.5 min |
 
 **Recent Trend:**
-- Last 5 plans: 06-01 (4 min), 05-02 (3 min), 05-01 (3 min), 04-02 (4 min), 04-01 (2 min)
-- Trend: Phase 6 plan 1 on track — TDD with 22 tests, SDK type resolution required one auto-fix
+- Last 5 plans: 06-02 (5 min), 06-01 (4 min), 05-02 (3 min), 05-01 (3 min), 04-02 (4 min)
+- Trend: Phase 6 complete — judge integrated end-to-end (judge.ts + retry.ts + run.ts + tests)
 
 *Updated after each plan completion*
 
@@ -108,6 +108,9 @@ Recent decisions affecting current work:
 - [Phase 05-02]: Mock node:child_process at execFile callback level to work with promisify(execFile) used in verifier.ts
 - [Phase 06-01]: Cast beta.messages.create response as any then BetaMessage to resolve SDK union type
 - [Phase 06-01]: Module-level mockCreate singleton in tests avoids vi.mock constructor pattern issues
+- [Phase 06-02]: Judge veto budget check fires before calling judge — judgeVetoCount >= maxJudgeRetries returns 'vetoed' immediately without another API call
+- [Phase 06-02]: Veto stored as VerificationResult (type='judge') so ErrorSummarizer.buildDigest includes it in retry message via existing pipeline
+- [Phase 06-02]: maxJudgeRetries=1 means 1 total veto allowed; test for "veto then approve" requires maxJudgeRetries=2
 
 ### Pending Todos
 
@@ -123,12 +126,12 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-28 (execute-plan)
-Stopped at: Completed 06-01-PLAN.md
-Resume file: .planning/phases/06-llm-judge-integration/06-02-PLAN.md
+Stopped at: Completed 06-02-PLAN.md
+Resume file: .planning/phases/07-PLAN.md (or next phase)
 
 **Phase 1 Complete:** Foundation & Security architecture fully implemented and verified (2026-01-27)
 **Phase 2 Complete:** CLI & Orchestration — Pino logging, session safety limits, MetricsCollector, Docker health check, Commander.js CLI (2026-02-06)
 **Phase 3 Complete:** Agent Tool Access — Safe tool implementations (edit_file, git_operation, grep, bash_command) with hardened path validation and comprehensive test suite (28 tests) (2026-02-12)
 **Phase 4 Complete:** Retry & Context Engineering — RetryOrchestrator, ErrorSummarizer, CLI --max-retries flag, 31 vitest unit tests (2026-02-17)
 **Phase 5 Complete:** Deterministic Verification — ESLint v10 flat config, build/test/lint/composite verifiers, compositeVerifier wired into CLI RetryOrchestrator, 24 vitest unit tests (2026-02-18)
-**Phase 6 In Progress:** LLM Judge — 06-01 complete: llmJudge function with beta structured output API, fail-open error handling, lockfile diff truncation, 22 vitest unit tests (2026-02-28)
+**Phase 6 Complete:** LLM Judge — 06-01: llmJudge function (structured output, fail-open, lockfile truncation, 22 tests) + 06-02: judge wired into RetryOrchestrator (post-verification check, 1-veto budget, --no-judge flag, 6 integration tests, 90 total tests) (2026-02-28)
