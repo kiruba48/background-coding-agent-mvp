@@ -2,6 +2,7 @@ import { RetryOrchestrator } from '../../orchestrator/retry.js';
 import { MetricsCollector } from '../../orchestrator/metrics.js';
 import { createLogger } from '../utils/logger.js';
 import { compositeVerifier } from '../../orchestrator/verifier.js';
+import { llmJudge } from '../../orchestrator/judge.js';
 
 export interface RunOptions {
   taskType: string;
@@ -9,6 +10,7 @@ export interface RunOptions {
   turnLimit: number;    // already parsed and validated by CLI
   timeout: number;      // seconds, already parsed and validated
   maxRetries: number;   // default: 3, validated 1-10
+  noJudge?: boolean;    // if true, skip LLM judge (--no-judge flag or JUDGE_ENABLED=false)
 }
 
 /**
@@ -33,6 +35,12 @@ export async function runAgent(options: RunOptions): Promise<number> {
     repo: options.repo
   });
 
+  // Determine if judge is disabled
+  const judgeDisabled = options.noJudge === true || process.env.JUDGE_ENABLED === 'false';
+  if (judgeDisabled) {
+    childLogger.info('LLM Judge disabled via --no-judge or JUDGE_ENABLED=false');
+  }
+
   // Create RetryOrchestrator with session config + retry config
   const orchestrator = new RetryOrchestrator(
     {
@@ -44,6 +52,8 @@ export async function runAgent(options: RunOptions): Promise<number> {
     {
       maxRetries: options.maxRetries,
       verifier: compositeVerifier,  // Phase 5: wire verifiers into retry loop
+      judge: judgeDisabled ? undefined : llmJudge,  // Phase 6: LLM Judge after verification
+      maxJudgeRetries: 1,
     }
   );
 
@@ -86,6 +96,7 @@ export async function runAgent(options: RunOptions): Promise<number> {
           attempts: retryResult.attempts,
           sessionCount: retryResult.sessionResults.length,
           verificationCount: retryResult.verificationResults.length,
+          judgeCount: retryResult.judgeResults?.length ?? 0,
           error: retryResult.error,
         },
         metrics: metrics.getMetrics(),
@@ -109,6 +120,9 @@ export async function runAgent(options: RunOptions): Promise<number> {
         exitCode = 1;
         break;
       case 'failed':
+        exitCode = 1;
+        break;
+      case 'vetoed':
         exitCode = 1;
         break;
       default:

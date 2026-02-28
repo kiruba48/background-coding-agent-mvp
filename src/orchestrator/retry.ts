@@ -1,6 +1,6 @@
 import pino from 'pino';
 import { AgentSession, SessionConfig } from './session.js';
-import { SessionResult, RetryConfig, RetryResult, VerificationResult } from '../types.js';
+import { SessionResult, RetryConfig, RetryResult, VerificationResult, JudgeResult } from '../types.js';
 import { ErrorSummarizer } from './summarizer.js';
 
 /**
@@ -53,6 +53,7 @@ export class RetryOrchestrator {
     const maxRetries = this.retryConfig.maxRetries;
     const sessionResults: SessionResult[] = [];
     const verificationResults: VerificationResult[] = [];
+    const judgeResults: JudgeResult[] = [];
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       logger?.info({ attempt, maxRetries }, 'Starting retry attempt');
@@ -95,6 +96,7 @@ export class RetryOrchestrator {
           attempts: attempt,
           sessionResults,
           verificationResults,
+          judgeResults,
           error: sessionResult.error
         };
       }
@@ -106,7 +108,8 @@ export class RetryOrchestrator {
           finalStatus: 'success',
           attempts: attempt,
           sessionResults,
-          verificationResults
+          verificationResults,
+          judgeResults,
         };
       }
 
@@ -122,6 +125,7 @@ export class RetryOrchestrator {
           attempts: attempt,
           sessionResults,
           verificationResults,
+          judgeResults,
           error: `Verifier error: ${err instanceof Error ? err.message : String(err)}`
         };
       }
@@ -129,11 +133,78 @@ export class RetryOrchestrator {
 
       if (verification.passed) {
         logger?.info({ attempt }, 'Verification passed');
+
+        // Judge runs AFTER verification passes — separate semantic check
+        if (this.retryConfig.judge) {
+          const maxJudgeRetries = this.retryConfig.maxJudgeRetries ?? 1;
+
+          // Check if we've already exhausted judge retries
+          const judgeVetoCount = judgeResults.filter(r => r.verdict === 'VETO' && !r.skipped).length;
+          if (judgeVetoCount >= maxJudgeRetries) {
+            logger?.warn({ judgeVetoCount, maxJudgeRetries }, 'Judge retry budget exhausted');
+            return {
+              finalStatus: 'vetoed',
+              attempts: attempt,
+              sessionResults,
+              verificationResults,
+              judgeResults,
+              error: `Judge vetoed ${judgeVetoCount} time(s) — retry budget exhausted`,
+            };
+          }
+
+          let judgeResult: JudgeResult;
+          try {
+            judgeResult = await this.retryConfig.judge(this.config.workspaceDir, originalTask);
+          } catch (err) {
+            // Judge crash = fail open (approve) — not a reason to block
+            logger?.warn({ attempt, err }, 'Judge crashed, failing open');
+            judgeResult = {
+              verdict: 'APPROVE',
+              reasoning: 'Judge crashed, failing open',
+              veto_reason: '',
+              durationMs: 0,
+              skipped: true,
+            };
+          }
+          judgeResults.push(judgeResult);
+
+          logger?.info({
+            attempt,
+            verdict: judgeResult.verdict,
+            reasoning: judgeResult.reasoning,
+            veto_reason: judgeResult.veto_reason,
+            durationMs: judgeResult.durationMs,
+            skipped: judgeResult.skipped,
+          }, 'LLM Judge result');
+
+          if (judgeResult.verdict === 'VETO' && !judgeResult.skipped) {
+            // Veto: add as verification error for retry message, continue loop
+            const judgeVerification: VerificationResult = {
+              passed: false,
+              errors: [{
+                type: 'judge',
+                summary: `[JUDGE VETO] ${judgeResult.veto_reason}`,
+                rawOutput: judgeResult.reasoning,
+              }],
+              durationMs: judgeResult.durationMs,
+            };
+            verificationResults.push(judgeVerification);
+
+            logger?.warn(
+              { attempt, veto_reason: judgeResult.veto_reason },
+              'Judge vetoed, retrying with veto feedback'
+            );
+            continue; // next attempt in the retry loop
+          }
+        }
+
+        // Verification passed AND judge approved (or skipped, or no judge configured)
         return {
           finalStatus: 'success',
           attempts: attempt,
           sessionResults,
-          verificationResults
+          verificationResults,
+          judgeResults,
         };
       }
 
@@ -150,7 +221,8 @@ export class RetryOrchestrator {
       attempts: maxRetries,
       sessionResults,
       verificationResults,
-      error: `Verification still failing after ${maxRetries} attempts`
+      judgeResults,
+      error: `Verification still failing after ${maxRetries} attempts`,
     };
   }
 
@@ -174,13 +246,20 @@ export class RetryOrchestrator {
     const lastFailed = failedResults.length > 0 ? [failedResults[failedResults.length - 1]] : [];
     const errorDigest = ErrorSummarizer.buildDigest(lastFailed);
 
+    // Check if the last failure was a judge veto (has an error with type 'judge')
+    const lastFailedResult = failedResults[failedResults.length - 1];
+    const isJudgeVeto = lastFailedResult?.errors?.some(e => e.type === 'judge') ?? false;
+    const failureLabel = isJudgeVeto
+      ? `PREVIOUS ATTEMPT ${attempt - 1} WAS VETOED BY LLM JUDGE:`
+      : `PREVIOUS ATTEMPT ${attempt - 1} FAILED VERIFICATION:`;
+
     return [
       // 1. Original task ALWAYS comes first — primary directive
       originalTask,
       '',
       // 2. Structured error context — secondary information
       '---',
-      `PREVIOUS ATTEMPT ${attempt - 1} FAILED VERIFICATION:`,
+      failureLabel,
       errorDigest,
       '---',
       // 3. Clear instruction for retry

@@ -14,6 +14,7 @@ program
   .option('--turn-limit <number>', 'Maximum agent turns (default: 10)', '10')
   .option('--timeout <seconds>', 'Session timeout in seconds (default: 300)', '300')
   .option('--max-retries <number>', 'Maximum retry attempts on verification failure (default: 3)', '3')
+  .option('--no-judge', 'Disable LLM Judge semantic verification (also: JUDGE_ENABLED=false)')
   .action(async (options) => {
     // Validate turn-limit
     const turnLimit = parseInt(options.turnLimit, 10);
@@ -51,6 +52,7 @@ program
       turnLimit,
       timeout,
       maxRetries,
+      noJudge: options.judge === false,  // Commander.js: --no-judge sets options.judge = false
     });
 
     process.exit(exitCode);
