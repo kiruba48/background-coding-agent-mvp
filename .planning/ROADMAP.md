@@ -118,11 +118,11 @@ Plans:
   3. Judge veto prevents PR creation even if deterministic checks pass
   4. Judge feedback is included in session logs for debugging
   5. Veto rate tracked as key metric (target ~25%)
-**Plans**: TBD
+**Plans**: 2 plans in 2 waves
 
 Plans:
-- [ ] 06-01: TBD
-- [ ] 06-02: TBD
+- [ ] 06-01-PLAN.md — LLM Judge core implementation: JudgeResult type, llmJudge function with structured output, diff retrieval, lockfile truncation (Wave 1)
+- [ ] 06-02-PLAN.md — RetryOrchestrator integration, CLI --no-judge flag, comprehensive unit tests (Wave 2)
 
 ### Phase 7: PR Creation
 **Goal**: Successful verification creates descriptive PR with metadata for human review
