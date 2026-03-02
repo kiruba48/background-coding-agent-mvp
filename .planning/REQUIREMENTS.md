@@ -9,13 +9,13 @@ Requirements for v1.1 End-to-End Pipeline. Each maps to roadmap phases.
 
 ### PR Creation
 
-- [ ] **PR-01**: Agent creates GitHub PR on target repo after successful verification
-- [ ] **PR-02**: Agent auto-generates branch name from task context (e.g., `agent/update-spring-boot-3.2`)
-- [ ] **PR-03**: User can override branch name via CLI flag
-- [ ] **PR-04**: PR body includes task prompt, summary of changes, diff stats
-- [ ] **PR-05**: PR body includes verification results (build/test/lint pass/fail)
-- [ ] **PR-06**: PR body includes LLM Judge verdict and reasoning
-- [ ] **PR-07**: PR body flags potential breaking changes for reviewer
+- [ ] **PR-01**: Agent creates GitHub PR on target repo after successful verification (service built in 07-01; CLI wiring in 07-02)
+- [x] **PR-02**: Agent auto-generates branch name from task context (e.g., `agent/update-spring-boot-3.2`)
+- [ ] **PR-03**: User can override branch name via CLI flag (07-02)
+- [x] **PR-04**: PR body includes task prompt, summary of changes, diff stats
+- [x] **PR-05**: PR body includes verification results (build/test/lint pass/fail)
+- [x] **PR-06**: PR body includes LLM Judge verdict and reasoning
+- [x] **PR-07**: PR body flags potential breaking changes for reviewer
 
 ### Maven Dependency Update
 
@@ -71,13 +71,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PR-01 | Phase 7 | Pending |
-| PR-02 | Phase 7 | Pending |
-| PR-03 | Phase 7 | Pending |
-| PR-04 | Phase 7 | Pending |
-| PR-05 | Phase 7 | Pending |
-| PR-06 | Phase 7 | Pending |
-| PR-07 | Phase 7 | Pending |
+| PR-01 | Phase 7 | In progress (07-01 service done, 07-02 CLI wiring pending) |
+| PR-02 | Phase 7 | Complete (07-01) |
+| PR-03 | Phase 7 | Pending (07-02) |
+| PR-04 | Phase 7 | Complete (07-01) |
+| PR-05 | Phase 7 | Complete (07-01) |
+| PR-06 | Phase 7 | Complete (07-01) |
+| PR-07 | Phase 7 | Complete (07-01) |
 | MVN-01 | Phase 8 | Pending |
 | MVN-02 | Phase 8 | Pending |
 | MVN-03 | Phase 8 | Pending |
@@ -96,4 +96,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-03-02*
-*Last updated: 2026-03-02 after roadmap creation (traceability complete)*
+*Last updated: 2026-03-02 after 07-01 execution (PR-02, PR-04, PR-05, PR-06, PR-07 complete)*

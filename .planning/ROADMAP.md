@@ -25,7 +25,7 @@ Full details: [v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 
 **Milestone Goal:** Ship the complete pipeline — agent takes a dependency update task, executes in Docker, verifies changes, and creates a GitHub PR with full context.
 
-- [ ] **Phase 7: GitHub PR Creation** - Agent creates richly-described PRs on GitHub after successful verification
+- 🚧 **Phase 7: GitHub PR Creation** - Agent creates richly-described PRs on GitHub after successful verification
 - [ ] **Phase 8: Maven Dependency Update** - Full Maven dep update task: CLI → Docker agent → verify → PR
 - [ ] **Phase 9: npm Dependency Update** - Full npm dep update task: CLI → Docker agent → verify → PR
 
@@ -41,7 +41,9 @@ Full details: [v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
   3. The PR body contains the original task prompt, a summary of changes, and diff stats
   4. The PR body shows verification results (build/test/lint pass) and LLM Judge verdict with reasoning
   5. The PR body flags potential breaking changes so a human reviewer knows what to scrutinize
-**Plans**: TBD
+**Plans**: 2 total
+- [x] **07-01** — GitHubPRCreator service (types, dependencies, pr-creator module, 37 tests)
+- [ ] **07-02** — Wire GitHubPRCreator into CLI (`--create-pr`, `--branch` flags)
 
 ### Phase 8: Maven Dependency Update
 **Goal**: Users can update a Maven dependency end-to-end — specify groupId:artifactId and target version in the CLI, agent updates pom.xml, adapts code if needed, and creates a PR with a changelog link
@@ -75,6 +77,6 @@ Full details: [v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 | 4. Retry & Context Engineering | v1.0 | 2/2 | Complete | 2026-02-17 |
 | 5. Deterministic Verification | v1.0 | 2/2 | Complete | 2026-02-18 |
 | 6. LLM Judge Integration | v1.0 | 2/2 | Complete | 2026-02-28 |
-| 7. GitHub PR Creation | v1.1 | 0/TBD | Not started | - |
+| 7. GitHub PR Creation | v1.1 | 1/2 | In progress | - |
 | 8. Maven Dependency Update | v1.1 | 0/TBD | Not started | - |
 | 9. npm Dependency Update | v1.1 | 0/TBD | Not started | - |
