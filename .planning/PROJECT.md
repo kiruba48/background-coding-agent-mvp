@@ -25,11 +25,21 @@ The full verification loop must work: agent changes code, deterministic verifier
 
 ### Active
 
-- [ ] Successful verification creates PR with descriptive body and metadata
-- [ ] Maven dependency update task type implemented end-to-end
-- [ ] npm dependency update task type implemented end-to-end
-- [ ] Custom verifiers can be added via plugin system
-- [ ] Cost per run metric tracked
+- [ ] Agent creates GitHub PR with full context (task prompt, diff, verification results, judge verdict)
+- [ ] Agent auto-generates branch names, user can override via CLI
+- [ ] Maven dependency update task type — user specifies dep, agent updates and adapts code
+- [ ] npm dependency update task type — user specifies dep, agent updates and adapts code
+- [ ] PR body flags potential breaking changes for human reviewer
+
+## Current Milestone: v1.1 End-to-End Pipeline
+
+**Goal:** Ship the complete pipeline — agent takes a dependency update task, executes in Docker, verifies changes, and creates a GitHub PR with full context.
+
+**Target features:**
+- GitHub PR creation with descriptive body and metadata
+- Maven dependency update (user-specified dep, handles breaking changes with risk flags)
+- npm dependency update (same behavior as Maven)
+- Auto-generated branch naming with user override
 
 ### Out of Scope
 
@@ -39,6 +49,10 @@ The full verification loop must work: agent changes code, deterministic verifier
 - Multi-repo batch operations — single repo per run
 - Real-time streaming UI — CLI output sufficient
 - Mobile app — not applicable
+- Custom verifier plugins — deferred to v1.2+
+- Cost per run metric — deferred to v1.2+
+- GitLab/Bitbucket PR support — GitHub only for now
+- "Update all outdated deps" mode — user specifies dep for v1.1
 
 ## Context
 
@@ -77,4 +91,4 @@ The full verification loop must work: agent changes code, deterministic verifier
 | Maven first, npm later | Prove architecture with one type before extending | — Pending (Phase 8) |
 
 ---
-*Last updated: 2026-03-02 after v1.0 milestone*
+*Last updated: 2026-03-02 after v1.1 milestone start*
