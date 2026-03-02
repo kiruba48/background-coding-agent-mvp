@@ -9,7 +9,7 @@ Requirements for v1.1 End-to-End Pipeline. Each maps to roadmap phases.
 
 ### PR Creation
 
-- [ ] **PR-01**: Agent creates GitHub PR on target repo after successful verification (service built in 07-01; CLI wiring in 07-02)
+- [x] **PR-01**: Agent creates GitHub PR on target repo after successful verification (service built in 07-01; CLI wiring in 07-02)
 - [x] **PR-02**: Agent auto-generates branch name from task context (e.g., `agent/update-spring-boot-3.2`)
 - [x] **PR-03**: User can override branch name via CLI flag (07-02)
 - [x] **PR-04**: PR body includes task prompt, summary of changes, diff stats
@@ -71,9 +71,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PR-01 | Phase 7 | In progress (07-01 service done, 07-02 CLI wiring pending) |
+| PR-01 | Phase 7 | Complete (07-01 service + 07-02 CLI wiring) |
 | PR-02 | Phase 7 | Complete (07-01) |
-| PR-03 | Phase 7 | Pending (07-02) |
+| PR-03 | Phase 7 | Complete (07-02) |
 | PR-04 | Phase 7 | Complete (07-01) |
 | PR-05 | Phase 7 | Complete (07-01) |
 | PR-06 | Phase 7 | Complete (07-01) |
@@ -96,4 +96,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-03-02*
-*Last updated: 2026-03-02 after 07-01 execution (PR-02, PR-04, PR-05, PR-06, PR-07 complete)*
+*Last updated: 2026-03-02 after gap audit (PR-01, PR-03 status fixed; Phase 7 tech debt folded into Phase 8)*
