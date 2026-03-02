@@ -3,6 +3,8 @@ import { MetricsCollector } from '../../orchestrator/metrics.js';
 import { createLogger } from '../utils/logger.js';
 import { compositeVerifier } from '../../orchestrator/verifier.js';
 import { llmJudge } from '../../orchestrator/judge.js';
+import { GitHubPRCreator } from '../../orchestrator/pr-creator.js';
+import pc from 'picocolors';
 
 export interface RunOptions {
   taskType: string;
@@ -11,6 +13,8 @@ export interface RunOptions {
   timeout: number;      // seconds, already parsed and validated
   maxRetries: number;   // default: 3, validated 1-10
   noJudge?: boolean;    // if true, skip LLM judge (--no-judge flag or JUDGE_ENABLED=false)
+  createPr?: boolean;       // if true, create GitHub PR after success
+  branchOverride?: string;  // --branch value, if provided
 }
 
 /**
@@ -81,6 +85,39 @@ export async function runAgent(options: RunOptions): Promise<number> {
 
     // Run the retry orchestration loop
     const retryResult = await orchestrator.run(prompt, childLogger);
+
+    // Create GitHub PR if requested and run was successful
+    if (options.createPr && retryResult.finalStatus === 'success') {
+      childLogger.info('Creating GitHub PR...');
+      const creator = new GitHubPRCreator(options.repo);
+      try {
+        const prResult = await creator.create({
+          taskType: options.taskType,
+          originalTask: prompt,
+          retryResult,
+          branchOverride: options.branchOverride,
+        });
+
+        if (prResult.error) {
+          // PR creation failed (non-fatal per CONTEXT.md decisions)
+          childLogger.warn({ error: prResult.error, branch: prResult.branch }, 'PR creation failed');
+          console.error(pc.yellow(`Warning: PR creation failed: ${prResult.error}`));
+          console.error(pc.yellow(`Branch pushed: ${prResult.branch} — create PR manually at https://github.com`));
+        } else if (prResult.created) {
+          childLogger.info({ prUrl: prResult.url, branch: prResult.branch }, 'GitHub PR created');
+          console.log(pc.green(`PR created: ${prResult.url}`));
+        } else {
+          childLogger.info({ prUrl: prResult.url, branch: prResult.branch }, 'PR already exists');
+          console.log(pc.green(`Existing PR: ${prResult.url}`));
+        }
+      } catch (err) {
+        // Hard errors (missing token, no remote) — log but keep exit code 0
+        // Token was validated before runAgent(), so this handles edge cases
+        const errMsg = err instanceof Error ? err.message : String(err);
+        childLogger.warn({ error: errMsg }, 'PR creation threw unexpectedly');
+        console.error(pc.yellow(`Warning: PR creation error: ${errMsg}`));
+      }
+    }
 
     // Record metrics using retryResult.finalStatus (not lastSession.status,
     // which would incorrectly record 'vetoed' runs as 'success')
