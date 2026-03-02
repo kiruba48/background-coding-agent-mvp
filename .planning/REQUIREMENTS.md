@@ -11,7 +11,7 @@ Requirements for v1.1 End-to-End Pipeline. Each maps to roadmap phases.
 
 - [ ] **PR-01**: Agent creates GitHub PR on target repo after successful verification (service built in 07-01; CLI wiring in 07-02)
 - [x] **PR-02**: Agent auto-generates branch name from task context (e.g., `agent/update-spring-boot-3.2`)
-- [ ] **PR-03**: User can override branch name via CLI flag (07-02)
+- [x] **PR-03**: User can override branch name via CLI flag (07-02)
 - [x] **PR-04**: PR body includes task prompt, summary of changes, diff stats
 - [x] **PR-05**: PR body includes verification results (build/test/lint pass/fail)
 - [x] **PR-06**: PR body includes LLM Judge verdict and reasoning
