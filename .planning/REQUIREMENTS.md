@@ -71,29 +71,29 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PR-01 | — | Pending |
-| PR-02 | — | Pending |
-| PR-03 | — | Pending |
-| PR-04 | — | Pending |
-| PR-05 | — | Pending |
-| PR-06 | — | Pending |
-| PR-07 | — | Pending |
-| MVN-01 | — | Pending |
-| MVN-02 | — | Pending |
-| MVN-03 | — | Pending |
-| MVN-04 | — | Pending |
-| MVN-05 | — | Pending |
-| NPM-01 | — | Pending |
-| NPM-02 | — | Pending |
-| NPM-03 | — | Pending |
-| NPM-04 | — | Pending |
-| NPM-05 | — | Pending |
+| PR-01 | Phase 7 | Pending |
+| PR-02 | Phase 7 | Pending |
+| PR-03 | Phase 7 | Pending |
+| PR-04 | Phase 7 | Pending |
+| PR-05 | Phase 7 | Pending |
+| PR-06 | Phase 7 | Pending |
+| PR-07 | Phase 7 | Pending |
+| MVN-01 | Phase 8 | Pending |
+| MVN-02 | Phase 8 | Pending |
+| MVN-03 | Phase 8 | Pending |
+| MVN-04 | Phase 8 | Pending |
+| MVN-05 | Phase 8 | Pending |
+| NPM-01 | Phase 9 | Pending |
+| NPM-02 | Phase 9 | Pending |
+| NPM-03 | Phase 9 | Pending |
+| NPM-04 | Phase 9 | Pending |
+| NPM-05 | Phase 9 | Pending |
 
 **Coverage:**
 - v1.1 requirements: 17 total
-- Mapped to phases: 0
-- Unmapped: 17 ⚠️
+- Mapped to phases: 17
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-03-02*
-*Last updated: 2026-03-02 after initial definition*
+*Last updated: 2026-03-02 after roadmap creation (traceability complete)*
