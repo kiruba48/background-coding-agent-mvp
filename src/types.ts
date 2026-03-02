@@ -75,3 +75,17 @@ export interface RetryResult {
   judgeResults?: JudgeResult[];  // all judge invocations for logging
   error?: string;
 }
+
+/**
+ * Result from GitHub PR creation after a successful agent run.
+ */
+export interface PRResult {
+  /** URL of the created or already-existing PR */
+  url: string;
+  /** true if a new PR was created; false if one already existed for the branch */
+  created: boolean;
+  /** Branch name that was pushed (auto-generated or user-provided) */
+  branch: string;
+  /** Set if PR creation failed — url and created will be empty/false */
+  error?: string;
+}
