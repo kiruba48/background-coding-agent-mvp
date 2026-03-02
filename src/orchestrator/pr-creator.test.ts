@@ -1,47 +1,49 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// Mock simple-git before importing pr-creator
-const mockPush = vi.fn();
-const mockCheckoutLocalBranch = vi.fn();
-const mockCheckout = vi.fn();
-const mockStatus = vi.fn();
-const mockAdd = vi.fn();
-const mockCommit = vi.fn();
-const mockRaw = vi.fn();
+// Use vi.hoisted to declare mocks before the hoisted vi.mock factories run.
+// This is the recommended pattern when mock factories need to reference shared
+// variables declared in the same file.
+const {
+  mockPush,
+  mockCheckoutLocalBranch,
+  mockCheckout,
+  mockStatus,
+  mockAdd,
+  mockCommit,
+  mockPullsCreate,
+  mockPullsList,
+  mockReposGet,
+} = vi.hoisted(() => ({
+  mockPush: vi.fn(),
+  mockCheckoutLocalBranch: vi.fn(),
+  mockCheckout: vi.fn(),
+  mockStatus: vi.fn(),
+  mockAdd: vi.fn(),
+  mockCommit: vi.fn(),
+  mockPullsCreate: vi.fn(),
+  mockPullsList: vi.fn(),
+  mockReposGet: vi.fn(),
+}));
 
-vi.mock('simple-git', () => {
-  return {
-    simpleGit: vi.fn().mockReturnValue({
-      push: mockPush,
-      checkoutLocalBranch: mockCheckoutLocalBranch,
-      checkout: mockCheckout,
-      status: mockStatus,
-      add: mockAdd,
-      commit: mockCommit,
-      raw: mockRaw,
-    }),
-  };
-});
-
-// Mock octokit before importing pr-creator
-const mockPullsCreate = vi.fn();
-const mockPullsList = vi.fn();
-const mockReposGet = vi.fn();
+vi.mock('simple-git', () => ({
+  simpleGit: vi.fn().mockReturnValue({
+    push: mockPush,
+    checkoutLocalBranch: mockCheckoutLocalBranch,
+    checkout: mockCheckout,
+    status: mockStatus,
+    add: mockAdd,
+    commit: mockCommit,
+  }),
+}));
 
 vi.mock('octokit', () => {
-  return {
-    Octokit: vi.fn().mockImplementation(() => ({
-      rest: {
-        pulls: {
-          create: mockPullsCreate,
-          list: mockPullsList,
-        },
-        repos: {
-          get: mockReposGet,
-        },
-      },
-    })),
+  const MockOctokit = function(this: Record<string, unknown>) {
+    this.rest = {
+      pulls: { create: mockPullsCreate, list: mockPullsList },
+      repos: { get: mockReposGet },
+    };
   };
+  return { Octokit: MockOctokit };
 });
 
 // Mock node:child_process
@@ -164,13 +166,13 @@ describe('generateBranchName', () => {
 
   it('uses agent/ prefix', () => {
     const result = generateBranchName('my task');
-    expect(result).toStartWith('agent/');
+    expect(result.startsWith('agent/')).toBe(true);
   });
 
   it('appends today date in YYYY-MM-DD format', () => {
     const result = generateBranchName('my task');
     const today = new Date().toISOString().slice(0, 10);
-    expect(result).toEndWith(today);
+    expect(result.endsWith(today)).toBe(true);
   });
 });
 
