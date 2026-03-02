@@ -15,6 +15,8 @@ program
   .option('--timeout <seconds>', 'Session timeout in seconds (default: 300)', '300')
   .option('--max-retries <number>', 'Maximum retry attempts on verification failure (default: 3)', '3')
   .option('--no-judge', 'Disable LLM Judge semantic verification (also: JUDGE_ENABLED=false)')
+  .option('--create-pr', 'Create a GitHub PR after successful agent run (requires GITHUB_TOKEN)')
+  .option('--branch <name>', 'Branch name for the PR (default: auto-generated from task type). Only valid with --create-pr')
   .action(async (options) => {
     // Validate turn-limit
     const turnLimit = parseInt(options.turnLimit, 10);
@@ -45,6 +47,18 @@ program
       process.exit(2);
     }
 
+    // Validate --branch requires --create-pr
+    if (options.branch && !options.createPr) {
+      console.error(pc.red('Error: --branch requires --create-pr'));
+      process.exit(2);
+    }
+
+    // Validate GITHUB_TOKEN is set when --create-pr is used
+    if (options.createPr && !process.env.GITHUB_TOKEN) {
+      console.error(pc.red('Error: GITHUB_TOKEN environment variable is required for --create-pr'));
+      process.exit(2);
+    }
+
     // Run agent with validated options
     const exitCode = await runAgent({
       taskType: options.taskType,
@@ -53,6 +67,8 @@ program
       timeout,
       maxRetries,
       noJudge: options.judge === false,  // Commander.js: --no-judge sets options.judge = false
+      createPr: options.createPr === true,
+      branchOverride: options.branch as string | undefined,
     });
 
     process.exit(exitCode);
