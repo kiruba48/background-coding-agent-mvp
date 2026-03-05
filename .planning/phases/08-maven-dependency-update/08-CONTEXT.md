@@ -1,12 +1,12 @@
 # Phase 8: Maven Dependency Update - Context
 
-**Gathered:** 2026-03-02
+**Gathered:** 2026-03-05
 **Status:** Ready for planning
 
 <domain>
 ## Phase Boundary
 
-End-to-end Maven dependency update: user specifies groupId:artifactId and target version via CLI, agent updates pom.xml (including multi-module projects), adapts code if the new version has breaking API changes, verifies with compile + test, and creates a PR with a changelog link. Restore, rollback, and scheduled updates are out of scope.
+Full Maven dependency update pipeline: user specifies groupId:artifactId and target version via CLI flags, agent updates pom.xml in Docker, runs build/tests via build-system-aware verification, retries on failure with error context, and creates a PR on success. Changelog/release notes links are deferred (MVN-05 removed from this phase).
 
 </domain>
 
@@ -14,47 +14,49 @@ End-to-end Maven dependency update: user specifies groupId:artifactId and target
 ## Implementation Decisions
 
 ### CLI input design
-- New `maven-update` subcommand via Commander.js (not extending generic `run`)
-- Positional arguments: `background-agent maven-update org.springframework:spring-boot 3.2.0 -r ./repo`
-  - First positional: `groupId:artifactId` (colon-delimited)
-  - Second positional: target version
-- Inherits all existing `run` flags: `--turn-limit`, `--timeout`, `--max-retries`, `--no-judge`, `--create-pr`, `--branch`, `-r/--repo`
-- `--create-pr` defaults to ON for `maven-update` (user can opt out with `--no-create-pr`)
-- `--task-type` is implicit ("maven-dependency-update") — not exposed as a flag
+- New flags: `--dep <groupId:artifactId>` and `--target-version <version>`
+- `--dep` uses colon-separated format for groupId:artifactId (familiar Maven convention)
+- `--target-version` is a separate flag for the desired version
+- Both flags are conditionally required: CLI validates they are present when `-t maven-dependency-update` (and later npm-dependency-update)
+- Keep existing `-t` / `--task-type` flag approach — no subcommands for now
+- Subcommand redesign deferred to conversational agent iteration
 
 ### Agent prompt strategy
-- Step-by-step playbook prompt (not goal-only): find pom.xml → locate dependency → update version → compile → fix errors → test → commit
-- Handle multi-module Maven projects: agent searches all pom.xml files in the project tree
-- Use project's Maven wrapper (`./mvnw`) if present, fall back to `mvn`
-- Enable network access for Maven tasks (sandbox currently has `--network none`; Maven needs to resolve dependencies)
-- Expand `bash_command` tool allowlist to include `mvn` and `./mvnw` (reuses existing tool infrastructure)
+- End-state prompting (established project decision from Spotify research, TASK-04)
+- Describe the desired outcome, not the steps — agent plans its own approach
+- Agent discovers current version itself by reading pom.xml (no host-side pre-reading)
+- Agent handles multi-module projects naturally without explicit prompt instructions
+- Separate prompt-builder module (`prompts/` or similar) with a function per task type (e.g., `buildMavenPrompt(dep, version)`) — clean separation for Phase 9 npm addition
 
-### Changelog sourcing
-- Convention-based URL patterns from groupId: map known orgs (Spring, Jackson, etc.) to GitHub release URLs
-- Fallback to Maven Central artifact page (`search.maven.org/artifact/{g}/{a}/{v}`)
-- When changelog can't be determined: show Maven Central link + note ("Changelog not found automatically — check the project's GitHub releases")
-- Link only in PR body — no summary of what changed (avoids hallucination risk)
+### Verification approach
+- Build-system detection in the existing composite verifier (not task-specific verifiers)
+- Verifier detects `pom.xml` in workspace and runs Maven commands (`mvn compile`, `mvn test`)
+- This scales to any task type — dependency updates, refactors, migrations all use the same verifier
+- Phase 9 adds npm detection to the same verifier; future build systems (Gradle, Cargo) follow the same pattern
+- No combinatorial explosion of task-type x build-system verifiers
 
-### Breaking change response
-- Use existing RetryOrchestrator retry loop (up to `maxRetries`, default 3) — no separate fix-then-verify inner loop
-- Verifier runs `mvn compile` then `mvn test` (both must pass)
-- On all retries exhausted: clean failure (exit code 1), no PR created
-- No semver-aware behavior — same playbook regardless of version jump magnitude
+### Breaking change handling
+- Use the existing RetryOrchestrator retry loop — no separate breaking-change mechanism
+- Agent updates pom.xml, build fails due to breaking API changes, verifier catches it, retry with error context, agent fixes code
+- 10 turns per attempt x 3 retries = 30 total turns max (user can override with --turn-limit)
+- If all retries exhausted: fail with exit code 1, log what was tried, show remaining compilation errors, no PR created
+- User sees exactly what broke and can fix manually
 
 ### Claude's Discretion
-- Exact playbook prompt wording and Maven-specific instructions
-- How to detect and navigate parent POM vs child module version declarations
-- `bash_command` allowlist implementation details
-- Network enablement mechanism in ContainerManager
+- Exact end-state prompt wording (within end-state format constraint)
+- Prompt module file structure and naming
+- Build-system detection implementation details in composite verifier
+- How to report remaining errors on final failure
+- Maven command flags and options used in verification
 
 </decisions>
 
 <specifics>
 ## Specific Ideas
 
-- CLI UX should feel like a purpose-built tool, not a wrapper around the generic `run` command
-- The Maven update is the first "task-specific" subcommand — it sets the pattern for `npm-update` (Phase 9)
-- Failure should be clean and informative, not produce broken PRs
+- End-state prompting per Spotify research: "Update dependency X to version Y, codebase should build and tests should pass" — not step-by-step instructions
+- Build-system detection makes the verifier truly generic — adding new task types requires zero verifier changes
+- Conversational agent mode (point at repo, natural language requests) is the future direction — batch CLI is the stepping stone
 
 </specifics>
 
@@ -62,35 +64,36 @@ End-to-end Maven dependency update: user specifies groupId:artifactId and target
 ## Existing Code Insights
 
 ### Reusable Assets
-- `RetryOrchestrator` (`src/orchestrator/retry.ts`): Already handles retry-with-error-context loop — Maven update plugs in directly
-- `GitHubPRCreator` (`src/orchestrator/pr-creator.ts`): PR creation, branch naming, breaking change detection — reuse for Maven PR
-- `compositeVerifier` (`src/orchestrator/verifier.ts`): Verification pipeline — needs Maven-specific verifier added
-- `AgentSession` (`src/orchestrator/session.ts`): Tool definitions and Docker execution — `bash_command` allowlist lives here
-- `runAgent()` (`src/cli/commands/run.ts`): Orchestration flow — maven-update subcommand will share most of this logic
+- `RetryOrchestrator` (retry.ts): Full retry loop with verification + judge — handles breaking change retries out of the box
+- `compositeVerifier` (verifier.ts): Currently generic build/test/lint — will be extended with Maven build-system detection
+- `GitHubPRCreator` (pr-creator.ts): PR creation with branch naming, diff stats, verification results, judge verdict
+- `AgentClient.runAgenticLoop()` (agent.ts): Agentic loop with tool execution — prompt is passed as `userMessage`
+- Current prompt in run.ts line 84: `"You are a coding agent. Your task: ${options.taskType}. Work in the current directory."` — will be replaced by prompt module
 
 ### Established Patterns
-- Commander.js for CLI (`src/cli/index.ts`): Single command currently; subcommands are a supported pattern
-- Pino structured logging throughout orchestrator layer
-- Tool-based agent architecture: read_file, edit_file, git_operation, grep, bash_command, list_files
-- `ContainerManager` handles Docker lifecycle; network mode configured at container creation
+- CLI validation in `src/cli/index.ts` before `runAgent()` call — `--dep` and `--target-version` validation goes here
+- Host-side git execution via `execFileAsync` in session.ts
+- End-state prompting principle (TASK-04, research/ARCHITECTURE.md Pattern 1)
 
 ### Integration Points
-- `src/cli/index.ts`: Add `maven-update` subcommand alongside existing `run` command
-- `src/orchestrator/session.ts`: Expand `COMMAND_PATHS` and allowlist for Maven commands
-- `src/orchestrator/container.ts`: Network mode configuration for Maven tasks
-- `src/orchestrator/verifier.ts`: Maven-specific verification (compile + test)
-- `src/orchestrator/pr-creator.ts`: Changelog link section in PR body
+- `src/cli/index.ts`: Add `--dep` and `--target-version` option definitions + conditional validation
+- `src/cli/commands/run.ts`: `RunOptions` interface needs `dep` and `targetVersion` fields; prompt construction switches to prompt module
+- `src/orchestrator/verifier.ts`: Add build-system detection (pom.xml check) and Maven command execution
+- New: `src/prompts/` module with task-type-specific prompt builders
 
 </code_context>
 
 <deferred>
 ## Deferred Ideas
 
-None — discussion stayed within phase scope
+- Conversational agent loop — user starts agent, points at repo, makes natural language requests (like Claude Code). Major architectural change, future milestone.
+- Changelog/release notes link in PR body (MVN-05) — requires network access or convention-based URL construction. Revisit when conversational mode adds network capability.
+- Subcommand-based CLI (e.g., `background-agent maven-update`) — redesign when moving to conversational mode.
+- "Update all outdated deps" mode — user specifies single dep for now (BAT-01 in future requirements).
 
 </deferred>
 
 ---
 
 *Phase: 08-maven-dependency-update*
-*Context gathered: 2026-03-02*
+*Context gathered: 2026-03-05*
