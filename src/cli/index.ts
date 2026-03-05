@@ -17,6 +17,8 @@ program
   .option('--no-judge', 'Disable LLM Judge semantic verification (also: JUDGE_ENABLED=false)')
   .option('--create-pr', 'Create a GitHub PR after successful agent run (requires GITHUB_TOKEN)')
   .option('--branch <name>', 'Branch name for the PR (default: auto-generated from task type). Only valid with --create-pr')
+  .option('--dep <groupId:artifactId>', 'Dependency to update (e.g., org.springframework:spring-core)')
+  .option('--target-version <version>', 'Target version for dependency update')
   .action(async (options) => {
     // Validate turn-limit
     const turnLimit = parseInt(options.turnLimit, 10);
@@ -59,6 +61,19 @@ program
       process.exit(2);
     }
 
+    // Validate --dep and --target-version for task types that require them
+    const depRequiringTaskTypes = ['maven-dependency-update'];
+    if (depRequiringTaskTypes.includes(options.taskType)) {
+      if (!options.dep) {
+        console.error(pc.red('Error: --dep is required for task type: ' + options.taskType));
+        process.exit(2);
+      }
+      if (!options.targetVersion) {
+        console.error(pc.red('Error: --target-version is required for task type: ' + options.taskType));
+        process.exit(2);
+      }
+    }
+
     // Run agent with validated options
     const exitCode = await runAgent({
       taskType: options.taskType,
@@ -69,6 +84,8 @@ program
       noJudge: options.judge === false,  // Commander.js: --no-judge sets options.judge = false
       createPr: options.createPr === true,
       branchOverride: options.branch as string | undefined,
+      dep: options.dep as string | undefined,
+      targetVersion: options.targetVersion as string | undefined,
     });
 
     process.exit(exitCode);

@@ -4,6 +4,7 @@ import { createLogger } from '../utils/logger.js';
 import { compositeVerifier } from '../../orchestrator/verifier.js';
 import { llmJudge } from '../../orchestrator/judge.js';
 import { GitHubPRCreator } from '../../orchestrator/pr-creator.js';
+import { buildPrompt } from '../../prompts/index.js';
 import pc from 'picocolors';
 
 export interface RunOptions {
@@ -15,6 +16,8 @@ export interface RunOptions {
   noJudge?: boolean;    // if true, skip LLM judge (--no-judge flag or JUDGE_ENABLED=false)
   createPr?: boolean;       // if true, create GitHub PR after success
   branchOverride?: string;  // --branch value, if provided
+  dep?: string;              // groupId:artifactId for dependency update tasks
+  targetVersion?: string;    // target version for dependency update tasks
 }
 
 /**
@@ -80,8 +83,12 @@ export async function runAgent(options: RunOptions): Promise<number> {
   });
 
   try {
-    // Construct prompt from task type
-    const prompt = `You are a coding agent. Your task: ${options.taskType}. Work in the current directory.`;
+    // Construct prompt from task type via prompt module
+    const prompt = buildPrompt({
+      taskType: options.taskType,
+      dep: options.dep,
+      targetVersion: options.targetVersion,
+    });
 
     // Run the retry orchestration loop
     const retryResult = await orchestrator.run(prompt, childLogger);
