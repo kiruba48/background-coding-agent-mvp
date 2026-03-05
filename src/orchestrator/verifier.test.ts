@@ -12,9 +12,10 @@ vi.mock('node:fs/promises', () => ({
 }));
 
 // Import after mocks are set up
-import { buildVerifier, testVerifier, lintVerifier, compositeVerifier } from './verifier.js';
+import { buildVerifier, testVerifier, lintVerifier, compositeVerifier, mavenBuildVerifier, mavenTestVerifier } from './verifier.js';
 import { execFile } from 'node:child_process';
 import { access, readFile } from 'node:fs/promises';
+import { ErrorSummarizer } from './summarizer.js';
 
 // vitest is hoisted but promisify(execFile) is called at module level in verifier.ts.
 // We need to intercept calls at the execFile level. The promisified version calls
@@ -600,5 +601,97 @@ describe('compositeVerifier', () => {
     // Build skipped (passed), test failed, lint skipped (passed) — overall failed
     expect(result.passed).toBe(false);
     expect(result.errors.some(e => e.type === 'test')).toBe(true);
+  });
+});
+
+// ============================================================
+// ErrorSummarizer — Maven methods
+// ============================================================
+describe('ErrorSummarizer.summarizeMavenErrors', () => {
+  it('25. extracts [ERROR] lines from Maven compilation output', () => {
+    const raw = [
+      '[INFO] BUILD FAILURE',
+      '[ERROR] /path/File.java:[10,5] error: cannot find symbol',
+      '[ERROR] /path/Other.java:[20,3] error: method does not exist',
+    ].join('\n');
+
+    const result = ErrorSummarizer.summarizeMavenErrors(raw);
+
+    expect(result).toContain('2 Maven build error(s)');
+    expect(result).toContain('cannot find symbol');
+    expect(result).toContain('method does not exist');
+  });
+
+  it('26. caps at 5 errors and shows remaining count', () => {
+    const lines = Array.from({ length: 10 }, (_, i) =>
+      `[ERROR] /path/File${i}.java:[${i},1] error: problem ${i}`
+    );
+    const raw = lines.join('\n');
+
+    const result = ErrorSummarizer.summarizeMavenErrors(raw);
+
+    expect(result).toContain('10 Maven build error(s)');
+    expect(result).toContain('(+ 5 more errors)');
+  });
+
+  it('27. returns fallback when no [ERROR] lines found', () => {
+    const raw = '[INFO] BUILD FAILURE\n[INFO] Something happened';
+
+    const result = ErrorSummarizer.summarizeMavenErrors(raw);
+
+    expect(result).toBe('Maven build failed (no specific error lines found)');
+  });
+
+  it('28. filters out noise lines like [Help 1]', () => {
+    const raw = [
+      '[ERROR] /path/File.java:[10,5] error: cannot find symbol',
+      '[ERROR] -> [Help 1]',
+      '[ERROR] ',
+      '[ERROR] For more information about the errors, please refer to the Maven documentation',
+    ].join('\n');
+
+    const result = ErrorSummarizer.summarizeMavenErrors(raw);
+
+    expect(result).toContain('1 Maven build error(s)');
+    expect(result).not.toContain('[Help');
+    expect(result).not.toContain('For more information');
+  });
+});
+
+describe('ErrorSummarizer.summarizeMavenTestFailures', () => {
+  it('29. extracts surefire summary line', () => {
+    const raw = [
+      '[INFO] Tests run: 5, Failures: 2, Errors: 0, Skipped: 0',
+      '[ERROR] com.example.AppTest.testFoo -- Time elapsed: 0.1s <<< FAILURE!',
+      '[ERROR] com.example.AppTest.testBar -- Time elapsed: 0.2s <<< FAILURE!',
+    ].join('\n');
+
+    const result = ErrorSummarizer.summarizeMavenTestFailures(raw);
+
+    expect(result).toContain('Tests run: 5, Failures: 2');
+    expect(result).toContain('testFoo');
+    expect(result).toContain('testBar');
+  });
+
+  it('30. caps failure lines at 5 with remaining count', () => {
+    const failLines = Array.from({ length: 8 }, (_, i) =>
+      `[ERROR] com.example.Test${i}.test${i} -- Time elapsed: 0.1s <<< FAILURE!`
+    );
+    const raw = [
+      'Tests run: 10, Failures: 8, Errors: 0, Skipped: 0',
+      ...failLines,
+    ].join('\n');
+
+    const result = ErrorSummarizer.summarizeMavenTestFailures(raw);
+
+    expect(result).toContain('(+ 3 more test failures)');
+  });
+
+  it('31. returns fallback when no recognizable output', () => {
+    const raw = 'Some random Maven output with no test info';
+
+    const result = ErrorSummarizer.summarizeMavenTestFailures(raw);
+
+    expect(result).toBe('Maven tests failed (unable to extract specific test names)');
   });
 });
