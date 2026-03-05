@@ -19,8 +19,8 @@ Requirements for v1.1 End-to-End Pipeline. Each maps to roadmap phases.
 
 ### Maven Dependency Update
 
-- [ ] **MVN-01**: User specifies Maven dependency (groupId:artifactId) and target version via CLI
-- [ ] **MVN-02**: Agent locates and updates version in pom.xml
+- [x] **MVN-01**: User specifies Maven dependency (groupId:artifactId) and target version via CLI
+- [x] **MVN-02**: Agent locates and updates version in pom.xml
 - [ ] **MVN-03**: Agent runs Maven build and tests to verify update
 - [ ] **MVN-04**: Agent attempts code changes if new version has breaking API changes
 - [ ] **MVN-05**: Agent includes dependency changelog/release notes link in PR body
@@ -78,8 +78,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PR-05 | Phase 7 | Complete (07-01) |
 | PR-06 | Phase 7 | Complete (07-01) |
 | PR-07 | Phase 7 | Complete (07-01) |
-| MVN-01 | Phase 8 | Pending |
-| MVN-02 | Phase 8 | Pending |
+| MVN-01 | Phase 8 | Complete |
+| MVN-02 | Phase 8 | Complete |
 | MVN-03 | Phase 8 | Pending |
 | MVN-04 | Phase 8 | Pending |
 | MVN-05 | Phase 8 | Pending |
