@@ -134,6 +134,60 @@ export class ErrorSummarizer {
   }
 
   /**
+   * Summarize build errors from Maven compilation output.
+   * Input: raw Maven output with [ERROR] prefixed lines
+   * Output: structured summary of up to 5 errors with count of remaining.
+   */
+  static summarizeMavenErrors(rawOutput: string): string {
+    const errorLines = rawOutput
+      .split('\n')
+      .filter(line => line.startsWith('[ERROR]'))
+      .filter(line => !line.includes('[Help'))
+      .filter(line => !line.includes('For more information'))
+      .filter(line => line.trim().length > '[ERROR]'.length + 1);
+
+    if (errorLines.length === 0) {
+      return 'Maven build failed (no specific error lines found)';
+    }
+
+    const shown = errorLines.slice(0, 5);
+    const remaining = errorLines.length - shown.length;
+    const more = remaining > 0 ? `\n(+ ${remaining} more errors)` : '';
+
+    return `${errorLines.length} Maven build error(s):\n${shown.join('\n')}${more}`;
+  }
+
+  /**
+   * Summarize test failures from Maven surefire output.
+   * Input: raw Maven test output
+   * Output: structured summary with surefire summary line and up to 5 failure names.
+   */
+  static summarizeMavenTestFailures(rawOutput: string): string {
+    // Surefire summary: "Tests run: N, Failures: N, Errors: N, Skipped: N"
+    const summaryLine = rawOutput.match(/Tests run: \d+, Failures: \d+[^\n]*/)?.[0] ?? '';
+
+    // Test failure lines: "[ERROR] com.example.Test.method -- Time elapsed..."
+    const failureLines = rawOutput
+      .split('\n')
+      .filter(line => line.startsWith('[ERROR]') && /<<<\s*(FAILURE|ERROR)/.test(line));
+
+    if (!summaryLine && failureLines.length === 0) {
+      return 'Maven tests failed (unable to extract specific test names)';
+    }
+
+    const parts: string[] = [];
+    if (summaryLine) parts.push(summaryLine);
+
+    const shownFailures = failureLines.slice(0, 5);
+    if (shownFailures.length > 0) parts.push(shownFailures.join('\n'));
+
+    const remaining = failureLines.length - shownFailures.length;
+    if (remaining > 0) parts.push(`(+ ${remaining} more test failures)`);
+
+    return parts.join('\n');
+  }
+
+  /**
    * Build a complete error digest from all verification results.
    * Collects summaries from all failed results into [TYPE] summary sections.
    * Hard-caps output at 2000 chars (well under 500 tokens) with truncation notice.

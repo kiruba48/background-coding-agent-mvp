@@ -12,7 +12,7 @@ vi.mock('node:fs/promises', () => ({
 }));
 
 // Import after mocks are set up
-import { buildVerifier, testVerifier, lintVerifier, compositeVerifier, mavenBuildVerifier, mavenTestVerifier } from './verifier.js';
+import { buildVerifier, testVerifier, lintVerifier, compositeVerifier } from './verifier.js';
 import { execFile } from 'node:child_process';
 import { access, readFile } from 'node:fs/promises';
 import { ErrorSummarizer } from './summarizer.js';
