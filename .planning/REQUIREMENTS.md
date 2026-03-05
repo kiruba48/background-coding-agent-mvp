@@ -23,7 +23,7 @@ Requirements for v1.1 End-to-End Pipeline. Each maps to roadmap phases.
 - [x] **MVN-02**: Agent locates and updates version in pom.xml
 - [x] **MVN-03**: Agent runs Maven build and tests to verify update
 - [x] **MVN-04**: Agent attempts code changes if new version has breaking API changes
-- [ ] **MVN-05**: Agent includes dependency changelog/release notes link in PR body
+- [x] **MVN-05**: Agent includes dependency changelog/release notes link in PR body
 
 ### npm Dependency Update
 
@@ -82,7 +82,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | MVN-02 | Phase 8 | Complete |
 | MVN-03 | Phase 8 | Complete |
 | MVN-04 | Phase 8 | Complete |
-| MVN-05 | Phase 8 | Pending |
+| MVN-05 | Phase 8 | Complete |
 | NPM-01 | Phase 9 | Pending |
 | NPM-02 | Phase 9 | Pending |
 | NPM-03 | Phase 9 | Pending |

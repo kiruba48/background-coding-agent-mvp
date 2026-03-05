@@ -26,7 +26,7 @@ Full details: [v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 **Milestone Goal:** Ship the complete pipeline — agent takes a dependency update task, executes in Docker, verifies changes, and creates a GitHub PR with full context.
 
 - [x] **Phase 7: GitHub PR Creation** - Agent creates richly-described PRs on GitHub after successful verification
-- [ ] **Phase 8: Maven Dependency Update** - Full Maven dep update task: CLI → Docker agent → verify → PR
+- [x] **Phase 8: Maven Dependency Update** - Full Maven dep update task: CLI → Docker agent → verify → PR (completed 2026-03-05)
 - [ ] **Phase 9: npm Dependency Update** - Full npm dep update task: CLI → Docker agent → verify → PR
 
 ## Phase Details
@@ -83,5 +83,5 @@ Plans:
 | 5. Deterministic Verification | v1.0 | 2/2 | Complete | 2026-02-18 |
 | 6. LLM Judge Integration | v1.0 | 2/2 | Complete | 2026-02-28 |
 | 7. GitHub PR Creation | v1.1 | 2/2 | Complete | 2026-03-02 |
-| 8. Maven Dependency Update | v1.1 | 0/3 | Planned | - |
+| 8. Maven Dependency Update | 3/3 | Complete   | 2026-03-05 | - |
 | 9. npm Dependency Update | v1.1 | 0/TBD | Not started | - |
