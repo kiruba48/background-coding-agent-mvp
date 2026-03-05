@@ -440,14 +440,14 @@ describe('compositeVerifier', () => {
     vi.clearAllMocks();
   });
 
-  it('18. returns passed:true when all 3 verifiers pass', async () => {
-    // Pre-checks: tsconfig.json found, vitest.config.ts found, eslint.config.mjs found
-    mockAccess
-      .mockResolvedValueOnce(undefined) // buildVerifier: tsconfig.json
-      .mockResolvedValueOnce(undefined) // testVerifier: vitest.config.ts
-      .mockResolvedValueOnce(undefined); // lintVerifier: eslint.config.mjs
+  it('18. returns passed:true when all verifiers pass (no Maven project)', async () => {
+    // Route access by path: tsconfig found, vitest found, no pom.xml, eslint found
+    mockAccess.mockImplementation((path: string) => {
+      if (path.endsWith('pom.xml')) return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+      return Promise.resolve(undefined);
+    });
 
-    // All verifier executions succeed
+    // All verifier executions succeed (no Maven since no pom.xml)
     mockExecSequence([
       { success: true, stdout: '' },  // tsc --noEmit: passes
       { success: true, stdout: '' },  // vitest run: passes
@@ -465,11 +465,11 @@ describe('compositeVerifier', () => {
   });
 
   it('19. returns passed:false when any verifier fails (build fails)', async () => {
-    // tsconfig.json found, vitest found, eslint found
-    mockAccess
-      .mockResolvedValueOnce(undefined) // buildVerifier: tsconfig.json
-      .mockResolvedValueOnce(undefined) // testVerifier: vitest.config.ts
-      .mockResolvedValueOnce(undefined); // lintVerifier: eslint.config.mjs
+    // tsconfig found, vitest found, no pom.xml, eslint found
+    mockAccess.mockImplementation((path: string) => {
+      if (path.endsWith('pom.xml')) return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+      return Promise.resolve(undefined);
+    });
 
     mockExecSequence([
       // build fails
@@ -490,12 +490,12 @@ describe('compositeVerifier', () => {
     expect(result.errors[0].type).toBe('build');
   });
 
-  it('20. error ordering: Build errors first, then Test, then Lint', async () => {
-    // All pre-checks pass
-    mockAccess
-      .mockResolvedValueOnce(undefined)  // tsconfig.json
-      .mockResolvedValueOnce(undefined)  // vitest config
-      .mockResolvedValueOnce(undefined); // eslint config
+  it('20. error ordering: Build errors first, then Test, then Lint (no Maven)', async () => {
+    // tsconfig found, vitest found, no pom.xml, eslint found
+    mockAccess.mockImplementation((path: string) => {
+      if (path.endsWith('pom.xml')) return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+      return Promise.resolve(undefined);
+    });
 
     mockExecSequence([
       // build fails
@@ -529,11 +529,13 @@ describe('compositeVerifier', () => {
   });
 
   it('21. handles verifier crash gracefully — converts to VerificationError', async () => {
-    // Build pre-check: tsconfig.json exists but then tsc crashes
-    mockAccess
-      .mockResolvedValueOnce(undefined)  // tsconfig.json
-      .mockResolvedValueOnce(undefined)  // vitest config
-      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })); // no eslint config
+    // tsconfig found, vitest found, no pom.xml, no eslint
+    mockAccess.mockImplementation((path: string) => {
+      if (path.endsWith('pom.xml')) return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+      if (path.endsWith('tsconfig.json') || path.endsWith('vitest.config.ts'))
+        return Promise.resolve(undefined);
+      return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    });
 
     // Build: tsc crashes with a binary error (not stdout/stderr format)
     mockExecSequence([
@@ -564,11 +566,13 @@ describe('compositeVerifier', () => {
   });
 
   it('23. aggregates errors from multiple failing verifiers', async () => {
-    // Build and test fail, lint skips
-    mockAccess
-      .mockResolvedValueOnce(undefined)  // tsconfig.json found
-      .mockResolvedValueOnce(undefined)  // vitest config found
-      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })); // no eslint config
+    // tsconfig found, vitest found, no pom.xml, no eslint
+    mockAccess.mockImplementation((path: string) => {
+      if (path.endsWith('pom.xml')) return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+      if (path.endsWith('tsconfig.json') || path.endsWith('vitest.config.ts'))
+        return Promise.resolve(undefined);
+      return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    });
 
     mockExecSequence([
       // build fails
@@ -586,19 +590,19 @@ describe('compositeVerifier', () => {
     expect(types).toContain('test');
   });
 
-  it('24. passed:true requires all 3 verifiers to pass', async () => {
-    // Test verifier fails, rest skip
-    mockAccess
-      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })) // no tsconfig
-      .mockResolvedValueOnce(undefined)  // vitest.config.ts found
-      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })); // no eslint
+  it('24. passed:true requires all verifiers to pass', async () => {
+    // vitest found, everything else skips (no tsconfig, no pom.xml, no eslint)
+    mockAccess.mockImplementation((path: string) => {
+      if (path.endsWith('vitest.config.ts')) return Promise.resolve(undefined);
+      return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    });
 
     // vitest run fails
     mockExecFailure('Tests: 1 failed, 0 passed', '');
 
     const result = await compositeVerifier('/workspace');
 
-    // Build skipped (passed), test failed, lint skipped (passed) — overall failed
+    // Build skipped, Maven skipped, test failed, lint skipped — overall failed
     expect(result.passed).toBe(false);
     expect(result.errors.some(e => e.type === 'test')).toBe(true);
   });
@@ -861,15 +865,8 @@ describe('compositeVerifier — Maven integration', () => {
   });
 
   it('42. includes Maven verifier results alongside TypeScript results', async () => {
-    // All configs found: tsconfig, vitest, pom.xml (x2 for build+test), mvnw (x2), eslint
-    mockAccess
-      .mockResolvedValueOnce(undefined)  // buildVerifier: tsconfig.json
-      .mockResolvedValueOnce(undefined)  // testVerifier: vitest.config.ts
-      .mockResolvedValueOnce(undefined)  // mavenBuildVerifier: pom.xml
-      .mockResolvedValueOnce(undefined)  // mavenBuildVerifier: mvnw
-      .mockResolvedValueOnce(undefined)  // mavenTestVerifier: pom.xml
-      .mockResolvedValueOnce(undefined)  // mavenTestVerifier: mvnw
-      .mockResolvedValueOnce(undefined); // lintVerifier: eslint.config.mjs
+    // All configs found: tsconfig, vitest, pom.xml, mvnw, eslint
+    mockAccess.mockImplementation(() => Promise.resolve(undefined));
 
     // All pass
     mockExecSequence([
@@ -890,21 +887,13 @@ describe('compositeVerifier — Maven integration', () => {
   });
 
   it('43. Maven build failure appears in compositeVerifier errors', async () => {
-    // tsconfig: skip, vitest: skip, pom.xml: found, mvnw: found, eslint: skip
-    mockAccess
-      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))  // no tsconfig
-      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))  // no vitest config 1
-      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))  // no vitest config 2
-      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))  // no vitest config 3
-      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))  // no vitest config 4
-      .mockResolvedValueOnce(undefined)  // mavenBuildVerifier: pom.xml
-      .mockResolvedValueOnce(undefined)  // mavenBuildVerifier: mvnw
-      .mockResolvedValueOnce(undefined)  // mavenTestVerifier: pom.xml
-      .mockResolvedValueOnce(undefined)  // mavenTestVerifier: mvnw
-      .mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })); // no eslint, no readFile
-
-    // readFile for package.json (vitest check)
-    mockReadFile.mockRejectedValueOnce(new Error('Not found'));
+    // pom.xml + mvnw found; no tsconfig, no vitest, no eslint
+    mockAccess.mockImplementation((path: string) => {
+      if (path.endsWith('pom.xml') || path.endsWith('mvnw'))
+        return Promise.resolve(undefined);
+      return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    });
+    mockReadFile.mockRejectedValue(new Error('Not found'));
 
     mockExecSequence([
       { success: false, stdout: '[ERROR] /path/File.java:[10,5] error: cannot find symbol', stderr: '' }, // mvn compile fails

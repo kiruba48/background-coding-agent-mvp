@@ -296,6 +296,102 @@ export async function lintVerifier(workspaceDir: string): Promise<VerificationRe
 }
 
 /**
+ * Maven build verifier: runs mvn compile against the workspace.
+ * Skips gracefully if pom.xml is not present. Prefers mvnw over mvn.
+ */
+export async function mavenBuildVerifier(workspaceDir: string): Promise<VerificationResult> {
+  const start = Date.now();
+
+  // Pre-check: pom.xml must exist
+  try {
+    await access(join(workspaceDir, 'pom.xml'));
+  } catch {
+    console.info('[Maven Build] No pom.xml found — skipping Maven build verification');
+    return { passed: true, errors: [], durationMs: 0 };
+  }
+
+  // Detect mvnw wrapper
+  const mvnCmd = await access(join(workspaceDir, 'mvnw')).then(() => './mvnw', () => 'mvn');
+
+  try {
+    await execFileAsync(mvnCmd, ['compile', '-B', '-q'], {
+      cwd: workspaceDir,
+      timeout: 120_000,
+      maxBuffer: 10 * 1024 * 1024,
+      killSignal: 'SIGKILL',
+    });
+    const durationMs = Date.now() - start;
+    return { passed: true, errors: [], durationMs };
+  } catch (err: unknown) {
+    const durationMs = Date.now() - start;
+    if (isTimeoutError(err)) {
+      return {
+        passed: false,
+        errors: [{ type: 'build', summary: 'Maven build timed out (120s limit exceeded)', rawOutput: 'Process killed after timeout' }],
+        durationMs,
+      };
+    }
+    const error = err as { stdout?: string; stderr?: string };
+    const rawOutput = [error.stdout ?? '', error.stderr ?? ''].join('\n').trim();
+    const summary = ErrorSummarizer.summarizeMavenErrors(rawOutput);
+    const verificationError: VerificationError = {
+      type: 'build',
+      summary,
+      rawOutput,
+    };
+    return { passed: false, errors: [verificationError], durationMs };
+  }
+}
+
+/**
+ * Maven test verifier: runs mvn test against the workspace.
+ * Skips gracefully if pom.xml is not present. Prefers mvnw over mvn.
+ */
+export async function mavenTestVerifier(workspaceDir: string): Promise<VerificationResult> {
+  const start = Date.now();
+
+  // Pre-check: pom.xml must exist
+  try {
+    await access(join(workspaceDir, 'pom.xml'));
+  } catch {
+    console.info('[Maven Test] No pom.xml found — skipping Maven test verification');
+    return { passed: true, errors: [], durationMs: 0 };
+  }
+
+  // Detect mvnw wrapper
+  const mvnCmd = await access(join(workspaceDir, 'mvnw')).then(() => './mvnw', () => 'mvn');
+
+  try {
+    await execFileAsync(mvnCmd, ['test', '-B', '-q'], {
+      cwd: workspaceDir,
+      timeout: 300_000,
+      maxBuffer: 10 * 1024 * 1024,
+      killSignal: 'SIGKILL',
+    });
+    const durationMs = Date.now() - start;
+    return { passed: true, errors: [], durationMs };
+  } catch (err: unknown) {
+    const durationMs = Date.now() - start;
+    if (isTimeoutError(err)) {
+      return {
+        passed: false,
+        errors: [{ type: 'test', summary: 'Maven tests timed out (300s limit exceeded)', rawOutput: 'Process killed after timeout' }],
+        durationMs,
+      };
+    }
+    const error = err as { stdout?: string; stderr?: string };
+    const rawOutput = [error.stdout ?? '', error.stderr ?? ''].join('\n').trim();
+    const summary = ErrorSummarizer.summarizeMavenTestFailures(rawOutput);
+    const verificationError: VerificationError = {
+      type: 'test',
+      summary,
+      rawOutput,
+    };
+    return { passed: false, errors: [verificationError], durationMs };
+  }
+}
+
+/**
  * Composite verifier: runs build and test in parallel, then lint sequentially.
  * Lint runs after build+test because it uses git stash which would corrupt the
  * workspace for concurrent build/test verifiers reading source files.
@@ -303,10 +399,12 @@ export async function lintVerifier(workspaceDir: string): Promise<VerificationRe
  * Uses Promise.allSettled so a verifier crash doesn't block others.
  */
 export async function compositeVerifier(workspaceDir: string): Promise<VerificationResult> {
-  // Build and test run in parallel (both are read-only on workspace)
-  const [buildResult, testResult] = await Promise.allSettled([
+  // Build and test run in parallel (all are read-only on workspace)
+  const [buildResult, testResult, mavenBuildResult, mavenTestResult] = await Promise.allSettled([
     buildVerifier(workspaceDir),
     testVerifier(workspaceDir),
+    mavenBuildVerifier(workspaceDir),
+    mavenTestVerifier(workspaceDir),
   ]);
 
   // Lint runs sequentially after build+test to avoid git stash race condition (P2)
@@ -339,27 +437,35 @@ export async function compositeVerifier(workspaceDir: string): Promise<Verificat
 
   const build = resolveResult(buildResult, 'Build');
   const test = resolveResult(testResult, 'Test');
+  const mavenBuild = resolveResult(mavenBuildResult, 'Maven Build');
+  const mavenTest = resolveResult(mavenTestResult, 'Maven Test');
   const lint = resolveResult(lintResult, 'Lint');
 
   // Log timing info per locked decision
   const buildSecs = (build.durationMs / 1000).toFixed(1);
   const testSecs = (test.durationMs / 1000).toFixed(1);
+  const mvnBuildSecs = (mavenBuild.durationMs / 1000).toFixed(1);
+  const mvnTestSecs = (mavenTest.durationMs / 1000).toFixed(1);
   const lintSecs = (lint.durationMs / 1000).toFixed(1);
   console.log(
     `[Verifier] Build: ${build.passed ? 'PASS' : 'FAIL'} (${buildSecs}s), ` +
     `Test: ${test.passed ? 'PASS' : 'FAIL'} (${testSecs}s), ` +
+    `Maven Build: ${mavenBuild.passed ? 'PASS' : 'FAIL'} (${mvnBuildSecs}s), ` +
+    `Maven Test: ${mavenTest.passed ? 'PASS' : 'FAIL'} (${mvnTestSecs}s), ` +
     `Lint: ${lint.passed ? 'PASS' : 'FAIL'} (${lintSecs}s)`
   );
 
-  // Aggregate: Build errors first, then Test, then Lint
+  // Aggregate: Build errors first, then Test, then Maven, then Lint
   const allErrors: VerificationError[] = [
     ...build.errors,
     ...test.errors,
+    ...mavenBuild.errors,
+    ...mavenTest.errors,
     ...lint.errors,
   ];
 
-  const passed = build.passed && test.passed && lint.passed;
-  const durationMs = Math.max(build.durationMs, test.durationMs, lint.durationMs);
+  const passed = build.passed && test.passed && mavenBuild.passed && mavenTest.passed && lint.passed;
+  const durationMs = Math.max(build.durationMs, test.durationMs, mavenBuild.durationMs, mavenTest.durationMs, lint.durationMs);
 
   return { passed, errors: allErrors, durationMs };
 }
