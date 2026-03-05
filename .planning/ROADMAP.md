@@ -55,7 +55,11 @@ Full details: [v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
   2. Agent runs Maven build and tests inside Docker; verification failure triggers retry with error context
   3. When the new version has breaking API changes, agent attempts code fixes before declaring failure
   4. The resulting PR body includes a link to the dependency changelog or release notes
-**Plans**: TBD
+**Plans**: 3 plans
+Plans:
+- [ ] 08-01-PLAN.md — CLI flags (--dep, --target-version) and prompt module with Maven prompt builder
+- [ ] 08-02-PLAN.md — Maven build-system detection in composite verifier + error summarizers
+- [ ] 08-03-PLAN.md — Wire prompt module into run.ts (integration)
 
 ### Phase 9: npm Dependency Update
 **Goal**: Users can update an npm package end-to-end — specify package name and target version in the CLI, agent updates package.json and lockfile, adapts code if needed, and creates a PR with a changelog link
@@ -79,5 +83,5 @@ Full details: [v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 | 5. Deterministic Verification | v1.0 | 2/2 | Complete | 2026-02-18 |
 | 6. LLM Judge Integration | v1.0 | 2/2 | Complete | 2026-02-28 |
 | 7. GitHub PR Creation | v1.1 | 2/2 | Complete | 2026-03-02 |
-| 8. Maven Dependency Update | v1.1 | 0/TBD | Not started | - |
+| 8. Maven Dependency Update | v1.1 | 0/3 | Planned | - |
 | 9. npm Dependency Update | v1.1 | 0/TBD | Not started | - |
