@@ -57,12 +57,12 @@ Full details: [v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
   4. The resulting PR body includes a link to the dependency changelog or release notes
 **Plans**: 3 plans
 Plans:
-- [ ] 08-01-PLAN.md — CLI flags (--dep, --target-version) and prompt module with Maven prompt builder
-- [ ] 08-02-PLAN.md — Maven build-system detection in composite verifier + error summarizers
-- [ ] 08-03-PLAN.md — Wire prompt module into run.ts (integration)
+- [x] 08-01-PLAN.md — CLI flags (--dep, --target-version) and prompt module with Maven prompt builder
+- [x] 08-02-PLAN.md — Maven build-system detection in composite verifier + error summarizers
+- [x] 08-03-PLAN.md — Wire prompt module into run.ts (integration)
 
 ### Phase 9: npm Dependency Update
-**Goal**: Users can update an npm package end-to-end — specify package name and target version in the CLI, agent updates package.json and lockfile, adapts code if needed, and creates a PR with a changelog link
+**Goal**: Users can update an npm package end-to-end — specify package name and target version in the CLI, agent updates package.json in Docker, host-side post-step regenerates lockfile, build/tests verified, and creates a PR on success
 **Depends on**: Phase 7 (GitHub PR Creation)
 **Requirements**: NPM-01, NPM-02, NPM-03, NPM-04, NPM-05
 **Success Criteria** (what must be TRUE):
@@ -70,7 +70,11 @@ Plans:
   2. Agent runs build and tests inside Docker; verification failure triggers retry with error context
   3. When the new version has breaking API changes, agent attempts code fixes before declaring failure
   4. The resulting PR body includes a link to the dependency changelog or release notes
-**Plans**: TBD
+**Plans**: 3 plans
+Plans:
+- [ ] 09-01-PLAN.md — npm prompt builder and CLI validation for npm-dependency-update
+- [ ] 09-02-PLAN.md — npm build/test verifiers in composite verifier + error summarizers
+- [ ] 09-03-PLAN.md — Host-side npm install post-step (preVerify hook in retry loop)
 
 ## Progress
 
@@ -83,5 +87,5 @@ Plans:
 | 5. Deterministic Verification | v1.0 | 2/2 | Complete | 2026-02-18 |
 | 6. LLM Judge Integration | v1.0 | 2/2 | Complete | 2026-02-28 |
 | 7. GitHub PR Creation | v1.1 | 2/2 | Complete | 2026-03-02 |
-| 8. Maven Dependency Update | 3/3 | Complete   | 2026-03-05 | - |
-| 9. npm Dependency Update | v1.1 | 0/TBD | Not started | - |
+| 8. Maven Dependency Update | v1.1 | 3/3 | Complete | 2026-03-05 |
+| 9. npm Dependency Update | v1.1 | 0/3 | Not started | - |
