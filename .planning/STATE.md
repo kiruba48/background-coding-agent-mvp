@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: End-to-End Pipeline
 status: completed
-stopped_at: "Phase 9 Plan 01 complete (npm prompt builder and CLI wiring)"
-last_updated: "2026-03-11T18:16:00Z"
+stopped_at: Completed 09-02-PLAN.md
+last_updated: "2026-03-11T18:20:08.657Z"
 last_activity: 2026-03-11 — Plan 01 complete (npm prompt builder and CLI wiring)
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 8
-  completed_plans: 6
+  completed_plans: 7
   percent: 75
 ---
 
@@ -53,6 +53,7 @@ Progress: [████████░░] 75% (v1.1)
 | Phase 08-maven-dependency-update P02 | 5 | 2 tasks | 3 files |
 | Phase 08-maven-dependency-update P03 | 1 | 1 task | 0 files |
 | Phase 09-npm-dependency-update P01 | 2 | 2 tasks | 4 files |
+| Phase 09-npm-dependency-update P02 | 4 | 1 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -80,6 +81,9 @@ v1.1 decisions so far:
 - [Phase 09-npm-dependency-update]: npm --dep validation is minimal (non-empty, no control chars/whitespace) unlike Maven strict groupId:artifactId
 - [Phase 09-npm-dependency-update]: lockfile regeneration excluded from npm prompt -- host-side concern only
 - [Phase 09-npm-dependency-update]: NPM-05 (changelog link) deferred -- Docker has no network access
+- [Phase 09-npm-dependency-update]: npm errors use 'build'/'test' VerificationError types flowing through existing retry loop (NPM-04 satisfied by architecture)
+- [Phase 09-npm-dependency-update]: npm test skipped when npm build fails (same noise-reduction pattern as Maven)
+- [Phase 09-npm-dependency-update]: readPackageJsonScripts helper shared by both npm verifiers (DRY, single JSON parse)
 
 ### Pending Todos
 
@@ -92,7 +96,7 @@ None — roadmap just created.
 
 ## Session Continuity
 
-Last session: 2026-03-11T18:16:00Z
-Stopped at: "Completed 09-01-PLAN.md (npm prompt builder and CLI wiring)"
-Resume file: .planning/phases/09-npm-dependency-update/09-02-PLAN.md
+Last session: 2026-03-11T18:20:08.655Z
+Stopped at: Completed 09-02-PLAN.md
+Resume file: None
 Next action: Phase 9 Plan 02 — npm error summarizer and verifier.
