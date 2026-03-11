@@ -6,6 +6,10 @@ import { llmJudge } from '../../orchestrator/judge.js';
 import { GitHubPRCreator } from '../../orchestrator/pr-creator.js';
 import { buildPrompt } from '../../prompts/index.js';
 import pc from 'picocolors';
+import { promisify } from 'node:util';
+import { execFile } from 'node:child_process';
+
+const execFileAsync = promisify(execFile);
 
 export interface RunOptions {
   taskType: string;
@@ -48,6 +52,26 @@ export async function runAgent(options: RunOptions): Promise<number> {
     childLogger.info('LLM Judge disabled via --no-judge or JUDGE_ENABLED=false');
   }
 
+  // Host-side npm install: regenerate lockfile after agent edits package.json in Docker.
+  // Agent has no network access in Docker; npm install must run on host.
+  const preVerify = options.taskType === 'npm-dependency-update'
+    ? async (workspaceDir: string): Promise<void> => {
+        childLogger.info('Running host-side npm install to regenerate lockfile...');
+        try {
+          await execFileAsync('npm', ['install'], {
+            cwd: workspaceDir,
+            timeout: 120_000,
+            maxBuffer: 10 * 1024 * 1024,
+          });
+          childLogger.info('npm install completed successfully');
+        } catch (err: unknown) {
+          const error = err as { stdout?: string; stderr?: string };
+          const output = [error.stderr ?? '', error.stdout ?? ''].join('\n').trim();
+          throw new Error(`npm install failed (agent cannot fix registry/network issues):\n${output.slice(0, 500)}`);
+        }
+      }
+    : undefined;
+
   // Create RetryOrchestrator with session config + retry config
   const orchestrator = new RetryOrchestrator(
     {
@@ -61,6 +85,7 @@ export async function runAgent(options: RunOptions): Promise<number> {
       verifier: compositeVerifier,  // Phase 5: wire verifiers into retry loop
       judge: judgeDisabled ? undefined : llmJudge,  // Phase 6: LLM Judge after verification
       maxJudgeVetoes: 1,
+      preVerify,
     }
   );
 
