@@ -188,6 +188,50 @@ export class ErrorSummarizer {
   }
 
   /**
+   * Summarize build errors from npm run build output.
+   * Input: raw npm build output (potentially thousands of lines)
+   * Output: structured summary of up to 5 errors with count of remaining.
+   */
+  static summarizeNpmBuildErrors(rawOutput: string): string {
+    // Extract lines containing "error" (case-insensitive) or "ERR!" (npm error prefix)
+    const errorLines = rawOutput
+      .split('\n')
+      .filter(line => /\berror\b/i.test(line) || line.includes('ERR!'));
+
+    if (errorLines.length === 0) {
+      return 'npm build failed (no specific error lines found)';
+    }
+
+    const shown = errorLines.slice(0, 5);
+    const remaining = errorLines.length - shown.length;
+    const more = remaining > 0 ? `\n(+ ${remaining} more errors)` : '';
+
+    return `${shown.join('\n')}${more}`;
+  }
+
+  /**
+   * Summarize test failures from npm test output.
+   * Input: raw npm test runner output (Jest, Mocha, etc.)
+   * Output: structured summary of up to 5 failures with count of remaining.
+   */
+  static summarizeNpmTestFailures(rawOutput: string): string {
+    // Extract failure lines: FAIL, failed, Error: patterns
+    const failureLines = rawOutput
+      .split('\n')
+      .filter(line => /\bFAIL\b/.test(line) || /\bfailed\b/i.test(line) || /\bError:/i.test(line));
+
+    if (failureLines.length === 0) {
+      return 'npm tests failed (unable to extract specific test names)';
+    }
+
+    const shown = failureLines.slice(0, 5);
+    const remaining = failureLines.length - shown.length;
+    const more = remaining > 0 ? `\n(+ ${remaining} more failures)` : '';
+
+    return `${shown.join('\n')}${more}`;
+  }
+
+  /**
    * Build a complete error digest from all verification results.
    * Collects summaries from all failed results into [TYPE] summary sections.
    * Hard-caps output at 2000 chars (well under 500 tokens) with truncation notice.

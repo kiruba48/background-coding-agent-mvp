@@ -893,7 +893,7 @@ describe('ErrorSummarizer.summarizeNpmBuildErrors', () => {
 
     const result = ErrorSummarizer.summarizeNpmBuildErrors(raw);
 
-    expect(result).toContain('error');
+    expect(result).toContain('ERROR');
     expect(result).not.toBe('npm build failed (no specific error lines found)');
   });
 
