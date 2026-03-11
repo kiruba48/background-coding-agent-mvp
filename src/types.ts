@@ -62,6 +62,12 @@ export interface RetryConfig {
   verifier?: (workspaceDir: string) => Promise<VerificationResult>;
   judge?: (workspaceDir: string, originalTask: string) => Promise<JudgeResult>;
   maxJudgeVetoes?: number;  // default: 1, separate from maxRetries
+  /**
+   * Optional hook that runs after agent session succeeds but before verification.
+   * Use for host-side operations like lockfile regeneration.
+   * Throw to fail the run immediately (no retry).
+   */
+  preVerify?: (workspaceDir: string) => Promise<void>;
 }
 
 /**
