@@ -17,7 +17,7 @@ program
   .option('--no-judge', 'Disable LLM Judge semantic verification (also: JUDGE_ENABLED=false)')
   .option('--create-pr', 'Create a GitHub PR after successful agent run (requires GITHUB_TOKEN)')
   .option('--branch <name>', 'Branch name for the PR (default: auto-generated from task type). Only valid with --create-pr')
-  .option('--dep <groupId:artifactId>', 'Dependency to update (e.g., org.springframework:spring-core)')
+  .option('--dep <name>', 'Dependency to update (e.g., org.springframework:spring-core for Maven, lodash for npm)')
   .option('--target-version <version>', 'Target version for dependency update')
   .action(async (options) => {
     // Validate turn-limit
@@ -62,7 +62,7 @@ program
     }
 
     // Validate --dep and --target-version for task types that require them
-    const depRequiringTaskTypes = ['maven-dependency-update'];
+    const depRequiringTaskTypes = ['maven-dependency-update', 'npm-dependency-update'];
     if (depRequiringTaskTypes.includes(options.taskType)) {
       if (!options.dep) {
         console.error(pc.red('Error: --dep is required for task type: ' + options.taskType));
@@ -70,6 +70,27 @@ program
       }
       if (!options.targetVersion) {
         console.error(pc.red('Error: --target-version is required for task type: ' + options.taskType));
+        process.exit(2);
+      }
+      // Validate --dep format: task-type-aware
+      if (options.taskType === 'maven-dependency-update') {
+        // Maven: strict groupId:artifactId format (alphanumeric, dots, hyphens, underscores)
+        const depPattern = /^[a-zA-Z0-9._-]+:[a-zA-Z0-9._-]+$/;
+        if (!depPattern.test(options.dep)) {
+          console.error(pc.red('Error: --dep must be in groupId:artifactId format (e.g., org.springframework:spring-core)'));
+          process.exit(2);
+        }
+      } else if (options.taskType === 'npm-dependency-update') {
+        // npm: minimal validation -- non-empty (guaranteed above), no control characters or whitespace
+        if (/[\x00-\x1f\s]/.test(options.dep)) {
+          console.error(pc.red('Error: --dep contains invalid characters (control characters or whitespace not allowed)'));
+          process.exit(2);
+        }
+      }
+      // Validate --target-version: reject control characters and newlines
+      const versionPattern = /^[a-zA-Z0-9._\-+]+$/;
+      if (!versionPattern.test(options.targetVersion)) {
+        console.error(pc.red('Error: --target-version contains invalid characters'));
         process.exit(2);
       }
     }
