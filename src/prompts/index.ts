@@ -1,6 +1,6 @@
 import { buildMavenPrompt } from './maven.js';
-
-export { buildMavenPrompt } from './maven.js';
+import { buildNpmPrompt } from './npm.js';
+export { buildMavenPrompt, buildNpmPrompt };
 
 export interface PromptOptions {
   taskType: string;
@@ -25,6 +25,15 @@ export function buildPrompt(options: PromptOptions): string {
         throw new Error('targetVersion is required for maven-dependency-update');
       }
       return buildMavenPrompt(options.dep, options.targetVersion);
+    }
+    case 'npm-dependency-update': {
+      if (!options.dep) {
+        throw new Error('dep is required for npm-dependency-update');
+      }
+      if (!options.targetVersion) {
+        throw new Error('targetVersion is required for npm-dependency-update');
+      }
+      return buildNpmPrompt(options.dep, options.targetVersion);
     }
     default:
       return `You are a coding agent. Your task: ${options.taskType}. Work in the current directory.`;
