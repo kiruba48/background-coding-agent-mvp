@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: End-to-End Pipeline
 status: completed
-stopped_at: Phase 9 context gathered
-last_updated: "2026-03-11T18:00:07.691Z"
-last_activity: 2026-03-05 — Plan 03 complete (Maven integration wiring verified)
+stopped_at: "Phase 9 Plan 01 complete (npm prompt builder and CLI wiring)"
+last_updated: "2026-03-11T18:16:00Z"
+last_activity: 2026-03-11 — Plan 01 complete (npm prompt builder and CLI wiring)
 progress:
   total_phases: 3
   completed_phases: 2
-  total_plans: 5
-  completed_plans: 5
-  percent: 100
+  total_plans: 8
+  completed_plans: 6
+  percent: 75
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-02)
 
 **Core value:** The full verification loop must work: agent changes code, deterministic verifiers catch failures, LLM Judge catches scope creep, and only verified changes become PRs.
-**Current focus:** Phase 8 — Maven Dependency Update
+**Current focus:** Phase 9 — npm Dependency Update
 
 ## Current Position
 
-Phase: 8 of 9 (Maven Dependency Update)
-Plan: 3 of 3 in current phase
-Status: Phase 08 complete
-Last activity: 2026-03-05 — Plan 03 complete (Maven integration wiring verified)
+Phase: 9 of 9 (npm Dependency Update)
+Plan: 1 of 3 in current phase
+Status: Phase 09 Plan 01 complete
+Last activity: 2026-03-11 — Plan 01 complete (npm prompt builder and CLI wiring)
 
-Progress: [██████████] 100% (v1.1)
+Progress: [████████░░] 75% (v1.1)
 
 ## Performance Metrics
 
@@ -45,13 +45,14 @@ Progress: [██████████] 100% (v1.1)
 |-------|-------|-------|----------|
 | 7. GitHub PR Creation | 2/2 | 25 min | 12.5 min |
 | 8. Maven Dependency Update | 3/3 | 9 min | 3 min |
-| 9. npm Dependency Update | 0 | - | - |
+| 9. npm Dependency Update | 1/3 | 2 min | 2 min |
 
 *Updated after each plan completion*
 | Phase 07-github-pr-creation P02 | 10 | 2 tasks | 2 files |
 | Phase 08-maven-dependency-update P01 | 3 | 2 tasks | 5 files |
 | Phase 08-maven-dependency-update P02 | 5 | 2 tasks | 3 files |
 | Phase 08-maven-dependency-update P03 | 1 | 1 task | 0 files |
+| Phase 09-npm-dependency-update P01 | 2 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -76,6 +77,9 @@ v1.1 decisions so far:
 - [Phase 08-maven-dependency-update]: Path-based mock routing for compositeVerifier tests (handles parallel access call ordering)
 - [Phase 08-maven-dependency-update]: run.ts wiring completed during Plan 01 as natural part of CLI integration
 - [Phase 08-maven-dependency-update]: MVN-05 (changelog links) deferred -- Docker has no network access
+- [Phase 09-npm-dependency-update]: npm --dep validation is minimal (non-empty, no control chars/whitespace) unlike Maven strict groupId:artifactId
+- [Phase 09-npm-dependency-update]: lockfile regeneration excluded from npm prompt -- host-side concern only
+- [Phase 09-npm-dependency-update]: NPM-05 (changelog link) deferred -- Docker has no network access
 
 ### Pending Todos
 
@@ -88,7 +92,7 @@ None — roadmap just created.
 
 ## Session Continuity
 
-Last session: 2026-03-11T18:00:07.689Z
-Stopped at: Phase 9 context gathered
-Resume file: .planning/phases/09-npm-dependency-update/09-CONTEXT.md
-Next action: Phase 8 complete. Phase 9 (npm dependency update) is next.
+Last session: 2026-03-11T18:16:00Z
+Stopped at: "Completed 09-01-PLAN.md (npm prompt builder and CLI wiring)"
+Resume file: .planning/phases/09-npm-dependency-update/09-02-PLAN.md
+Next action: Phase 9 Plan 02 — npm error summarizer and verifier.

@@ -27,11 +27,11 @@ Requirements for v1.1 End-to-End Pipeline. Each maps to roadmap phases.
 
 ### npm Dependency Update
 
-- [ ] **NPM-01**: User specifies npm package name and target version via CLI
+- [x] **NPM-01**: User specifies npm package name and target version via CLI
 - [ ] **NPM-02**: Agent updates version in package.json and regenerates lockfile
 - [ ] **NPM-03**: Agent runs build and tests to verify update
 - [ ] **NPM-04**: Agent attempts code changes if new version has breaking API changes
-- [ ] **NPM-05**: Agent includes dependency changelog/release notes link in PR body
+- [x] **NPM-05**: Agent includes dependency changelog/release notes link in PR body
 
 ## Future Requirements
 
@@ -83,11 +83,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | MVN-03 | Phase 8 | Complete |
 | MVN-04 | Phase 8 | Complete |
 | MVN-05 | Phase 8 | Complete |
-| NPM-01 | Phase 9 | Pending |
+| NPM-01 | Phase 9 | Complete |
 | NPM-02 | Phase 9 | Pending |
 | NPM-03 | Phase 9 | Pending |
 | NPM-04 | Phase 9 | Pending |
-| NPM-05 | Phase 9 | Pending |
+| NPM-05 | Phase 9 | Complete |
 
 **Coverage:**
 - v1.1 requirements: 17 total
