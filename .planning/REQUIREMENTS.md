@@ -1,123 +1,107 @@
 # Requirements: Background Coding Agent
 
-## v1 Requirements
+**Defined:** 2026-03-16
+**Core Value:** The full verification loop must work: agent changes code, deterministic verifiers catch failures, LLM Judge catches scope creep, and only verified changes proceed.
 
-### Execution & Isolation
+## v2.0 Requirements
 
-- [x] **EXEC-01**: Agent executes in isolated Docker container with non-root user
-- [x] **EXEC-02**: Container has no external network access (network isolation)
-- [x] **EXEC-03**: Turn limit caps agent sessions at 10 turns maximum
-- [x] **EXEC-04**: Timeout terminates sessions exceeding 5 minutes
-- [ ] **EXEC-05**: Agent can retry on failure with error context (max 3 retries)
-- [ ] **EXEC-06**: Verification errors are summarized, not dumped raw (context engineering)
+Requirements for Claude Agent SDK migration. Each maps to roadmap phases.
 
-### Tool Access
+### SDK Integration
 
-- [ ] **TOOL-01**: Agent can read files from workspace via Read tool
-- [ ] **TOOL-02**: Agent can edit files in workspace via Edit tool
-- [ ] **TOOL-03**: Agent can run Git operations: status, diff, add, commit (not push)
-- [ ] **TOOL-04**: Agent can run allowlisted Bash commands: rg, cat, head, tail, find, wc
-- [ ] **TOOL-05**: Custom verifiers can be added via plugin system
+- [ ] **SDK-01**: Agent sessions use Claude Agent SDK `query()` instead of custom AgentSession/AgentClient
+- [ ] **SDK-02**: Built-in tools (Read, Write, Edit, Bash, Glob, Grep) replace all 6 hand-built tools
+- [ ] **SDK-03**: Permission mode `acceptEdits` auto-approves file operations without manual interception
+- [ ] **SDK-04**: `disallowedTools` blocks WebSearch/WebFetch in sandbox runs
+- [ ] **SDK-05**: `maxTurns` option replaces manual turn counter
+- [ ] **SDK-06**: `systemPrompt` option replaces custom prompt construction
+- [ ] **SDK-07**: PostToolUse hook logs every file change (Edit/Write) to audit trail
+- [ ] **SDK-08**: PreToolUse hook blocks writes outside repo path and to sensitive files (.env, .git)
+- [ ] **SDK-09**: `maxBudgetUsd` caps session cost as a hard USD limit
+- [ ] **SDK-10**: `ClaudeCodeSession` wrapper returns `SessionResult` compatible with RetryOrchestrator interface
 
-### Verification
+### Legacy Deletion
 
-- [x] **VERIFY-01**: Build verification confirms code compiles after changes
-- [x] **VERIFY-02**: Test verification confirms existing tests pass
-- [x] **VERIFY-03**: Lint verification confirms no style issues introduced
-- [x] **VERIFY-04**: LLM Judge evaluates changes against original prompt for scope creep
-- [x] **VERIFY-05**: Failed verification triggers retry with summarized error context
-- [x] **VERIFY-06**: LLM Judge veto prevents PR creation even if deterministic checks pass
+- [ ] **DEL-01**: `agent.ts` (AgentClient) deleted — replaced by Agent SDK built-in agentic loop
+- [ ] **DEL-02**: `session.ts` (AgentSession) deleted — replaced by ClaudeCodeSession wrapper
+- [ ] **DEL-03**: `container.ts` (ContainerManager) deleted — replaced by spawnClaudeCodeProcess
+- [ ] **DEL-04**: `dockerode` dependency removed from package.json
+- [ ] **DEL-05**: All tests for deleted files replaced with ClaudeCodeSession integration tests
 
-### PR Integration
+### MCP Verifier
 
-- [ ] **PR-01**: Successful verification creates PR on target repository
-- [ ] **PR-02**: PR description explains what changed and why
-- [ ] **PR-03**: PR includes diff of all changes
-- [ ] **PR-04**: PR includes metadata: agent session ID, verification results
-- [ ] **PR-05**: PR includes AI-generated change summary
+- [ ] **MCP-01**: In-process MCP server wraps compositeVerifier as `mcp__verifier__verify` tool
+- [ ] **MCP-02**: Agent can call verify tool mid-session to self-check before stopping
+- [ ] **MCP-03**: MCP server uses `createSdkMcpServer()` — no external process or HTTP server
 
-### CLI & Orchestration
+### Container Strategy
 
-- [x] **CLI-01**: CLI command triggers agent run with task type and target repo
-- [x] **CLI-02**: Orchestrator spawns, monitors, and tears down containers
-- [x] **CLI-03**: Structured JSON logging captures full session for debugging
-- [x] **CLI-04**: Session state tracked (pending, running, success, failed, vetoed)
-- [x] **CLI-05**: Metrics tracked: merge rate, veto rate, cost per run, time per session
+- [ ] **CTR-01**: Dockerfile runs Claude Agent SDK (Claude Code) inside Docker container
+- [ ] **CTR-02**: `spawnClaudeCodeProcess` pipes stdio between host orchestrator and container
+- [ ] **CTR-03**: Container maintains network isolation equivalent to v1.x `NetworkMode: none`
+- [ ] **CTR-04**: Container runs as non-root user with minimal capabilities
 
-### Task Types
+## Future Requirements
 
-- [ ] **TASK-01**: Maven dependency update task implemented end-to-end
-- [ ] **TASK-02**: npm dependency update task implemented end-to-end
-- [ ] **TASK-03**: Task type is configurable via CLI parameter
-- [ ] **TASK-04**: Prompts use end-state format (describe outcome, not steps)
+Deferred to v2.1+. Tracked but not in current roadmap.
 
----
+### Enhanced Capabilities
 
-## v2 Requirements (Deferred)
-
-### Task Types
-- Config file updates
-- Simple refactors
-- Pluggable task type system (marketplace potential)
-
-### Scale Features
-- Queue/webhook triggers (currently CLI only)
-- Batch operations across multiple repos
-- Real-time streaming UI
-
-### Advanced Features
-- Break-aware updates (handle breaking API changes)
-- Diff-based prompting (reduce token costs)
-- Rollback mechanism (track agent changes for easy revert)
-
----
+- **ENH-01**: WebSearch enabled for non-sandboxed runs (changelog lookups during dependency updates)
+- **ENH-02**: Subagent support (Agent tool) for parallel subtask execution
+- **ENH-03**: File checkpointing with `enableFileCheckpointing` and `rewindFiles()`
+- **ENH-04**: Effort control (`effort: 'low' | 'medium' | 'high'`) per task type
+- **ENH-05**: Custom verifier plugins (from v1.x backlog)
+- **ENH-06**: Cost per run metric tracking (from v1.x backlog)
 
 ## Out of Scope
 
-- **Auto-merge** — Human approval always required (trust model)
-- **Multi-repo batch operations** — Single repo per run for MVP
-- **Real-time streaming UI** — CLI output sufficient
-- **Slack/notification integrations** — Manual PR review sufficient
-- **Full terminal access** — Security risk, allowlisted commands only
-- **Dynamic tool fetching** — Static tools at spawn time (predictability)
+Explicitly excluded. Documented to prevent scope creep.
 
----
+| Feature | Reason |
+|---------|--------|
+| `bypassPermissions` mode | Grants full system access; `acceptEdits` + `disallowedTools` is safer |
+| Session resume in retry loop | Context accumulation causes scope drift; fresh session per retry is correct pattern |
+| AskUserQuestion in batch mode | Blocks background execution; agent must work autonomously |
+| Stop hook for retry logic | Creates infinite loop risk; RetryOrchestrator is cleaner boundary |
+| `settingSources: ["user"]` | Imports operator's personal config into agent; breaks isolation |
+| Full `@anthropic-ai/sdk` removal | LLM Judge still needs it for structured output; keep for judge only |
+| Network proxy architecture | Complex Unix socket proxy; defer if simpler Docker networking suffices |
 
 ## Traceability
 
+Which phases cover which requirements. Updated during roadmap creation.
+
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| EXEC-01 | Phase 1 | Complete |
-| EXEC-02 | Phase 1 | Complete |
-| EXEC-03 | Phase 2 | Complete |
-| EXEC-04 | Phase 2 | Complete |
-| EXEC-05 | Phase 4 | Pending |
-| EXEC-06 | Phase 4 | Pending |
-| TOOL-01 | Phase 3 | Pending |
-| TOOL-02 | Phase 3 | Pending |
-| TOOL-03 | Phase 3 | Pending |
-| TOOL-04 | Phase 3 | Pending |
-| TOOL-05 | Phase 10 | Pending |
-| VERIFY-01 | Phase 5 | Complete |
-| VERIFY-02 | Phase 5 | Complete |
-| VERIFY-03 | Phase 5 | Complete |
-| VERIFY-04 | Phase 6 | Complete |
-| VERIFY-05 | Phase 5 | Complete |
-| VERIFY-06 | Phase 6 | Complete |
-| PR-01 | Phase 7 | Pending |
-| PR-02 | Phase 7 | Pending |
-| PR-03 | Phase 7 | Pending |
-| PR-04 | Phase 7 | Pending |
-| PR-05 | Phase 7 | Pending |
-| CLI-01 | Phase 2 | Complete |
-| CLI-02 | Phase 2 | Complete |
-| CLI-03 | Phase 2 | Complete |
-| CLI-04 | Phase 2 | Complete |
-| CLI-05 | Phase 2 | Complete |
-| TASK-01 | Phase 8 | Pending |
-| TASK-02 | Phase 9 | Pending |
-| TASK-03 | Phase 8 | Pending |
-| TASK-04 | Phase 8 | Pending |
+| SDK-01 | Phase 10 | Pending |
+| SDK-02 | Phase 10 | Pending |
+| SDK-03 | Phase 10 | Pending |
+| SDK-04 | Phase 10 | Pending |
+| SDK-05 | Phase 10 | Pending |
+| SDK-06 | Phase 10 | Pending |
+| SDK-07 | Phase 10 | Pending |
+| SDK-08 | Phase 10 | Pending |
+| SDK-09 | Phase 10 | Pending |
+| SDK-10 | Phase 10 | Pending |
+| DEL-01 | Phase 11 | Pending |
+| DEL-02 | Phase 11 | Pending |
+| DEL-03 | Phase 11 | Pending |
+| DEL-04 | Phase 11 | Pending |
+| DEL-05 | Phase 11 | Pending |
+| MCP-01 | Phase 12 | Pending |
+| MCP-02 | Phase 12 | Pending |
+| MCP-03 | Phase 12 | Pending |
+| CTR-01 | Phase 13 | Pending |
+| CTR-02 | Phase 13 | Pending |
+| CTR-03 | Phase 13 | Pending |
+| CTR-04 | Phase 13 | Pending |
+
+**Coverage:**
+- v2.0 requirements: 22 total
+- Mapped to phases: 22
+- Unmapped: 0 ✓
 
 ---
-*Last updated: 2026-02-06 after Phase 2 completion*
+*Requirements defined: 2026-03-16*
+*Last updated: 2026-03-16 after roadmap creation*

@@ -1,0 +1,73 @@
+import { describe, it, expect } from 'vitest';
+import { buildNpmPrompt } from './npm.js';
+import { buildPrompt } from './index.js';
+
+describe('buildNpmPrompt', () => {
+  it('returns a string containing the package name', () => {
+    const result = buildNpmPrompt('lodash', '5.0.0');
+    expect(result).toContain('lodash');
+  });
+
+  it('returns a string containing the target version', () => {
+    const result = buildNpmPrompt('lodash', '5.0.0');
+    expect(result).toContain('5.0.0');
+  });
+
+  it('mentions package.json (not pom.xml)', () => {
+    const result = buildNpmPrompt('lodash', '5.0.0');
+    expect(result).toContain('package.json');
+    expect(result).not.toContain('pom.xml');
+  });
+
+  it('describes desired end-state (version updated, compilation succeeds)', () => {
+    const result = buildNpmPrompt('lodash', '5.0.0');
+    expect(result).toMatch(/version/i);
+    expect(result).toMatch(/compilation/i);
+  });
+
+  it('mentions fixing breaking API changes', () => {
+    const result = buildNpmPrompt('lodash', '5.0.0');
+    expect(result).toMatch(/breaking/i);
+  });
+
+  it('does NOT contain step-by-step instructions', () => {
+    const result = buildNpmPrompt('lodash', '5.0.0');
+    expect(result).not.toMatch(/step\s+\d/i);
+    expect(result).not.toMatch(/^\d+\.\s/m);
+  });
+
+  it('includes "Work in the current directory"', () => {
+    const result = buildNpmPrompt('lodash', '5.0.0');
+    expect(result).toContain('Work in the current directory');
+  });
+
+  it('instructs agent NOT to modify lockfile (lockfile is host-side concern)', () => {
+    const result = buildNpmPrompt('lodash', '5.0.0');
+    expect(result).toMatch(/package-lock/i);
+    expect(result).toMatch(/not|do not/i);
+  });
+});
+
+describe('buildPrompt npm-dependency-update dispatch', () => {
+  it('dispatches npm-dependency-update to buildNpmPrompt', () => {
+    const result = buildPrompt({
+      taskType: 'npm-dependency-update',
+      dep: 'lodash',
+      targetVersion: '5.0.0',
+    });
+    expect(result).toContain('lodash');
+    expect(result).toContain('5.0.0');
+  });
+
+  it('throws when npm-dependency-update is missing dep', () => {
+    expect(() =>
+      buildPrompt({ taskType: 'npm-dependency-update', targetVersion: '5.0.0' })
+    ).toThrow();
+  });
+
+  it('throws when npm-dependency-update is missing targetVersion', () => {
+    expect(() =>
+      buildPrompt({ taskType: 'npm-dependency-update', dep: 'lodash' })
+    ).toThrow();
+  });
+});

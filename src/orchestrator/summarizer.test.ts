@@ -221,6 +221,133 @@ describe('ErrorSummarizer', () => {
   });
 
   // ============================================================
+  // summarizeNpmBuildErrors
+  // ============================================================
+  describe('summarizeNpmBuildErrors', () => {
+    it('extracts webpack ERROR in lines', () => {
+      const input = [
+        'ERROR in ./src/index.ts',
+        'Module not found: Error: Can\'t resolve \'lodash\'',
+        'ERROR in ./src/utils.ts',
+      ].join('\n');
+
+      const result = ErrorSummarizer.summarizeNpmBuildErrors(input);
+
+      expect(result).toContain('2 build error(s)');
+      expect(result).toContain('ERROR in ./src/index.ts');
+      expect(result).toContain('ERROR in ./src/utils.ts');
+    });
+
+    it('extracts TypeScript errors from npm build output', () => {
+      const input = [
+        '> tsc --noEmit',
+        'src/foo.ts(10,5): error TS2345: Argument of type',
+        'src/bar.ts(20,3): error TS2551: Property does not exist',
+      ].join('\n');
+
+      const result = ErrorSummarizer.summarizeNpmBuildErrors(input);
+
+      expect(result).toContain('2 build error(s)');
+      expect(result).toContain('error TS2345');
+    });
+
+    it('extracts npm ERR! lines as fallback', () => {
+      const input = [
+        'npm ERR! code ELIFECYCLE',
+        'npm ERR! errno 1',
+        'npm ERR! project@1.0.0 build: `webpack`',
+      ].join('\n');
+
+      const result = ErrorSummarizer.summarizeNpmBuildErrors(input);
+
+      expect(result).toContain('ERR! code ELIFECYCLE');
+    });
+
+    it('returns fallback when no patterns match', () => {
+      const result = ErrorSummarizer.summarizeNpmBuildErrors('Build output with no recognizable errors');
+      expect(result).toBe('npm build failed (no specific error lines found)');
+    });
+
+    it('caps at 5 errors with more indicator', () => {
+      const lines: string[] = [];
+      for (let i = 1; i <= 8; i++) {
+        lines.push(`ERROR in ./src/file${i}.ts`);
+      }
+      const result = ErrorSummarizer.summarizeNpmBuildErrors(lines.join('\n'));
+
+      expect(result).toContain('8 build error(s)');
+      expect(result).toContain('(+ 3 more errors)');
+    });
+
+    it('does not match false positives like "0 errors"', () => {
+      const input = '0 errors found\nBuild completed with 0 errors';
+      const result = ErrorSummarizer.summarizeNpmBuildErrors(input);
+      expect(result).toBe('npm build failed (no specific error lines found)');
+    });
+  });
+
+  // ============================================================
+  // summarizeNpmTestFailures
+  // ============================================================
+  describe('summarizeNpmTestFailures', () => {
+    it('extracts Jest bullet failures', () => {
+      const input = [
+        'FAIL src/foo.test.ts',
+        '  ● Suite A > should work correctly',
+        '  ● Suite B > another failing test',
+        '',
+        'Tests: 2 failed, 5 passed, 7 total',
+      ].join('\n');
+
+      const result = ErrorSummarizer.summarizeNpmTestFailures(input);
+
+      expect(result).toContain('Suite A > should work correctly');
+      expect(result).toContain('Tests: 2 failed');
+    });
+
+    it('extracts Mocha failure count', () => {
+      const input = '  passing: 10\n  3 failing\n';
+      const result = ErrorSummarizer.summarizeNpmTestFailures(input);
+      expect(result).toContain('3 failing');
+    });
+
+    it('extracts FAIL file paths as fallback', () => {
+      const input = [
+        'FAIL src/foo.test.ts',
+        'FAIL src/bar.test.ts',
+        'Test Suites: 2 failed',
+      ].join('\n');
+
+      const result = ErrorSummarizer.summarizeNpmTestFailures(input);
+
+      expect(result).toContain('FAIL src/foo.test.ts');
+    });
+
+    it('returns fallback when no patterns match', () => {
+      const result = ErrorSummarizer.summarizeNpmTestFailures('Test output with no recognizable format');
+      expect(result).toBe('npm tests failed (unable to extract specific test names)');
+    });
+
+    it('caps bullet failures at 5', () => {
+      const failures: string[] = [];
+      for (let i = 1; i <= 7; i++) {
+        failures.push(`  ● Suite > test case ${i}`);
+      }
+      const result = ErrorSummarizer.summarizeNpmTestFailures(failures.join('\n'));
+
+      expect(result).toContain('(+ 2 more test failures)');
+      expect(result).toContain('test case 5');
+      expect(result).not.toContain('test case 6');
+    });
+
+    it('does not match false positives like stack traces', () => {
+      const input = 'at Object.handleError (/src/errorHandler.ts:10:5)\nProcess finished';
+      const result = ErrorSummarizer.summarizeNpmTestFailures(input);
+      expect(result).toBe('npm tests failed (unable to extract specific test names)');
+    });
+  });
+
+  // ============================================================
   // buildDigest
   // ============================================================
   describe('buildDigest', () => {

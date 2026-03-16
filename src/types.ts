@@ -62,6 +62,12 @@ export interface RetryConfig {
   verifier?: (workspaceDir: string) => Promise<VerificationResult>;
   judge?: (workspaceDir: string, originalTask: string) => Promise<JudgeResult>;
   maxJudgeVetoes?: number;  // default: 1, separate from maxRetries
+  /**
+   * Optional hook that runs after agent session succeeds but before verification.
+   * Use for host-side operations like lockfile regeneration.
+   * Throw to fail the run immediately (no retry).
+   */
+  preVerify?: (workspaceDir: string) => Promise<void>;
 }
 
 /**
@@ -73,5 +79,19 @@ export interface RetryResult {
   sessionResults: SessionResult[];
   verificationResults: VerificationResult[];
   judgeResults?: JudgeResult[];  // all judge invocations for logging
+  error?: string;
+}
+
+/**
+ * Result from GitHub PR creation after a successful agent run.
+ */
+export interface PRResult {
+  /** URL of the created or already-existing PR */
+  url: string;
+  /** true if a new PR was created; false if one already existed for the branch */
+  created: boolean;
+  /** Branch name that was pushed (auto-generated or user-provided) */
+  branch: string;
+  /** Set if PR creation failed — url and created will be empty/false */
   error?: string;
 }

@@ -15,6 +15,10 @@ program
   .option('--timeout <seconds>', 'Session timeout in seconds (default: 300)', '300')
   .option('--max-retries <number>', 'Maximum retry attempts on verification failure (default: 3)', '3')
   .option('--no-judge', 'Disable LLM Judge semantic verification (also: JUDGE_ENABLED=false)')
+  .option('--create-pr', 'Create a GitHub PR after successful agent run (requires GITHUB_TOKEN)')
+  .option('--branch <name>', 'Branch name for the PR (default: auto-generated from task type). Only valid with --create-pr')
+  .option('--dep <name>', 'Dependency to update (e.g., org.springframework:spring-core for Maven, lodash for npm)')
+  .option('--target-version <version>', 'Target version for dependency update')
   .action(async (options) => {
     // Validate turn-limit
     const turnLimit = parseInt(options.turnLimit, 10);
@@ -45,6 +49,53 @@ program
       process.exit(2);
     }
 
+    // Validate --branch requires --create-pr
+    if (options.branch && !options.createPr) {
+      console.error(pc.red('Error: --branch requires --create-pr'));
+      process.exit(2);
+    }
+
+    // Validate GITHUB_TOKEN is set when --create-pr is used
+    if (options.createPr && !process.env.GITHUB_TOKEN) {
+      console.error(pc.red('Error: GITHUB_TOKEN environment variable is required for --create-pr'));
+      process.exit(2);
+    }
+
+    // Validate --dep and --target-version for task types that require them
+    const depRequiringTaskTypes = ['maven-dependency-update', 'npm-dependency-update'];
+    if (depRequiringTaskTypes.includes(options.taskType)) {
+      if (!options.dep) {
+        console.error(pc.red('Error: --dep is required for task type: ' + options.taskType));
+        process.exit(2);
+      }
+      if (!options.targetVersion) {
+        console.error(pc.red('Error: --target-version is required for task type: ' + options.taskType));
+        process.exit(2);
+      }
+      // Validate --dep format: task-type-aware
+      if (options.taskType === 'maven-dependency-update') {
+        // Maven: strict groupId:artifactId format (alphanumeric, dots, hyphens, underscores)
+        const depPattern = /^[a-zA-Z0-9._-]+:[a-zA-Z0-9._-]+$/;
+        if (!depPattern.test(options.dep)) {
+          console.error(pc.red('Error: --dep must be in groupId:artifactId format (e.g., org.springframework:spring-core)'));
+          process.exit(2);
+        }
+      } else if (options.taskType === 'npm-dependency-update') {
+        // npm: validate against npm package name spec (scoped and unscoped)
+        const npmPkgPattern = /^(@[a-z0-9\-~][a-z0-9._\-~]*\/)?[a-z0-9\-~][a-z0-9._\-~]*$/;
+        if (!npmPkgPattern.test(options.dep) || options.dep.length > 214) {
+          console.error(pc.red('Error: --dep must be a valid npm package name (e.g., lodash, @types/node)'));
+          process.exit(2);
+        }
+      }
+      // Validate --target-version: reject control characters and newlines
+      const versionPattern = /^[a-zA-Z0-9._\-+]+$/;
+      if (!versionPattern.test(options.targetVersion)) {
+        console.error(pc.red('Error: --target-version contains invalid characters'));
+        process.exit(2);
+      }
+    }
+
     // Run agent with validated options
     const exitCode = await runAgent({
       taskType: options.taskType,
@@ -53,6 +104,10 @@ program
       timeout,
       maxRetries,
       noJudge: options.judge === false,  // Commander.js: --no-judge sets options.judge = false
+      createPr: options.createPr === true,
+      branchOverride: options.branch as string | undefined,
+      dep: options.dep as string | undefined,
+      targetVersion: options.targetVersion as string | undefined,
     });
 
     process.exit(exitCode);

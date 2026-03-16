@@ -1,555 +1,672 @@
-# Architecture Patterns
+# Architecture Research
 
-**Domain:** Background Coding Agent Platforms
-**Researched:** 2026-01-26
-**Confidence:** MEDIUM-HIGH
+**Domain:** Claude Agent SDK migration — background coding agent
+**Researched:** 2026-03-16
+**Confidence:** HIGH (Claude Agent SDK docs via official platform.claude.com, Spotify pattern via official engineering blog)
 
-## Recommended Architecture
+## Context: What This Research Is
 
-Background coding agent platforms follow a **layered "sandwich" architecture** that separates orchestration, agent execution, tool access, and verification into distinct, composable layers. This pattern emerged from production systems like Spotify's background coding agent and is now a recognized best practice.
+This is not a greenfield architecture doc. It is a migration analysis. The system already exists and works (v1.1). The question is: how does the Claude Agent SDK slot into the existing RetryOrchestrator/Verifier/Judge architecture, what needs to change, and what does the new data flow look like?
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    ORCHESTRATOR LAYER                        │
-│  (CLI, Job Queue, Session Management, Trace Collection)     │
-└─────────────────────────────┬───────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                     AGENT ENGINE LAYER                       │
-│       (Claude SDK w/ Agentic Loop, Context Management)      │
-└─────────────────────────────┬───────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                       TOOL LAYER (MCP)                       │
-│        (Limited, Safe Tools: Read, Edit, Git, Bash)         │
-└─────────────────────────────┬───────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    VERIFICATION LAYER                        │
-│  (Deterministic Verifiers + LLM Judge Quality Control)      │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-                       PR / Output System
-```
+---
 
-### Component Boundaries
-
-| Component | Responsibility | Communicates With | Stability |
-|-----------|---------------|-------------------|-----------|
-| **Orchestrator** | Session lifecycle, prompt loading, retry logic, trace collection | Agent Engine (spawn/monitor), Verification (results), PR System (create) | HIGH - Build first |
-| **Agent Engine** | Agentic reasoning loop, multi-file context, task planning | Orchestrator (lifecycle), Tool Layer (invocations) | HIGH - Use SDK |
-| **Tool Layer (MCP)** | Controlled access to filesystem, git, and shell via MCP protocol | Agent Engine (tool requests), Sandbox (execute) | MEDIUM - Constrain carefully |
-| **Sandbox** | Isolated execution environment (Docker), security boundary | Tool Layer (commands), Orchestrator (monitoring) | HIGH - Non-negotiable |
-| **Verification** | Run builds/tests/lints (deterministic), LLM Judge for scope validation | Orchestrator (results), Agent Engine (retry feedback) | MEDIUM - Iterative design |
-| **PR System** | Create GitHub PRs with metadata, format descriptions | Orchestrator (approved changes), Git (repo API) | LOW - Standard integration |
-
-### Data Flow
-
-**Successful execution path:**
+## Current Architecture (v1.1 — What Exists)
 
 ```
-1. Orchestrator receives task (CLI input or queue message)
-   ↓
-2. Orchestrator loads prompt template + repo context
-   ↓
-3. Orchestrator spawns Agent Engine in Docker sandbox
-   ↓
-4. Agent Engine requests tools via MCP (Read, Edit, Bash, Git)
-   ↓
-5. Tool Layer validates requests against allowlist, executes safely
-   ↓
-6. Agent Engine completes changes, returns control to Orchestrator
-   ↓
-7. Verification Layer runs deterministic checks (build, test, lint)
-   ↓
-8. [PASS] LLM Judge evaluates diff against original prompt
-   ↓
-9. [APPROVE] Orchestrator creates PR with metadata
-   ↓
-10. Human reviews and merges
+CLI (Commander.js)
+  -> RetryOrchestrator
+       -> AgentSession.start()            creates Docker container
+       -> AgentSession.run(message)       drives custom agentic loop
+            -> AgentClient.runAgenticLoop()
+                 -> Anthropic SDK messages.create() (loop)
+                 -> Tool dispatch (read_file, edit_file, grep, etc.)
+                    -> ContainerManager.exec() for read/grep/bash
+                    -> host execFile() for git_operation, edit_file
+       -> AgentSession.stop()             tears down container
+       -> compositeVerifier(workspaceDir)
+       -> llmJudge(workspaceDir, originalTask)
+  -> GitHubPRCreator (optional)
 ```
 
-**Failure/retry path:**
+What gets deleted: AgentSession (667 lines), AgentClient (273 lines), ContainerManager (~200 lines), their tests (~650 lines). Total: ~1,190 lines.
+
+What stays: RetryOrchestrator, compositeVerifier, llmJudge, ErrorSummarizer, GitHubPRCreator, prompts/, cli/. Total: ~1,600 lines unchanged.
+
+---
+
+## Target Architecture (v2.0)
 
 ```
-7. Verification Layer detects failure (tests fail, build breaks)
-   ↓
-8. Orchestrator formats error summary (not full logs)
-   ↓
-9. Orchestrator respawns Agent Engine with error context
-   ↓
-10. Agent attempts fix (max 3 retries)
-   ↓
-11. If still failing: Log session, no PR created
+CLI (Commander.js)
+  -> RetryOrchestrator
+       -> AgentSdkSession.run(message)   thin wrapper around query()
+            -> Claude Agent SDK query()
+                 cwd: workspaceDir
+                 maxTurns: turnLimit
+                 permissionMode: 'acceptEdits'
+                 allowedTools: ['Read','Write','Edit','Bash','Glob','Grep']
+                 model: config.model
+                 hooks: { Stop: [verifyBeforeStop] }  (optional MCP path, Phase 12)
+                 Built-in: auto context compression, agentic loop
+       -> compositeVerifier(workspaceDir)   unchanged
+       -> llmJudge(workspaceDir, task)       unchanged
+  -> GitHubPRCreator                         unchanged
 ```
 
-**LLM Judge veto path:**
+The swap is surgical: `new AgentSession(config)` becomes `new AgentSdkSession(config)` in `retry.ts`. The `AgentSdkSession` wrapper satisfies the same `SessionResult`-returning contract so `RetryOrchestrator` is untouched.
+
+---
+
+## System Overview
 
 ```
-8. [PASS] Deterministic verifiers pass
-   ↓
-9. LLM Judge detects scope creep or quality issues
-   ↓
-10. [VETO] Orchestrator logs session, no PR created
-   ↓
-11. Track veto rate for monitoring (~25% is healthy)
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           HOST PROCESS                                   │
+│                                                                          │
+│  CLI (run.ts)                                                            │
+│     |                                                                    │
+│  RetryOrchestrator.run(task)   [loop: attempt 1..maxRetries]            │
+│     |                                                                    │
+│     ├── AgentSdkSession.run(message)  ←─── NEW (replaces AgentSession)  │
+│     |      |                                                             │
+│     |      | query({ cwd, maxTurns, permissionMode, hooks, ... })       │
+│     |      |                                                             │
+│     |      ▼                                                             │
+│     |   ┌──────────────────────────────────────────────┐                │
+│     |   │  Claude Code Process  (Phase 13: in Docker)  │                │
+│     |   │                                              │                │
+│     |   │  Built-in tools: Read Write Edit Bash        │                │
+│     |   │                  Glob Grep                   │                │
+│     |   │  Auto context compression                    │                │
+│     |   │  Agentic loop (managed by SDK)               │                │
+│     |   │                                              │                │
+│     |   │  hooks: PostToolUse → audit log              │                │
+│     |   │         Stop → optional self-verify (Ph.12)  │                │
+│     |   └──────────────────────────────────────────────┘                │
+│     |                                                                    │
+│     ├── preVerify hook (e.g., npm install)    ←── unchanged             │
+│     ├── compositeVerifier(workspaceDir)        ←── unchanged            │
+│     └── llmJudge(workspaceDir, originalTask)   ←── unchanged            │
+│                                                                          │
+│  GitHubPRCreator (optional)                    ←── unchanged            │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Patterns to Follow
+---
 
-### Pattern 1: End-State Prompting
-**What:** Describe the desired outcome, not the steps to achieve it. Let the agent plan the approach.
+## Component Responsibilities (Post-Migration)
 
-**When:** All task type prompts (dependency updates, refactors, migrations)
+| Component | Responsibility | Status |
+|-----------|----------------|--------|
+| `CLI (run.ts)` | Parse args, build config, wire orchestrator | Modify: remove Docker refs |
+| `RetryOrchestrator` | Outer verify/retry loop, judge integration | Keep unchanged |
+| `AgentSdkSession` | Thin wrapper: `query()` call, result mapping, turn/timeout tracking | New (~50 lines) |
+| `compositeVerifier` | Build/test/lint — deterministic quality gate | Keep unchanged |
+| `llmJudge` | Diff-vs-prompt scope check | Keep unchanged |
+| `ErrorSummarizer` | Build retry context digest | Keep unchanged |
+| `GitHubPRCreator` | Branch/push/PR via Octokit | Keep unchanged |
+| `prompts/*.ts` | End-state prompt builders | Keep unchanged |
 
-**Why:** Spotify research shows end-state prompts outperform step-by-step instructions. The agent's planning capability is a strength, not a weakness.
+---
 
-**Example:**
-```markdown
-# Good (End-State)
-Update the Maven dependency `com.example:library` from 1.x to 2.x.
-The codebase should build and all tests should pass after the update.
+## Integration Point: RetryOrchestrator to AgentSdkSession
 
-# Bad (Step-by-Step)
-1. Find all pom.xml files
-2. Update the version of com.example:library
-3. Run mvn compile
-4. If compilation fails, fix the errors
-5. Run mvn test
+The only integration change is in `retry.ts` lines 70-81 (the session creation block):
+
+```typescript
+// BEFORE
+const session = new AgentSession(this.config);
+this.activeSession = session;
+await session.start();
+sessionResult = await session.run(message, logger);
+// finally: await session.stop()
+
+// AFTER
+const session = new AgentSdkSession(this.config);
+this.activeSession = session;
+sessionResult = await session.run(message, logger);
+// finally: await session.stop()   (no-op or abort)
 ```
 
-**Anti-pattern:** Over-constraining the agent with detailed steps. This leads to brittleness when unexpected situations arise.
+`AgentSdkSession.run()` must return the same `SessionResult` shape:
 
-### Pattern 2: Limited Tool Access
-**What:** Provide only the minimal toolset needed for the task. Use allowlists, not denylists.
-
-**When:** Tool layer design and configuration
-
-**Why:** Full terminal access creates unpredictability. Limited tools = predictable behavior. From Spotify: "Giving the agent full terminal access was a mistake."
-
-**Example MCP Tool Configuration:**
-```yaml
-allowed_tools:
-  - Read          # File reading with path restrictions
-  - Edit          # File editing with validation
-  - Bash          # Allowlist: [rg, cat, head, tail, find, wc]
-  - Git           # Allowlist: [status, diff, add, commit]
-
-blocked_tools:
-  - Write         # Too permissive (Edit is safer)
-  - Shell         # No arbitrary commands
-
-tool_constraints:
-  Git:
-    blocked_operations: [push, reset --hard, checkout ., clean -f]
-  Bash:
-    no_network: true
-    timeout_seconds: 30
+```typescript
+interface SessionResult {
+  sessionId: string;
+  status: 'success' | 'failed' | 'timeout' | 'turn_limit';
+  toolCallCount: number;
+  duration: number;
+  finalResponse: string;
+  error?: string;
+}
 ```
 
-**Anti-pattern:** Starting permissive and restricting later. Start minimal and expand deliberately.
+The SDK's `maxTurns` option replaces `TurnLimitError`. The `AbortController` (passed via `options.abortController`) replaces the manual timeout. The result message stream (`msg.type === 'result'`) provides `finalResponse`. Tool call count is tracked by counting `tool_use` blocks in `msg.type === 'assistant'` messages.
 
-### Pattern 3: Context Engineering (Log Abstraction)
-**What:** Summarize verbose outputs (build logs, test failures) before returning to agent. Don't dump raw logs.
+---
 
-**When:** Verification layer output formatting, tool result processing
+## AgentSdkSession: The New Component
 
-**Why:** Raw logs exhaust context window and confuse the agent. Abstracted summaries preserve signal, remove noise.
+This is the only net-new production class. It is deliberately thin — approximately 50 lines.
 
-**Example:**
-```python
-# Good: Abstracted
-def summarize_test_failure(test_output: str) -> str:
-    """Extract only relevant failure information"""
-    return {
-        "failed_tests": 3,
-        "failures": [
-            {
-                "test": "testUserLogin",
-                "error": "NullPointerException at UserService.java:42",
-                "relevant_code": "...",
-            }
-        ],
-        "suggestion": "The UserService expects a non-null email field"
+```typescript
+import { query } from '@anthropic-ai/claude-agent-sdk';
+import * as crypto from 'crypto';
+import pino from 'pino';
+import { SessionConfig, SessionResult } from '../types.js';
+
+export class AgentSdkSession {
+  private config: SessionConfig;
+  private abortController: AbortController | null = null;
+
+  constructor(config: SessionConfig) {
+    this.config = config;
+  }
+
+  async run(message: string, logger?: pino.Logger): Promise<SessionResult> {
+    const sessionId = crypto.randomUUID();
+    const startTime = Date.now();
+    let toolCallCount = 0;
+    let finalResponse = '';
+    const status_ref = { value: 'success' as SessionResult['status'] };
+    let error: string | undefined;
+
+    this.abortController = new AbortController();
+    const timeout = setTimeout(
+      () => this.abortController?.abort(),
+      this.config.timeoutMs ?? 300_000
+    );
+
+    try {
+      logger?.info({ sessionId, status: 'running' }, 'Session started');
+
+      for await (const msg of query({
+        prompt: message,
+        options: {
+          cwd: this.config.workspaceDir,
+          maxTurns: this.config.turnLimit ?? 10,
+          permissionMode: 'acceptEdits',
+          allowedTools: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'],
+          disallowedTools: ['WebSearch', 'WebFetch'],  // no network
+          model: this.config.model,
+          abortController: this.abortController,
+        }
+      })) {
+        if (msg.type === 'assistant') {
+          for (const block of msg.content) {
+            if (block.type === 'tool_use') toolCallCount++;
+          }
+        }
+        if (msg.type === 'result') {
+          finalResponse = msg.result ?? '';
+          if (msg.subtype === 'error_max_turns') status_ref.value = 'turn_limit';
+          else if (msg.subtype !== 'success') status_ref.value = 'failed';
+        }
+      }
+    } catch (err) {
+      if (this.abortController.signal.aborted) {
+        status_ref.value = 'timeout';
+        error = 'Session timeout';
+      } else {
+        status_ref.value = 'failed';
+        error = err instanceof Error ? err.message : String(err);
+      }
+    } finally {
+      clearTimeout(timeout);
+      this.abortController = null;
     }
 
-# Bad: Raw dump
-def get_test_output(test_output: str) -> str:
-    """Return 10,000 lines of Maven output"""
-    return test_output  # Context window exhausted
+    const duration = Date.now() - startTime;
+    logger?.info({ sessionId, status: status_ref.value, toolCallCount, duration }, 'Session completed');
+
+    return { sessionId, status: status_ref.value, toolCallCount, duration, finalResponse, error };
+  }
+
+  async stop(): Promise<void> {
+    this.abortController?.abort();
+  }
+}
 ```
 
-**Anti-pattern:** Assuming "more information = better debugging." The agent can't process 10K line logs effectively.
+---
 
-### Pattern 4: Sandbox Everything
-**What:** Run agent in isolated Docker container with no external network access, minimal binaries, read-only filesystem.
+## Container Strategy
 
-**When:** Agent execution environment design (foundational)
+**Verdict: Run Claude Agent SDK (the Claude Code process) inside Docker for production isolation.**
 
-**Why:** Security boundary. Agent has LLM-level reasoning but shouldn't access production systems, credentials, or the host.
+### Why Container Is Still Required
 
-**Docker Configuration:**
-```dockerfile
-# Security hardening
-FROM python:3.12-slim
-RUN useradd -m -u 1000 agent
-USER agent
-WORKDIR /workspace
+The Agent SDK's built-in tools (`Bash`, `Write`, `Edit`) execute on the host machine as the current user. Without a container, the agent can:
+- Modify any file the Node.js process can reach
+- Execute arbitrary shell commands via `Bash` tool
+- Make network calls (if `WebSearch`/`WebFetch` not disallowed)
 
-# Read-only root, writable workspace
-VOLUME /workspace
+The core constraint is unchanged: "Agent must run in Docker with no external network access — security non-negotiable."
 
-# Minimal binaries
-RUN apt-get update && apt-get install -y \
-    git ripgrep curl \
-    && rm -rf /var/lib/apt/lists/*
+### Why This Is Not Docker-in-Docker
 
-# No external network (docker-compose)
-# networks:
-#   internal:
-#     internal: true
+Docker-in-Docker (DinD) means the orchestrator on the host spins up a container and then the tools inside that container make further Docker calls. That is not the pattern here.
+
+The correct pattern: the Agent SDK's Claude Code process (the thing that runs `query()`) runs inside Docker. The orchestrator process (RetryOrchestrator, verifier, judge) stays on the host. The SDK communicates with its subprocess via the process interface, which the `spawnClaudeCodeProcess` option makes configurable.
+
+```
+Host machine
+  Node.js orchestrator process (RetryOrchestrator, verifier, judge, PR creator)
+       |
+       | docker run --network=none --user=1001 -v workspace:/workspace agent-sdk:latest
+       |      node dist/orchestrator/sdk-session-entrypoint.js
+       |
+       v
+  Docker container (network=none, non-root, workspace bind-mounted)
+       Node.js Agent SDK process
+            query() runs here
+            Built-in tools execute inside container
+                 Read/Write/Edit/Bash/Glob/Grep against /workspace
 ```
 
-**Anti-pattern:** Running agent on host system with subprocess. Security boundary is too weak.
+The Agent SDK `Options.spawnClaudeCodeProcess` accepts a custom spawn function that takes `SpawnOptions` and returns a `SpawnedProcess`. This is the integration point for the container launch.
 
-### Pattern 5: Turn Limits + Retry Budget
-**What:** Cap agent sessions at ~10 turns. Cap retries at 3 attempts.
+### Development Mode (Phases 10-11)
 
-**When:** Orchestrator session management
+For development and CI, skip the container. Use strict permission controls instead:
 
-**Why:** Prevents runaway costs and infinite loops. If agent can't solve in 10 turns, human intervention needed.
-
-**Implementation:**
-```python
-class AgentSession:
-    MAX_TURNS = 10
-    MAX_RETRIES = 3
-
-    async def run(self, task: Task) -> Result:
-        for attempt in range(self.MAX_RETRIES):
-            turns = 0
-            while turns < self.MAX_TURNS:
-                response = await self.agent.step()
-                turns += 1
-
-                if response.is_complete():
-                    return await self.verify(response)
-
-            # Turn limit exceeded
-            if attempt < self.MAX_RETRIES - 1:
-                await self.reset_with_feedback("Turn limit exceeded")
-
-        # Retry budget exhausted
-        return Result.failure("Unable to complete task")
+```typescript
+options: {
+  permissionMode: 'dontAsk',  // deny anything not in allowedTools
+  allowedTools: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'],
+  disallowedTools: ['WebSearch', 'WebFetch', 'Agent'],
+}
 ```
 
-**Anti-pattern:** No limits = unpredictable costs. One broken prompt could burn through API budget.
+This provides adequate blast-radius limitation for testing without Docker startup overhead.
 
-### Pattern 6: Verification Before PR
-**What:** Two-stage verification: (1) Deterministic checks (build, test, lint), (2) LLM Judge for scope/quality.
+### Production Mode (Phase 13)
 
-**When:** After agent completes changes, before PR creation
+Build a Dockerfile that:
+- Installs `@anthropic-ai/claude-agent-sdk` and ripgrep (for Grep tool)
+- Runs as non-root user (UID 1001)
+- Bind-mounts the workspace directory at `/workspace`
+- Has no network access (`--network=none`)
+- Has read-only root filesystem except `/workspace`
 
-**Why:** "Student driver with dual controls." Agent writes code, verification prevents bad changes from reaching humans.
+The `spawnClaudeCodeProcess` implementation in `AgentSdkSession` wraps the docker run command.
 
-**Verification Pipeline:**
-```python
-async def verify_changes(session: AgentSession) -> VerificationResult:
-    # Stage 1: Deterministic (MUST PASS)
-    build_result = await run_build(session.workspace)
-    if not build_result.success:
-        return VerificationResult.fail("Build failed", build_result.errors)
+---
 
-    test_result = await run_tests(session.workspace)
-    if not test_result.success:
-        return VerificationResult.fail("Tests failed", test_result.failures)
+## MCP Verifier Server Pattern (Spotify Pattern — Phase 12)
 
-    lint_result = await run_linter(session.workspace)
-    if lint_result.has_errors:
-        return VerificationResult.fail("Lint errors", lint_result.errors)
+Spotify's Honk agent exposes verifiers as MCP servers. The key quote from their engineering blog: "the agent doesn't know what the verification does and how, it just knows that it can (and in certain cases must) call it to verify its changes."
 
-    # Stage 2: LLM Judge (CAN VETO)
-    diff = await session.get_diff()
-    judge_result = await llm_judge.evaluate(
-        original_prompt=session.task.prompt,
-        changes=diff,
-        criteria=["in_scope", "safe", "quality"]
-    )
+### Two-Level Verification Architecture
 
-    if judge_result.veto:
-        return VerificationResult.veto(judge_result.reason)
-
-    return VerificationResult.approve()
+```
+Agent SDK session (inside container)
+     |
+     | calls mcp__verifier__verify
+     v
+MCP verifier server (stdio, host process)
+     |
+     | imports compositeVerifier
+     v
+compositeVerifier(workspaceDir)  [same function as outer RetryOrchestrator uses]
+     |
+     v
+{ passed: boolean, errors: VerificationError[] }
+     |
+     | returned to agent as tool result
+     v
+Agent self-corrects within the session if errors exist
+     |
+     | when agent is satisfied, stops
+     v
+RetryOrchestrator runs compositeVerifier again (authoritative)
 ```
 
-**Expected veto rate:** ~25% is healthy. Too low = judge is too lenient. Too high = prompts need refinement.
+### Why Run Verifier Twice
 
-**Anti-pattern:** Skipping verification to "move faster." This destroys trust in the system.
+The MCP verifier gives the agent in-session feedback — it can fix its own mistakes without consuming a full outer retry. The outer `RetryOrchestrator` verification is still the mandatory quality gate because it cannot be bypassed and runs regardless of what happened inside the session.
 
-### Pattern 7: One Change Type Per Session
-**What:** Each agent session tackles one task type (dependency update OR refactor OR migration, not multiple).
+The outer verification is cheap to run (it was already running). The MCP path reduces the number of outer retries needed, not the number of verifications.
 
-**When:** Task design and prompt structure
+### MCP Server Configuration
 
-**Why:** Context exhaustion. Combining unrelated changes leads to confusion and scope creep.
-
-**Example:**
-```python
-# Good: Focused
-task = Task(
-    type="dependency_update",
-    target="com.example:library:1.0.0 -> 2.0.0",
-    scope="Maven POM files only"
-)
-
-# Bad: Unfocused
-task = Task(
-    type="multiple",  # RED FLAG
-    changes=[
-        "Update library dependency",
-        "Refactor UserService",
-        "Fix linting issues"
-    ]
-)
+```typescript
+// In AgentSdkSession.run(), add to options:
+mcpServers: {
+  verifier: {
+    command: 'node',
+    args: ['dist/mcp/verifier-server.js'],
+    env: { WORKSPACE_DIR: this.config.workspaceDir }
+  }
+},
+allowedTools: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'mcp__verifier__verify']
 ```
 
-**Anti-pattern:** Trying to maximize "efficiency" by combining tasks. This backfires when agent loses focus.
+The MCP server itself is a stdio server (~30 lines) that reads `WORKSPACE_DIR` from env and calls `compositeVerifier`:
 
-## Anti-Patterns to Avoid
+```typescript
+// mcp/verifier-server.ts
+import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import { z } from 'zod';
+import { compositeVerifier } from '../orchestrator/verifier.js';
 
-### Anti-Pattern 1: Dynamic Tool Fetching
-**What:** Fetching tool definitions from external sources mid-session based on agent requests.
-
-**Why bad:** Unpredictability, security risk, dependency on external services during critical operations.
-
-**Consequences:** Agent behavior becomes non-deterministic. Debugging is impossible. Security auditing fails.
-
-**Instead:** Define static tool manifests at build time. Version them with code. Tools are part of the platform, not runtime dependencies.
-
-### Anti-Pattern 2: Full Terminal Access
-**What:** Giving agent unrestricted shell access via MCP.
-
-**Why bad:** Agent can execute arbitrary commands, install packages, modify system, spawn processes. Unpredictable and unsafe.
-
-**Consequences:** From Spotify: "Giving the agent full terminal access was a mistake." Leads to surprising behaviors that break production.
-
-**Instead:** Use allowlist-based Bash tool with specific commands only (rg, cat, head, tail, find, wc). No package managers, no network tools.
-
-### Anti-Pattern 3: No Observability
-**What:** Running agent sessions without trace collection, metrics, or session logs.
-
-**Why bad:** When things go wrong (and they will), you have no data to debug. Can't measure improvement over time.
-
-**Consequences:** Black box system. Can't answer "why did this fail?" or "is the system getting better?"
-
-**Instead:** Track everything via MLflow or equivalent:
-- Full conversation history
-- Tool invocation history
-- Verification results
-- Veto reasons from LLM Judge
-- Time metrics, cost metrics
-- Merge rate, veto rate
-
-### Anti-Pattern 4: Step-by-Step Prompting
-**What:** Giving agent detailed procedural instructions instead of desired outcomes.
-
-**Why bad:** Brittle when unexpected situations arise. Agent can't adapt its approach.
-
-**Consequences:** Agent follows steps blindly even when they don't make sense. Loses ability to reason about the task.
-
-**Instead:** Use end-state prompting. Describe what success looks like, not how to achieve it.
-
-### Anti-Pattern 5: Running on Host System
-**What:** Executing agent via subprocess or direct Python import without containerization.
-
-**Why bad:** No security boundary. Agent can access host filesystem, network, credentials. Blast radius is entire system.
-
-**Consequences:** If agent goes rogue or is compromised, entire host is at risk.
-
-**Instead:** Docker sandbox with network isolation, read-only filesystem, non-root user. Mandatory.
-
-### Anti-Pattern 6: Skipping Verification for "Simple" Changes
-**What:** Creating PRs directly for tasks deemed "low risk" without verification.
-
-**Why bad:** Destroys trust model. No change is truly zero-risk. Inconsistent quality.
-
-**Consequences:** One bad "simple" change makes humans distrust all agent output.
-
-**Instead:** Verification is non-negotiable. It's the foundation of trust. Never skip it.
-
-## Component Build Order
-
-The architecture has clear dependency relationships that dictate build order:
-
-### Phase 1: Foundation (Build First)
-**Components:** Sandbox + Orchestrator skeleton
-**Rationale:** Must establish security boundary before anything else. Orchestrator manages everything else.
-**Deliverable:** Docker container runs, agent can be spawned and monitored.
-
-### Phase 2: Agent Engine Integration
-**Components:** Claude SDK integration, MCP client
-**Rationale:** Need working agent before we can test tools or verification.
-**Deliverable:** Agent can execute simple tasks with Read/Edit tools.
-
-### Phase 3: Tool Layer
-**Components:** MCP tool servers (Read, Edit, Git, Bash with allowlists)
-**Rationale:** Agent needs tools to accomplish tasks. Build incrementally: Read → Edit → Git → Bash.
-**Deliverable:** Agent can explore codebase, make changes, commit.
-
-### Phase 4: Verification Loop
-**Components:** Deterministic verifiers (build, test, lint) + LLM Judge
-**Rationale:** Can't create PRs without verification. This is the trust boundary.
-**Deliverable:** Changes are verified before PR creation.
-
-### Phase 5: PR Integration
-**Components:** GitHub API integration, PR templates
-**Rationale:** Output mechanism. Depends on verification passing first.
-**Deliverable:** Approved changes become PRs automatically.
-
-### Phase 6: Task Implementation
-**Components:** Specific task prompts (e.g., Maven dependency updater)
-**Rationale:** Proves the architecture works end-to-end.
-**Deliverable:** One working task type (dependency updates).
-
-### Phase 7: Observability
-**Components:** MLflow integration, metrics dashboard, session replay
-**Rationale:** Production-ready system needs observability for debugging and improvement.
-**Deliverable:** Can debug failed sessions, track metrics over time.
-
-## Scalability Considerations
-
-| Concern | Single Repo | Multi-Repo Fleet | Production Scale |
-|---------|-------------|------------------|------------------|
-| **Concurrency** | Sequential CLI runs | Job queue (Celery/BullMQ) | Distributed workers with rate limiting |
-| **Session State** | In-memory | Redis/PostgreSQL | Distributed state store with TTL |
-| **Trace Storage** | Local MLflow | Centralized MLflow server | S3/GCS + query layer |
-| **Cost Control** | Per-session limits | Global budget tracking | Org-level quotas, priority queues |
-| **PR Volume** | Manual review | Review assignment system | Auto-merge for verified low-risk changes |
-
-## Architecture Decisions
-
-### Decision 1: MCP vs Direct Tool Implementation
-**Recommendation:** Use MCP Protocol
-
-**Rationale:**
-- **Standardization:** MCP is Anthropic's official standard for tool integration
-- **Ecosystem:** Growing library of MCP servers (filesystem, git, databases)
-- **Future-proof:** As MCP ecosystem grows, can add new tools without architecture changes
-- **Built-in safety:** MCP's request/response structure enables allowlisting naturally
-
-**Tradeoffs:**
-- Additional layer of abstraction vs direct Python functions
-- Need to run MCP servers alongside agent
-- But: Cleaner separation of concerns, easier to test tools in isolation
-
-### Decision 2: Claude Agent SDK vs Raw API
-**Recommendation:** Use Claude Agent SDK (not raw Messages API)
-
-**Rationale:**
-- **Agentic Loop:** SDK provides `beta.messages.tool_runner` which handles tool use loop automatically
-- **Type Safety:** Pydantic models for requests/responses reduce bugs
-- **Streaming:** Built-in streaming support for responsiveness
-- **Tool Helpers:** `@beta_tool` decorator simplifies tool definition
-
-**Tradeoffs:**
-- SDK is higher abstraction = less control over individual requests
-- Beta APIs may change
-- But: Significantly less boilerplate, focus on business logic not protocol
-
-### Decision 3: Docker vs Process Isolation
-**Recommendation:** Docker (non-negotiable)
-
-**Rationale:**
-- **Security:** Network isolation, filesystem isolation, non-root user enforcement
-- **Reproducibility:** Consistent environment across dev/prod
-- **Resource limits:** Can set memory/CPU limits per container
-- **Cleanup:** Containers can be destroyed after use, no lingering state
-
-**Tradeoffs:**
-- Overhead of container startup (~1-2 seconds)
-- Requires Docker/Podman on host
-- But: Security boundary is non-negotiable
-
-### Decision 4: Synchronous vs Async Orchestrator
-**Recommendation:** Start Synchronous (CLI), evolve to Async (Queue)
-
-**Rationale:**
-- **MVP:** CLI with synchronous execution proves architecture works
-- **Production:** Async job queue (Celery/BullMQ) enables concurrency and retries
-- **Migration path:** Orchestrator code can be same, execution model changes
-
-**Architecture allows:**
-```python
-# MVP: Synchronous CLI
-def main():
-    task = parse_cli_args()
-    result = orchestrator.run_sync(task)
-    print(result)
-
-# Production: Async Queue
-@celery.task
-def process_task(task_id: str):
-    task = load_task(task_id)
-    result = await orchestrator.run_async(task)
-    store_result(result)
+const server = createSdkMcpServer({
+  name: 'verifier',
+  tools: [
+    tool('verify', 'Run build, test, and lint checks on the workspace', {}, async () => {
+      const result = await compositeVerifier(process.env.WORKSPACE_DIR!);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    })
+  ]
+});
 ```
 
-## Confidence Assessment
+### MCP Verifier Is Optional
 
-| Aspect | Confidence | Source |
-|--------|------------|--------|
-| Layered "Sandwich" Architecture | HIGH | Spotify blog posts (BRIEF.md references), production-proven pattern |
-| MCP Tool Layer Design | HIGH | Official MCP documentation (modelcontextprotocol.io) |
-| Claude SDK Patterns | HIGH | Official Anthropic SDK documentation (github.com/anthropics/anthropic-sdk-python) |
-| Verification Loop Pattern | MEDIUM-HIGH | Spotify blog posts + industry practice (test-before-commit is standard) |
-| Docker Security Patterns | HIGH | Standard containerization best practices |
-| LLM Judge Design | MEDIUM | Spotify blog (25% veto rate), but implementation details light |
-| End-State Prompting | HIGH | Spotify blog explicitly recommends this pattern |
-| Turn Limits | MEDIUM | Spotify mentions ~10 turns, but exact tuning is project-specific |
+This is a Phase 12 optimization. The system works correctly without it. Implement after Phase 10 (core migration) and Phase 11 (deletion) are stable.
 
-## Open Questions for Phase-Specific Research
+---
 
-1. **LLM Judge Implementation:** What specific criteria should Judge evaluate? How to structure Judge prompts? Need to experiment.
+## Data Flow: New Request Lifecycle
 
-2. **Tool Allowlist Granularity:** How restrictive should Git tool be? (e.g., allow `git diff` but block `git diff --staged`?)
+```
+CLI: background-agent run --task npm-dependency-update --repo /path/to/repo
+     |
+     v
+RetryOrchestrator.run(originalTask)   [loop: attempt 1..maxRetries=3]
+     |
+     | attempt 1: message = originalTask
+     | attempt 2: message = task + "\n---\n" + errorDigest + "\n---\nFix and complete."
+     |
+     v
+AgentSdkSession.run(message, logger)
+     |
+     | query({
+     |   prompt: message,
+     |   options: {
+     |     cwd: workspaceDir,
+     |     maxTurns: 10,
+     |     permissionMode: 'acceptEdits',
+     |     allowedTools: ['Read','Write','Edit','Bash','Glob','Grep'],
+     |     disallowedTools: ['WebSearch','WebFetch'],
+     |     model: 'claude-sonnet-4-5',
+     |     abortController: (5 min timeout)
+     |   }
+     | })
+     |
+     v  (async generator streams messages)
+     |
+     | type='assistant' with tool_use blocks -> toolCallCount++
+     | type='result', subtype='success'      -> finalResponse = msg.result
+     | type='result', subtype='error_max_turns' -> status = 'turn_limit'
+     |
+     v
+SessionResult { status:'success', toolCallCount:7, duration:45000, finalResponse:'...' }
+     |
+     v  (back in RetryOrchestrator)
+     |
+     | if status !== 'success': return terminal failure (no retry)
+     |
+     v
+preVerify hook (e.g., runNpmInstall for lockfile regen)
+     |
+     v
+compositeVerifier(workspaceDir)   [tsc, vitest, eslint, maven build+test, npm build+test]
+     |
+     | if passed:
+     v
+llmJudge(workspaceDir, originalTask)   [diff scope check, ~25% veto rate]
+     |
+     | if APPROVE:
+     v
+RetryResult { finalStatus:'success', attempts:1, sessionResults, verificationResults }
+     |
+     v
+GitHubPRCreator (if --create-pr flag)
+```
 
-3. **Context Window Management:** What's the right balance of repo context vs conversation history? May need prompt compression.
+Nothing in this flow changes except the AgentSdkSession box. All error paths, retry logic, judge logic, and PR creation are identical.
 
-4. **Retry Strategy:** Should retries use same model or fall back to Opus? Cost vs capability tradeoff.
+---
 
-5. **Multi-File Changes:** How to handle changes that span many files? Batch edits or incremental?
+## Hooks Integration
 
-These questions are expected at this stage. Phase-specific research will address them as implementation progresses.
+### PostToolUse Hook (Audit Logging)
+
+Replaces the custom tool logging from the old session. Non-blocking (async: true).
+
+```typescript
+import { HookCallback, PostToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
+
+const auditHook: HookCallback = async (input, toolUseId) => {
+  const post = input as PostToolUseHookInput;
+  logger?.debug({ toolName: post.tool_name, toolUseId }, 'Tool executed');
+  return { async: true };  // non-blocking — don't wait
+};
+
+// In query() options:
+hooks: {
+  PostToolUse: [{ hooks: [auditHook] }]
+}
+```
+
+### Stop Hook (Optional In-Session Verification, Phase 12)
+
+When the agent decides to stop, this fires before the session ends. Can inject verification results back into the conversation and keep the agent going.
+
+```typescript
+const verifyBeforeStop: HookCallback = async (input) => {
+  const result = await compositeVerifier(workspaceDir);
+  if (!result.passed) {
+    const errorSummary = ErrorSummarizer.buildDigest([result]);
+    return {
+      systemMessage: `Verification failed:\n${errorSummary}\nFix these issues before stopping.`,
+      continue: true   // keep the session going
+    };
+  }
+  return {};  // allow stop — verification passed
+};
+```
+
+Note: The Stop hook fires when the agent tries to stop. The outer `RetryOrchestrator` verification fires after the session actually ends. Both can fire for the same session. This is correct — the Stop hook gives the agent a chance to self-correct; the outer verification is the final authority.
+
+### No PreToolUse Hooks Needed for Path Safety
+
+The old `AgentSession` had explicit path traversal checks and git flag allowlists. The Agent SDK's `cwd` option scopes the agent to the workspace directory. `allowedTools` without `Bash git push` prevents unauthorized git operations. The combination replaces the need for `PreToolUse` path validation hooks in the common case.
+
+If fine-grained git control is needed (e.g., blocking `git push`), add a `PreToolUse` hook with `matcher: 'Bash'` that checks `tool_input.command` for blocked patterns.
+
+---
+
+## Removed vs Replaced vs Retained
+
+### Deleted (~1,190 lines)
+
+| File | Lines | Replaced By |
+|------|-------|-------------|
+| `orchestrator/agent.ts` | 273 | Agent SDK built-in agentic loop |
+| `orchestrator/session.ts` | 667 | `AgentSdkSession` wrapper (~50 lines) |
+| `orchestrator/container.ts` | ~200 | Agent SDK process runs in container (Phase 13) |
+| Tests for above | ~650 | New integration tests for `AgentSdkSession` |
+
+### New
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `orchestrator/sdk-session.ts` | ~50 | `AgentSdkSession`: thin `query()` wrapper, `SessionResult` mapping |
+| `mcp/verifier-server.ts` | ~30 | MCP stdio server exposing `compositeVerifier` (Phase 12 only) |
+
+### Modified (minimal)
+
+| File | Change |
+|------|--------|
+| `orchestrator/retry.ts` | Line 70: `new AgentSession` -> `new AgentSdkSession`. Remove Docker/container import. |
+| `orchestrator/index.ts` | Remove `AgentClient`, `AgentSession`, `ContainerManager` exports. Add `AgentSdkSession`. |
+| `cli/commands/run.ts` | Remove `image` option. Remove DockerContainerManager references. |
+| `package.json` | Add `@anthropic-ai/claude-agent-sdk`. Remove `dockerode` and `write-file-atomic` (if only used in session.ts). |
+
+### Unchanged (everything else)
+
+`retry.ts` loop logic, `verifier.ts`, `judge.ts`, `summarizer.ts`, `pr-creator.ts`, `metrics.ts`, `prompts/`, `cli/index.ts` core, `types.ts`, all type definitions, all prompt builders.
+
+---
+
+## Architectural Patterns
+
+### Pattern 1: Wrapper with Same Contract
+
+**What:** `AgentSdkSession` wraps `query()` and returns the same `SessionResult` interface that `AgentSession` returned. `RetryOrchestrator` sees no API difference.
+
+**When to use:** Replacing an implementation without changing callers. The existing interface acts as the migration contract.
+
+**Trade-offs:** Slight indirection, but all orchestrator logic and tests remain unchanged. The wrapper is so thin that it adds negligible complexity.
+
+### Pattern 2: Outer Verification Is Always Authoritative
+
+**What:** Verification in `RetryOrchestrator` is the mandatory quality gate. Any in-session verification (via MCP Stop hook) is an optimization for faster feedback, not a replacement.
+
+**When to use:** Every time, without exception.
+
+**Trade-offs:** Some redundancy (verifier runs twice if MCP path is active), but correctness is guaranteed even if the MCP path fails or the Stop hook crashes.
+
+### Pattern 3: Fresh Session Per Retry
+
+**What:** Create a new `AgentSdkSession` (new `query()` call) for each retry attempt. Never resume a failed session.
+
+**When to use:** Always for retry attempts. The Agent SDK supports session resumption via `resume: sessionId`. Do not use this for the retry loop.
+
+**Why:** Prior failure context from a bad session contaminates the model's approach. The retry message (task + error digest, built by `buildRetryMessage()`) provides precisely the right context. Spotify's engineering blog explicitly validates this: fresh session per retry prevents context accumulation.
+
+### Pattern 4: Surrounding Infrastructure Stays Outside the Agent
+
+**What:** PR creation, branch naming, git push, Slack notifications, logging — all of these happen in the orchestrator, not inside the agent session.
+
+**When to use:** Anything that interacts with external systems (GitHub, Slack, monitoring).
+
+**Why:** This is the core Spotify pattern. The agent's scope is: read, understand, edit, verify. The orchestrator's scope is: lifecycle, retry, quality gate, output. Keeping infrastructure outside the agent makes the agent's behavior more predictable and the infrastructure independently testable.
+
+---
+
+## Anti-Patterns
+
+### Anti-Pattern 1: Running Agent SDK on Host for Production
+
+**What people do:** Skip the container step — run `query()` directly in the orchestrator process for simplicity. Rely on `permissionMode: 'dontAsk'` and `disallowedTools` for safety.
+
+**Why it's wrong:** No network isolation. `Bash` tool can make network calls unless `WebSearch`/`WebFetch` are disallowed AND the Bash commands themselves are restricted. File access is scoped only by the agent's compliance with `cwd`, not by OS-level enforcement.
+
+**Do this instead:** Container for production (Phase 13). Permission restrictions alone for development/CI only.
+
+### Anti-Pattern 2: Using Stop Hook as Primary Verification
+
+**What people do:** Move `compositeVerifier` into a Stop hook, remove it from `RetryOrchestrator`, let the hook be the quality gate.
+
+**Why it's wrong:** Hooks can crash, be misconfigured, or not fire if the session errors out before stopping cleanly. The `RetryOrchestrator` verification runs on the host with full access to tooling and is completely decoupled from the agent session state.
+
+**Do this instead:** Keep `compositeVerifier` in `RetryOrchestrator`. Add a Stop hook only as an in-session feedback optimization (Phase 12).
+
+### Anti-Pattern 3: Resuming Failed Sessions for Retry
+
+**What people do:** Pass `resume: previousSessionId` when retrying after verification failure, thinking the agent can "continue from where it left off."
+
+**Why it's wrong:** The failed session's context window contains all the wrong tool calls, dead-end reasoning, and possibly invalid workspace state. The model anchors to the prior bad approach instead of starting fresh.
+
+**Do this instead:** Create a fresh `query()` call. The `buildRetryMessage()` in `RetryOrchestrator` already constructs the correct retry prompt: original task first, error digest second.
+
+### Anti-Pattern 4: Migrating Everything at Once
+
+**What people do:** Delete `AgentSession`, replace `RetryOrchestrator` internals directly, update all exports simultaneously, then try to get tests green.
+
+**Why it's wrong:** ~100 passing unit tests become unrunnable mid-migration. Hard to isolate failures. No incremental validation.
+
+**Do this instead:** Phase 10 creates `AgentSdkSession` with same interface, swaps one line in `retry.ts`. All existing unit tests still pass (they mock the session). Phase 11 deletes legacy only after Phase 10 is green and verified.
+
+### Anti-Pattern 5: Putting git push Inside the Agent
+
+**What people do:** Give the agent `allowedTools: ['Bash']` with git push enabled, and let it push its own branch.
+
+**Why it's wrong:** Agent should not push to remote. From Spotify: infrastructure like branch management, pushing, and PR creation lives outside the agent. This is a security and predictability boundary.
+
+**Do this instead:** Agent commits locally (Bash git commit or the Agent SDK's Bash tool with scoped git). `GitHubPRCreator` on the host handles branch creation, push, and PR.
+
+---
+
+## Spotify "Honk" Architecture Reference
+
+Spotify's background coding agent evolved through the same trajectory as this project:
+
+1. Open-source agents (brittle, hard to maintain)
+2. Custom agentic loop (what v1.0/v1.1 built)
+3. Claude Code as agent engine (where v2.0 goes)
+
+Their validated architecture after migration (Spotify Engineering Part 1/3, 2025):
+
+- **Agent runs in a sandboxed container** with limited binaries and no network access to surrounding systems
+- **Verifiers exposed as MCP servers** — agent calls a verify tool, doesn't know if it's Maven or npm underneath. Verifier activates automatically based on codebase contents (pom.xml triggers Maven verifier, package.json triggers npm verifier)
+- **Stop hook triggers verification** before PR creation is attempted
+- **LLM Judge vetoes ~25% of proposals** — agents self-correct roughly half the time when given veto feedback
+- **Surrounding infrastructure stays outside** — fleet management, Slack, PR creation, prompt authoring all external to Claude Code itself
+- **Top-performing agent** across ~50 migration comparisons in their evaluation framework
+
+The architecture described in this document implements all of these patterns. Their "small internal CLI" that "delegates to Claude Code, runs MCP verifiers, evaluates diff with LLM Judge, uploads logs" maps directly to our `CLI -> RetryOrchestrator -> AgentSdkSession + compositeVerifier + llmJudge` stack.
+
+---
+
+## Build Order Rationale
+
+Dependencies flow as:
+
+```
+Phase 10: AgentSdkSession          -> Phase 11: Delete Legacy
+  (new wrapper, swap in retry.ts)       (cleanup, simplify)
+         |                                     |
+         v                                     v
+Phase 12: MCP Verifiers (optional)   Phase 13: Container Strategy
+  (Spotify pattern, in-session        (production isolation,
+   self-verification)                  spawnClaudeCodeProcess)
+```
+
+Phase 10 must precede Phase 11: cannot delete until replacement works.
+
+Phase 12 and Phase 13 are independent of each other. Phase 12 adds the MCP verifier server (runs on host). Phase 13 puts the agent process inside Docker. Neither depends on the other.
+
+Phase 12 can be skipped if the outer retry loop provides sufficient correction cycles. Phase 13 is required for production but can be deferred for development.
+
+---
+
+## Integration Points
+
+### External Services
+
+| Service | Integration Pattern | Notes |
+|---------|---------------------|-------|
+| Anthropic API | Agent SDK `query()` handles auth, retries, rate limits | `ANTHROPIC_API_KEY` env var, same as before |
+| Docker (Phase 13) | `spawnClaudeCodeProcess` custom spawn function in `Options` | SDK docs confirm this option exists for container/VM execution |
+| GitHub | Octokit in `GitHubPRCreator`, unchanged | Outside the agent, pure host infrastructure |
+
+### Internal Boundaries
+
+| Boundary | Communication | Notes |
+|----------|---------------|-------|
+| `RetryOrchestrator` to `AgentSdkSession` | Direct method call, `SessionResult` return | Same contract as `AgentSession` |
+| `AgentSdkSession` to Agent SDK | Async generator (`for await`), `Options` object | SDK streams `SDKMessage` objects |
+| `RetryOrchestrator` to `compositeVerifier` | Direct function call, `VerificationResult` return | Unchanged |
+| Agent SDK to MCP verifier server (Phase 12) | stdio transport, MCP protocol | Server runs as child process spawned by SDK |
+| MCP verifier server to `compositeVerifier` | Direct TypeScript import | Same function, new caller |
+
+---
 
 ## Sources
 
-**HIGH Confidence (Official Documentation):**
-- Anthropic Python SDK: https://github.com/anthropics/anthropic-sdk-python (Agent SDK patterns, tool runner, streaming)
-- MCP Architecture: https://modelcontextprotocol.io/docs/learn/architecture (Protocol design, client-server model)
-- MCP Introduction: https://modelcontextprotocol.io/introduction (Core concepts, tool integration)
+- [Claude Agent SDK Overview](https://platform.claude.com/docs/en/agent-sdk/overview) — HIGH confidence, official docs
+- [Claude Agent SDK TypeScript Reference](https://platform.claude.com/docs/en/agent-sdk/typescript) — HIGH confidence, official docs (Options type, query() signature, Query object, spawnClaudeCodeProcess, SDKMessage types)
+- [Claude Agent SDK Hooks](https://platform.claude.com/docs/en/agent-sdk/hooks) — HIGH confidence, official docs (PreToolUse, PostToolUse, Stop, HookCallback interface, permissionDecision)
+- [Claude Agent SDK Permissions](https://platform.claude.com/docs/en/agent-sdk/permissions) — HIGH confidence, official docs (acceptEdits, dontAsk, bypassPermissions, allowedTools vs disallowedTools)
+- [Claude Agent SDK MCP](https://platform.claude.com/docs/en/agent-sdk/mcp) — HIGH confidence, official docs (mcpServers config, stdio transport, createSdkMcpServer, tool())
+- [Spotify Engineering Part 1: Architecture](https://engineering.atspotify.com/2025/11/spotifys-background-coding-agent-part-1) — MEDIUM confidence, engineering blog
+- [Spotify Engineering Part 3: Feedback Loops](https://engineering.atspotify.com/2025/12/feedback-loops-background-coding-agents-part-3) — MEDIUM confidence, engineering blog (container isolation, MCP verifiers, stop hook, judge veto rate, surrounding infrastructure)
+- Existing codebase (`src/orchestrator/`) — HIGH confidence, first-party source for current interfaces and contracts
 
-**MEDIUM Confidence (Project Artifacts):**
-- BRIEF.md: Spotify background coding agent architecture, learnings, best practices
-- PROJECT.md: Project requirements and constraints
-
-**LOW Confidence (Inferred):**
-- Exact LLM Judge implementation (not detailed in sources)
-- Turn limit tuning (Spotify mentioned ~10, but context-dependent)
-
-## Build Order Summary
-
-```
-1. Sandbox + Orchestrator → Security boundary established
-2. Agent Engine (SDK) → Agentic reasoning available
-3. Tool Layer (MCP) → Agent can accomplish tasks
-4. Verification Loop → Trust boundary enforced
-5. PR Integration → Output mechanism complete
-6. Task Implementation → End-to-end validation
-7. Observability → Production readiness
-```
-
-Each phase builds on previous phases. No skipping allowed.
+---
+*Architecture research for: Claude Agent SDK migration — background coding agent*
+*Researched: 2026-03-16*

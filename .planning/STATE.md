@@ -1,55 +1,52 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: unknown
-last_updated: "2026-02-28T11:03:51.998Z"
+milestone: v2.0
+milestone_name: Claude Agent SDK Migration
+status: ready_to_plan
+stopped_at: null
+last_updated: "2026-03-16"
+last_activity: 2026-03-16 — Roadmap created for v2.0
 progress:
-  total_phases: 6
-  completed_phases: 6
-  total_plans: 15
-  completed_plans: 15
+  total_phases: 4
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2025-01-25)
+See: .planning/PROJECT.md (updated 2026-03-16)
 
-**Core value:** The full verification loop must work: agent changes code, deterministic verifiers catch failures, LLM Judge catches scope creep, and only verified changes become PRs. Without this, the platform can't be trusted.
-**Current focus:** Phase 6 - LLM Judge Integration
+**Core value:** The full verification loop must work: agent changes code, deterministic verifiers catch failures, LLM Judge catches scope creep, and only verified changes proceed.
+**Current focus:** Phase 10 — Agent SDK Integration
 
 ## Current Position
 
-Phase: 6 of 10 (LLM Judge Integration) — Complete
-Plan: 2 of 2 (06-02 complete)
-Status: 06-02 complete — Judge integration in RetryOrchestrator (post-verification judge check, separate 1-veto budget, --no-judge CLI flag, vetoed exit code, 6 new tests); Phase 6 fully complete
-Last activity: 2026-02-28 — 06-02 complete (judge wired into RetryOrchestrator, 28 judge tests total, 90 unit tests pass)
+Phase: 10 of 13 (Agent SDK Integration)
+Plan: — (not yet planned)
+Status: Ready to plan
+Last activity: 2026-03-16 — Roadmap created, v2.0 phases 10-13 defined
 
-Progress: [██████░░░░] 65% (15/23 plans)
+Progress: [░░░░░░░░░░] 0% (v2.0 phases)
 
 ## Performance Metrics
 
-**Velocity:**
-- Total plans completed: 13
-- Average duration: 5.1 min
-- Total execution time: 1.11 hours
+**Velocity (from v1.0 + v1.1):**
+- Total plans completed: 23 (v1.0: 15, v1.1: 8)
+- v1.0 average: ~2.3 days/plan across 6 phases
+- v1.1 average: ~1.1 days/plan across 3 phases
 
-**By Phase:**
+**By Phase (v2.0):**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| Phase 1 | 4/4 | 13 min | 3.3 min |
-| Phase 2 | 3/3 | 10.3 min | 3.4 min |
-| Phase 3 | 2/2 | 27.4 min | 13.7 min |
-| Phase 4 | 2/2 | 6 min | 3 min |
-| Phase 5 | 2/2 | 6 min | 3 min |
-| Phase 6 | 2/2 | 9 min | 4.5 min |
-
-**Recent Trend:**
-- Last 5 plans: 06-02 (5 min), 06-01 (4 min), 05-02 (3 min), 05-01 (3 min), 04-02 (4 min)
-- Trend: Phase 6 complete — judge integrated end-to-end (judge.ts + retry.ts + run.ts + tests)
+| 10. SDK Integration | TBD | - | - |
+| 11. Legacy Deletion | TBD | - | - |
+| 12. MCP Verifier | TBD | - | - |
+| 13. Container Strategy | TBD | - | - |
 
 *Updated after each plan completion*
 
@@ -57,81 +54,24 @@ Progress: [██████░░░░] 65% (15/23 plans)
 
 ### Decisions
 
-Decisions are logged in PROJECT.md Key Decisions table.
-Recent decisions affecting current work:
-
-- Docker sandbox (not subprocess): Full isolation required for security model — Implemented (01-02)
-- Agent engine TBD: Need research on CLI vs SDK vs raw API tradeoffs — Resolved in research (Direct SDK recommended)
-- ESM modules: Used type: module in package.json for @anthropic-ai/sdk compatibility — Implemented (01-01)
-- Alpine Linux base: Alpine 3.18 chosen for minimal attack surface (28MB vs 1GB+) — Implemented (01-01)
-- Non-root container user: Agent user with UID/GID 1001 for security — Implemented (01-01)
-- Long-running container pattern: sleep infinity with docker exec for tool invocation — Implemented (01-02)
-- Network isolation: NetworkMode: none in HostConfig for complete isolation — Implemented (01-02)
-- Workspace bind mount: Same absolute path in container as host for consistency — Implemented (01-02)
-- Claude model: claude-sonnet-4-5-20250929 for agent communication — Implemented (01-03)
-- Tool use agentic loop: tool_use → execute → tool_result → end_turn pattern — Implemented (01-03)
-- Max iterations: 10 default to prevent infinite loops in agentic workflows — Implemented (01-03)
-- Retry strategy: Exponential backoff for 429 (rate limit), fixed 5s for 529 (overload) — Implemented (01-03)
-- Tool routing via executeTool method routing to container.exec — Implemented (01-04)
-- Session lifecycle: container created on start(), cleaned up on stop() — Implemented (01-04)
-- Error handling: tool errors returned as strings to Claude (not thrown) — Implemented (01-04)
-- In-memory metrics only: Simple tracking over Prometheus for initial implementation — Implemented (02-03)
-- Automatic Docker health check: Health check called in create() method automatically — Implemented (02-03)
-- Actionable error messages: Docker errors include troubleshooting steps — Implemented (02-03)
-- Structured JSON logging with Pino: 5x faster than Winston, production-grade for debugging — Implemented (02-01)
-- Turn limit default of 10: Matches Spotify learnings, prevents infinite loops — Implemented (02-01)
-- Timeout default of 5 minutes: Prevents runaway sessions, reasonable for most tasks — Implemented (02-01)
-- Optional logger injection: Backward compatible, enables testing with mock loggers — Implemented (02-01)
-- PII redaction at logger level: Centralized protection for apiKey, token, password fields — Implemented (02-01)
-- Commander.js for CLI: Industry standard with 27.9k stars, automatic help generation — Implemented (02-02)
-- POSIX exit codes: Semantic codes (0/1/2/124/130/143) enable shell scripting — Implemented (02-02)
-- Signal handlers: process.once() for SIGINT/SIGTERM prevents orphaned containers — Implemented (02-02)
-- Host-side git execution: Git operations run on host (not container) via execFileAsync to avoid container user permission issues with .git/ directory — Implemented (03-01)
-- Multi-line-safe match reporting: indexOf loop on full content (not line.includes) for accurate multi-line pattern matching — Implemented (03-01)
-- File write mode 0o644: Container user reads via 'other' permission, avoiding ownership mismatch — Implemented (03-01)
-- Minimal bash allowlist: Only cat, head, tail, find, wc (read-only operations) with verified absolute paths — Implemented (03-01)
-- Remove execute_bash: Replaced unrestricted bash execution with five specialized secure tools — Implemented (03-01)
-- Unit tests via executeTool casting: Direct tool testing via (session as any).executeTool() avoids API costs while maintaining test isolation — Implemented (03-02)
-- Separate E2E and unit tests: RUN_E2E flag preserves both test types for different purposes — Implemented (03-02)
-- Fresh AgentSession per retry: Prevents context window exhaustion from accumulated conversation history — Implemented (04-01)
-- Session-level failures terminal: timeout/turn_limit/failed not retried, only verification failures trigger retry — Implemented (04-01)
-- Error digest hard-capped at 2000 chars: Protects agent context window, stays under 500 tokens — Implemented (04-01)
-- Original task always first in retry message: Primary directive before error context prevents scope drift — Implemented (04-01)
-- Synchronous ErrorSummarizer: Regex on structured build output is deterministic and free vs LLM summarization — Implemented (04-01)
-- [Phase 04]: Vitest for unit tests: native ESM/NodeNext support, no transpilation needed
-- [Phase 04]: vi.mock constructor pattern requires function() not arrow functions when class is called with new
-- [Phase 04]: RetryOrchestrator manages session lifecycle: CLI signal handlers only log and exit
-- [Phase 05]: ESLint recommended (not strict) rules; warnings don't fail verification — Implemented (05-01)
-- [Phase 05]: Lint verifier diff-based via git stash — only agent-introduced violations fail — Implemented (05-01)
-- [Phase 05]: compositeVerifier error ordering Build > Test > Lint, durationMs = max of three — Implemented (05-01)
-- [Phase 05-02]: compositeVerifier wired as RetryOrchestrator.retryConfig.verifier — one-line change closes the full retry-on-verification-failure loop
-- [Phase 05-02]: Mock node:child_process at execFile callback level to work with promisify(execFile) used in verifier.ts
-- [Phase 06-01]: Cast beta.messages.create response as any then BetaMessage to resolve SDK union type
-- [Phase 06-01]: Module-level mockCreate singleton in tests avoids vi.mock constructor pattern issues
-- [Phase 06-02]: Judge veto budget check fires before calling judge — judgeVetoCount >= maxJudgeRetries returns 'vetoed' immediately without another API call
-- [Phase 06-02]: Veto stored as VerificationResult (type='judge') so ErrorSummarizer.buildDigest includes it in retry message via existing pipeline
-- [Phase 06-02]: maxJudgeRetries=1 means 1 total veto allowed; test for "veto then approve" requires maxJudgeRetries=2
+- [v2.0 planning]: `allowedTools` is an auto-approval list, not a blocklist. Always pair with `disallowedTools: ["WebSearch", "WebFetch"]` for network isolation at tool layer.
+- [v2.0 planning]: Stop hooks do not fire on maxTurns — do not rely on them for verification triggers. RetryOrchestrator remains the authoritative quality gate.
+- [v2.0 planning]: Full `@anthropic-ai/sdk` removal is out of scope — LLM Judge keeps it for structured output. Phase 11 must decide: migrate Judge to `query()`, keep as peer dep, or constrained JSON prompt.
+- [v2.0 planning]: Phase 13 MVP uses `--network bridge` + firewall rules. Full Unix proxy socket pattern deferred to v2.1.
 
 ### Pending Todos
 
-None yet.
+None.
 
 ### Blockers/Concerns
 
-**Research-identified flags:**
-- Phase 1: Verify Docker SDK version >=7.0.0 against PyPI (from research) — Note: Using dockerode 4.x (JavaScript), not Python SDK
-- Phase 1: Confirm network isolation flags (--network none) security posture — Resolved (01-02): Verified via integration tests, ping fails as expected
-- Phase 6: LLM Judge prompt engineering needs experimentation (critical for Phase 6)
+- [Phase 11]: LLM Judge migration path undecided — three options (migrate to `query()`, keep `@anthropic-ai/sdk` as peer dep, constrained JSON prompt). Decide before Phase 11 planning.
+- [Phase 13]: Unix proxy socket implementation specifics not detailed. Flag for deep research before Phase 13 planning.
+- [Phase 13]: Validate whether Agent SDK bundles Claude Code CLI binary or requires separate global install — affects Dockerfile.
 
 ## Session Continuity
 
-Last session: 2026-02-28 (execute-plan)
-Stopped at: Completed 06-02-PLAN.md
-Resume file: .planning/phases/07-PLAN.md (or next phase)
-
-**Phase 1 Complete:** Foundation & Security architecture fully implemented and verified (2026-01-27)
-**Phase 2 Complete:** CLI & Orchestration — Pino logging, session safety limits, MetricsCollector, Docker health check, Commander.js CLI (2026-02-06)
-**Phase 3 Complete:** Agent Tool Access — Safe tool implementations (edit_file, git_operation, grep, bash_command) with hardened path validation and comprehensive test suite (28 tests) (2026-02-12)
-**Phase 4 Complete:** Retry & Context Engineering — RetryOrchestrator, ErrorSummarizer, CLI --max-retries flag, 31 vitest unit tests (2026-02-17)
-**Phase 5 Complete:** Deterministic Verification — ESLint v10 flat config, build/test/lint/composite verifiers, compositeVerifier wired into CLI RetryOrchestrator, 24 vitest unit tests (2026-02-18)
-**Phase 6 Complete:** LLM Judge — 06-01: llmJudge function (structured output, fail-open, lockfile truncation, 22 tests) + 06-02: judge wired into RetryOrchestrator (post-verification check, 1-veto budget, --no-judge flag, 6 integration tests, 90 total tests) (2026-02-28)
+Last session: 2026-03-16
+Stopped at: Roadmap creation complete
+Resume file: None
+Next action: `/gsd:plan-phase 10`

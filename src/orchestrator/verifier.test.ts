@@ -9,12 +9,14 @@ vi.mock('node:child_process', () => ({
 vi.mock('node:fs/promises', () => ({
   access: vi.fn(),
   readFile: vi.fn(),
+  constants: { X_OK: 1 },
 }));
 
 // Import after mocks are set up
-import { buildVerifier, testVerifier, lintVerifier, compositeVerifier } from './verifier.js';
+import { buildVerifier, testVerifier, lintVerifier, compositeVerifier, mavenBuildVerifier, mavenTestVerifier, npmBuildVerifier, npmTestVerifier } from './verifier.js';
 import { execFile } from 'node:child_process';
 import { access, readFile } from 'node:fs/promises';
+import { ErrorSummarizer } from './summarizer.js';
 
 // vitest is hoisted but promisify(execFile) is called at module level in verifier.ts.
 // We need to intercept calls at the execFile level. The promisified version calls
@@ -439,14 +441,14 @@ describe('compositeVerifier', () => {
     vi.clearAllMocks();
   });
 
-  it('18. returns passed:true when all 3 verifiers pass', async () => {
-    // Pre-checks: tsconfig.json found, vitest.config.ts found, eslint.config.mjs found
-    mockAccess
-      .mockResolvedValueOnce(undefined) // buildVerifier: tsconfig.json
-      .mockResolvedValueOnce(undefined) // testVerifier: vitest.config.ts
-      .mockResolvedValueOnce(undefined); // lintVerifier: eslint.config.mjs
+  it('18. returns passed:true when all verifiers pass (no Maven project)', async () => {
+    // Route access by path: tsconfig found, vitest found, no pom.xml, eslint found
+    mockAccess.mockImplementation((path: string) => {
+      if (path.endsWith('pom.xml')) return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+      return Promise.resolve(undefined);
+    });
 
-    // All verifier executions succeed
+    // All verifier executions succeed (no Maven since no pom.xml)
     mockExecSequence([
       { success: true, stdout: '' },  // tsc --noEmit: passes
       { success: true, stdout: '' },  // vitest run: passes
@@ -464,11 +466,11 @@ describe('compositeVerifier', () => {
   });
 
   it('19. returns passed:false when any verifier fails (build fails)', async () => {
-    // tsconfig.json found, vitest found, eslint found
-    mockAccess
-      .mockResolvedValueOnce(undefined) // buildVerifier: tsconfig.json
-      .mockResolvedValueOnce(undefined) // testVerifier: vitest.config.ts
-      .mockResolvedValueOnce(undefined); // lintVerifier: eslint.config.mjs
+    // tsconfig found, vitest found, no pom.xml, eslint found
+    mockAccess.mockImplementation((path: string) => {
+      if (path.endsWith('pom.xml')) return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+      return Promise.resolve(undefined);
+    });
 
     mockExecSequence([
       // build fails
@@ -489,12 +491,12 @@ describe('compositeVerifier', () => {
     expect(result.errors[0].type).toBe('build');
   });
 
-  it('20. error ordering: Build errors first, then Test, then Lint', async () => {
-    // All pre-checks pass
-    mockAccess
-      .mockResolvedValueOnce(undefined)  // tsconfig.json
-      .mockResolvedValueOnce(undefined)  // vitest config
-      .mockResolvedValueOnce(undefined); // eslint config
+  it('20. error ordering: Build errors first, then Test, then Lint (no Maven)', async () => {
+    // tsconfig found, vitest found, no pom.xml, eslint found
+    mockAccess.mockImplementation((path: string) => {
+      if (path.endsWith('pom.xml')) return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+      return Promise.resolve(undefined);
+    });
 
     mockExecSequence([
       // build fails
@@ -528,11 +530,13 @@ describe('compositeVerifier', () => {
   });
 
   it('21. handles verifier crash gracefully — converts to VerificationError', async () => {
-    // Build pre-check: tsconfig.json exists but then tsc crashes
-    mockAccess
-      .mockResolvedValueOnce(undefined)  // tsconfig.json
-      .mockResolvedValueOnce(undefined)  // vitest config
-      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })); // no eslint config
+    // tsconfig found, vitest found, no pom.xml, no eslint
+    mockAccess.mockImplementation((path: string) => {
+      if (path.endsWith('pom.xml')) return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+      if (path.endsWith('tsconfig.json') || path.endsWith('vitest.config.ts'))
+        return Promise.resolve(undefined);
+      return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    });
 
     // Build: tsc crashes with a binary error (not stdout/stderr format)
     mockExecSequence([
@@ -550,24 +554,26 @@ describe('compositeVerifier', () => {
     expect(Array.isArray(result.errors)).toBe(true);
   });
 
-  it('22. durationMs is non-negative (parallel execution)', async () => {
+  it('22. durationMs tracks wall-clock time', async () => {
     // All verifiers skip (no config files found)
     mockAccess.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
     mockReadFile.mockRejectedValue(new Error('Not found'));
 
     const result = await compositeVerifier('/workspace');
 
-    // All verifiers skip — passed:true, durationMs = max(0, 0, 0) = 0
+    // All verifiers skip — passed:true, durationMs is wall-clock (>= 0)
     expect(result.passed).toBe(true);
-    expect(result.durationMs).toBe(0);
+    expect(result.durationMs).toBeGreaterThanOrEqual(0);
   });
 
   it('23. aggregates errors from multiple failing verifiers', async () => {
-    // Build and test fail, lint skips
-    mockAccess
-      .mockResolvedValueOnce(undefined)  // tsconfig.json found
-      .mockResolvedValueOnce(undefined)  // vitest config found
-      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })); // no eslint config
+    // tsconfig found, vitest found, no pom.xml, no eslint
+    mockAccess.mockImplementation((path: string) => {
+      if (path.endsWith('pom.xml')) return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+      if (path.endsWith('tsconfig.json') || path.endsWith('vitest.config.ts'))
+        return Promise.resolve(undefined);
+      return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    });
 
     mockExecSequence([
       // build fails
@@ -585,20 +591,760 @@ describe('compositeVerifier', () => {
     expect(types).toContain('test');
   });
 
-  it('24. passed:true requires all 3 verifiers to pass', async () => {
-    // Test verifier fails, rest skip
-    mockAccess
-      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })) // no tsconfig
-      .mockResolvedValueOnce(undefined)  // vitest.config.ts found
-      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })); // no eslint
+  it('24. passed:true requires all verifiers to pass', async () => {
+    // vitest found, everything else skips (no tsconfig, no pom.xml, no eslint)
+    mockAccess.mockImplementation((path: string) => {
+      if (path.endsWith('vitest.config.ts')) return Promise.resolve(undefined);
+      return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    });
 
     // vitest run fails
     mockExecFailure('Tests: 1 failed, 0 passed', '');
 
     const result = await compositeVerifier('/workspace');
 
-    // Build skipped (passed), test failed, lint skipped (passed) — overall failed
+    // Build skipped, Maven skipped, test failed, lint skipped — overall failed
     expect(result.passed).toBe(false);
     expect(result.errors.some(e => e.type === 'test')).toBe(true);
+  });
+});
+
+// ============================================================
+// ErrorSummarizer — Maven methods
+// ============================================================
+describe('ErrorSummarizer.summarizeMavenErrors', () => {
+  it('25. extracts [ERROR] lines from Maven compilation output', () => {
+    const raw = [
+      '[INFO] BUILD FAILURE',
+      '[ERROR] /path/File.java:[10,5] error: cannot find symbol',
+      '[ERROR] /path/Other.java:[20,3] error: method does not exist',
+    ].join('\n');
+
+    const result = ErrorSummarizer.summarizeMavenErrors(raw);
+
+    expect(result).toContain('2 Maven build error(s)');
+    expect(result).toContain('cannot find symbol');
+    expect(result).toContain('method does not exist');
+  });
+
+  it('26. caps at 5 errors and shows remaining count', () => {
+    const lines = Array.from({ length: 10 }, (_, i) =>
+      `[ERROR] /path/File${i}.java:[${i},1] error: problem ${i}`
+    );
+    const raw = lines.join('\n');
+
+    const result = ErrorSummarizer.summarizeMavenErrors(raw);
+
+    expect(result).toContain('10 Maven build error(s)');
+    expect(result).toContain('(+ 5 more errors)');
+  });
+
+  it('27. returns fallback when no [ERROR] lines found', () => {
+    const raw = '[INFO] BUILD FAILURE\n[INFO] Something happened';
+
+    const result = ErrorSummarizer.summarizeMavenErrors(raw);
+
+    expect(result).toBe('Maven build failed (no specific error lines found)');
+  });
+
+  it('28. filters out noise lines like [Help 1]', () => {
+    const raw = [
+      '[ERROR] /path/File.java:[10,5] error: cannot find symbol',
+      '[ERROR] -> [Help 1]',
+      '[ERROR] ',
+      '[ERROR] For more information about the errors, please refer to the Maven documentation',
+    ].join('\n');
+
+    const result = ErrorSummarizer.summarizeMavenErrors(raw);
+
+    expect(result).toContain('1 Maven build error(s)');
+    expect(result).not.toContain('[Help');
+    expect(result).not.toContain('For more information');
+  });
+});
+
+describe('ErrorSummarizer.summarizeMavenTestFailures', () => {
+  it('29. extracts surefire summary line', () => {
+    const raw = [
+      '[INFO] Tests run: 5, Failures: 2, Errors: 0, Skipped: 0',
+      '[ERROR] com.example.AppTest.testFoo -- Time elapsed: 0.1s <<< FAILURE!',
+      '[ERROR] com.example.AppTest.testBar -- Time elapsed: 0.2s <<< FAILURE!',
+    ].join('\n');
+
+    const result = ErrorSummarizer.summarizeMavenTestFailures(raw);
+
+    expect(result).toContain('Tests run: 5, Failures: 2');
+    expect(result).toContain('testFoo');
+    expect(result).toContain('testBar');
+  });
+
+  it('30. caps failure lines at 5 with remaining count', () => {
+    const failLines = Array.from({ length: 8 }, (_, i) =>
+      `[ERROR] com.example.Test${i}.test${i} -- Time elapsed: 0.1s <<< FAILURE!`
+    );
+    const raw = [
+      'Tests run: 10, Failures: 8, Errors: 0, Skipped: 0',
+      ...failLines,
+    ].join('\n');
+
+    const result = ErrorSummarizer.summarizeMavenTestFailures(raw);
+
+    expect(result).toContain('(+ 3 more test failures)');
+  });
+
+  it('31. returns fallback when no recognizable output', () => {
+    const raw = 'Some random Maven output with no test info';
+
+    const result = ErrorSummarizer.summarizeMavenTestFailures(raw);
+
+    expect(result).toBe('Maven tests failed (unable to extract specific test names)');
+  });
+});
+
+// ============================================================
+// mavenBuildVerifier
+// ============================================================
+describe('mavenBuildVerifier', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('32. skips (passed:true, durationMs:0) when no pom.xml', async () => {
+    mockAccess.mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+    const result = await mavenBuildVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(result.durationMs).toBe(0);
+    expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
+  it('32b. returns clear error when mvn is not found (ENOENT)', async () => {
+    // pom.xml exists, no mvnw
+    mockAccess
+      .mockResolvedValueOnce(undefined)  // pom.xml
+      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })); // no mvnw
+    // execFile throws ENOENT (mvn not on PATH)
+    mockExecFile.mockImplementation(
+      (_cmd: string, _args: string[], _opts: unknown,
+        callback: (err: NodeJS.ErrnoException) => void) => {
+        const err = Object.assign(new Error('spawn mvn ENOENT'), { code: 'ENOENT' } as NodeJS.ErrnoException);
+        callback(err);
+      }
+    );
+
+    const result = await mavenBuildVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    expect(result.errors[0].summary).toContain('Maven (mvn) not found');
+  });
+
+  it('33. runs mvnw when mvnw exists and is executable', async () => {
+    // pom.xml exists, mvnw exists and is executable
+    mockAccess.mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined);
+    mockExecSuccess('BUILD SUCCESS');
+
+    const result = await mavenBuildVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    // First execFile call should use ./mvnw
+    const call = mockExecFile.mock.calls[0];
+    expect(call[0]).toBe('./mvnw');
+    expect(call[1]).toContain('compile');
+    expect(call[1]).toContain('-B');
+  });
+
+  it('34. runs mvn when no mvnw exists', async () => {
+    // pom.xml exists, mvnw does NOT exist
+    mockAccess
+      .mockResolvedValueOnce(undefined)  // pom.xml
+      .mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' })); // no mvnw
+    mockExecSuccess('BUILD SUCCESS');
+
+    const result = await mavenBuildVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    const call = mockExecFile.mock.calls[0];
+    expect(call[0]).toBe('mvn');
+  });
+
+  it('35. returns passed:false with Maven error summary on build failure', async () => {
+    mockAccess.mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined); // pom.xml + mvnw
+    mockExecFailure(
+      '[ERROR] /path/File.java:[10,5] error: cannot find symbol\n[ERROR] BUILD FAILURE',
+      ''
+    );
+
+    const result = await mavenBuildVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].type).toBe('build');
+    expect(result.errors[0].summary).toContain('Maven build error');
+  });
+
+  it('36. handles timeout (120s)', async () => {
+    mockAccess.mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined);
+    mockExecFile.mockImplementation(
+      (_cmd: string, _args: string[], _opts: unknown,
+        callback: (err: Error & { killed?: boolean; signal?: string }) => void) => {
+        const err = Object.assign(new Error('Process timed out'), { killed: true, signal: 'SIGKILL' });
+        callback(err);
+      }
+    );
+
+    const result = await mavenBuildVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    expect(result.errors[0].summary).toContain('timed out');
+    expect(result.errors[0].summary).toContain('120s');
+  });
+
+  it('37. uses -q (quiet) flag for less verbose output', async () => {
+    mockAccess.mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined);
+    mockExecSuccess('');
+
+    await mavenBuildVerifier('/workspace');
+
+    const call = mockExecFile.mock.calls[0];
+    expect(call[1]).toContain('-q');
+  });
+});
+
+// ============================================================
+// mavenTestVerifier
+// ============================================================
+describe('mavenTestVerifier', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('38. skips when no pom.xml', async () => {
+    mockAccess.mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+    const result = await mavenTestVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(result.durationMs).toBe(0);
+  });
+
+  it('39. runs mvn test -B -q with 300s timeout', async () => {
+    mockAccess.mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined);
+    mockExecSuccess('BUILD SUCCESS');
+
+    const result = await mavenTestVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    const call = mockExecFile.mock.calls[0];
+    expect(call[1]).toContain('test');
+    expect(call[1]).toContain('-B');
+    expect(call[1]).toContain('-q');
+    expect(call[2].timeout).toBe(300_000);
+  });
+
+  it('40. returns passed:false with test failure summary on failure', async () => {
+    mockAccess.mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined);
+    mockExecFailure(
+      'Tests run: 5, Failures: 2, Errors: 0, Skipped: 0\n[ERROR] com.example.AppTest.testFoo -- Time elapsed: 0.1s <<< FAILURE!',
+      ''
+    );
+
+    const result = await mavenTestVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].type).toBe('test');
+    expect(result.errors[0].summary).toContain('Tests run: 5');
+  });
+
+  it('41. handles timeout (300s)', async () => {
+    mockAccess.mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined);
+    mockExecFile.mockImplementation(
+      (_cmd: string, _args: string[], _opts: unknown,
+        callback: (err: Error & { killed?: boolean; signal?: string }) => void) => {
+        const err = Object.assign(new Error('Process timed out'), { killed: true, signal: 'SIGKILL' });
+        callback(err);
+      }
+    );
+
+    const result = await mavenTestVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    expect(result.errors[0].summary).toContain('timed out');
+    expect(result.errors[0].summary).toContain('300s');
+  });
+});
+
+// ============================================================
+// ErrorSummarizer — npm methods
+// ============================================================
+describe('ErrorSummarizer.summarizeNpmBuildErrors', () => {
+  it('44. extracts error lines from npm run build output', () => {
+    const raw = [
+      '> my-app@1.0.0 build',
+      '> webpack --mode production',
+      '',
+      'ERROR in ./src/index.ts',
+      '  TS2345: Argument of type is not assignable',
+      'npm ERR! code ELIFECYCLE',
+    ].join('\n');
+
+    const result = ErrorSummarizer.summarizeNpmBuildErrors(raw);
+
+    expect(result).toContain('ERROR');
+    expect(result).not.toBe('npm build failed (no specific error lines found)');
+  });
+
+  it('45. caps at 5 shown errors with remaining count', () => {
+    const lines = Array.from({ length: 8 }, (_, i) => `npm ERR! problem ${i} in module`);
+    const raw = lines.join('\n');
+
+    const result = ErrorSummarizer.summarizeNpmBuildErrors(raw);
+
+    expect(result).toContain('(+ 3 more errors)');
+  });
+
+  it('46. returns fallback when no recognizable error lines found', () => {
+    const raw = 'Successfully compiled\nDone in 2.3s';
+
+    const result = ErrorSummarizer.summarizeNpmBuildErrors(raw);
+
+    expect(result).toBe('npm build failed (no specific error lines found)');
+  });
+
+  it('47. detects ERR! lines (npm error prefix)', () => {
+    const raw = [
+      'npm WARN deprecated old-package@1.0.0',
+      'npm ERR! code ELIFECYCLE',
+      'npm ERR! errno 1',
+    ].join('\n');
+
+    const result = ErrorSummarizer.summarizeNpmBuildErrors(raw);
+
+    expect(result).not.toBe('npm build failed (no specific error lines found)');
+    expect(result).toContain('ERR!');
+  });
+});
+
+describe('ErrorSummarizer.summarizeNpmTestFailures', () => {
+  it('48. extracts FAIL lines from npm test output', () => {
+    const raw = [
+      'FAIL src/components/Button.test.ts',
+      '  ● Button > renders correctly',
+      'Tests: 1 failed, 5 passed',
+    ].join('\n');
+
+    const result = ErrorSummarizer.summarizeNpmTestFailures(raw);
+
+    expect(result).not.toBe('npm tests failed (unable to extract specific test names)');
+  });
+
+  it('49. caps at 5 failures with remaining count', () => {
+    const lines = Array.from({ length: 8 }, (_, i) =>
+      `  ● Suite > test case ${i}`
+    );
+    const raw = lines.join('\n');
+
+    const result = ErrorSummarizer.summarizeNpmTestFailures(raw);
+
+    expect(result).toContain('(+ 3 more test failures)');
+  });
+
+  it('50. returns fallback when no recognizable output', () => {
+    const raw = 'Some random output with no failure signals';
+
+    const result = ErrorSummarizer.summarizeNpmTestFailures(raw);
+
+    expect(result).toBe('npm tests failed (unable to extract specific test names)');
+  });
+
+  it('51. detects Jest bullet and summary patterns', () => {
+    const raw = [
+      '  ● Component > should render',
+      'Tests: 1 failed, 5 passed, 6 total',
+    ].join('\n');
+
+    const result = ErrorSummarizer.summarizeNpmTestFailures(raw);
+
+    expect(result).toContain('Component > should render');
+    expect(result).toContain('Tests: 1 failed');
+  });
+});
+
+// ============================================================
+// npmBuildVerifier
+// ============================================================
+describe('npmBuildVerifier', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('52. skips (passed:true, durationMs:0) when no package.json', async () => {
+    mockAccess.mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+    const result = await npmBuildVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(result.durationMs).toBe(0);
+    expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
+  it('53. skips when package.json has no build script', async () => {
+    mockAccess.mockResolvedValueOnce(undefined); // package.json exists
+    mockReadFile.mockResolvedValueOnce(JSON.stringify({
+      name: 'my-app',
+      scripts: { test: 'jest' }, // no build script
+    }));
+
+    const result = await npmBuildVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(result.durationMs).toBe(0);
+    expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
+  it('54. skips when package.json has no scripts section', async () => {
+    mockAccess.mockResolvedValueOnce(undefined);
+    mockReadFile.mockResolvedValueOnce(JSON.stringify({ name: 'my-app' }));
+
+    const result = await npmBuildVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    expect(result.durationMs).toBe(0);
+    expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
+  it('55. runs npm run build and returns passed:true on success', async () => {
+    mockAccess.mockResolvedValueOnce(undefined); // package.json exists
+    mockReadFile.mockResolvedValueOnce(JSON.stringify({
+      name: 'my-app',
+      scripts: { build: 'webpack' },
+    }));
+    mockExecSuccess('Build successful!', '');
+
+    const result = await npmBuildVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    const call = mockExecFile.mock.calls[0];
+    expect(call[0]).toBe('npm');
+    expect(call[1]).toContain('run');
+    expect(call[1]).toContain('build');
+  });
+
+  it('56. returns passed:false with error summary on non-zero exit', async () => {
+    mockAccess.mockResolvedValueOnce(undefined);
+    mockReadFile.mockResolvedValueOnce(JSON.stringify({
+      scripts: { build: 'webpack' },
+    }));
+    mockExecFailure('ERROR in ./src/index.ts\nModule not found', 'npm ERR! code ELIFECYCLE');
+
+    const result = await npmBuildVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].type).toBe('build');
+    expect(result.errors[0].summary).toBeDefined();
+    expect(result.errors[0].rawOutput).toBeDefined();
+  });
+
+  it('57. handles timeout (120s)', async () => {
+    mockAccess.mockResolvedValueOnce(undefined);
+    mockReadFile.mockResolvedValueOnce(JSON.stringify({ scripts: { build: 'webpack' } }));
+    mockExecFile.mockImplementation(
+      (_cmd: string, _args: string[], _opts: unknown,
+        callback: (err: Error & { killed?: boolean; signal?: string }) => void) => {
+        const err = Object.assign(new Error('Process timed out'), { killed: true, signal: 'SIGKILL' });
+        callback(err);
+      }
+    );
+
+    const result = await npmBuildVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    expect(result.errors[0].summary).toContain('timed out');
+    expect(result.errors[0].type).toBe('build');
+  });
+
+  it('58. returns clear error when npm not found (ENOENT)', async () => {
+    mockAccess.mockResolvedValueOnce(undefined);
+    mockReadFile.mockResolvedValueOnce(JSON.stringify({ scripts: { build: 'webpack' } }));
+    mockExecFile.mockImplementation(
+      (_cmd: string, _args: string[], _opts: unknown,
+        callback: (err: NodeJS.ErrnoException) => void) => {
+        const err = Object.assign(new Error('spawn npm ENOENT'), { code: 'ENOENT' });
+        callback(err);
+      }
+    );
+
+    const result = await npmBuildVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    expect(result.errors[0].summary).toContain('npm');
+  });
+});
+
+// ============================================================
+// npmTestVerifier
+// ============================================================
+describe('npmTestVerifier', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('59. skips (passed:true, durationMs:0) when no package.json', async () => {
+    mockAccess.mockRejectedValueOnce(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+    const result = await npmTestVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(result.durationMs).toBe(0);
+    expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
+  it('60. skips when package.json has no test script', async () => {
+    mockAccess.mockResolvedValueOnce(undefined);
+    mockReadFile.mockResolvedValueOnce(JSON.stringify({
+      name: 'my-app',
+      scripts: { build: 'webpack' }, // no test script
+    }));
+
+    const result = await npmTestVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    expect(result.durationMs).toBe(0);
+    expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
+  it('61. runs npm test and returns passed:true on success', async () => {
+    mockAccess.mockResolvedValueOnce(undefined);
+    mockReadFile.mockResolvedValueOnce(JSON.stringify({
+      scripts: { test: 'jest' },
+    }));
+    mockExecSuccess('Tests: 5 passed', '');
+
+    const result = await npmTestVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    const call = mockExecFile.mock.calls[0];
+    expect(call[0]).toBe('npm');
+    expect(call[1]).toContain('test');
+  });
+
+  it('62. returns passed:false with test failure summary on non-zero exit', async () => {
+    mockAccess.mockResolvedValueOnce(undefined);
+    mockReadFile.mockResolvedValueOnce(JSON.stringify({ scripts: { test: 'jest' } }));
+    mockExecFailure('FAIL src/app.test.ts\n  ● App > should render', '');
+
+    const result = await npmTestVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].type).toBe('test');
+  });
+
+  it('63. handles timeout (300s)', async () => {
+    mockAccess.mockResolvedValueOnce(undefined);
+    mockReadFile.mockResolvedValueOnce(JSON.stringify({ scripts: { test: 'jest' } }));
+    mockExecFile.mockImplementation(
+      (_cmd: string, _args: string[], _opts: unknown,
+        callback: (err: Error & { killed?: boolean; signal?: string }) => void) => {
+        const err = Object.assign(new Error('Process timed out'), { killed: true, signal: 'SIGKILL' });
+        callback(err);
+      }
+    );
+
+    const result = await npmTestVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    expect(result.errors[0].summary).toContain('timed out');
+    expect(result.errors[0].type).toBe('test');
+  });
+
+  it('64. returns clear error when npm not found (ENOENT)', async () => {
+    mockAccess.mockResolvedValueOnce(undefined);
+    mockReadFile.mockResolvedValueOnce(JSON.stringify({ scripts: { test: 'jest' } }));
+    mockExecFile.mockImplementation(
+      (_cmd: string, _args: string[], _opts: unknown,
+        callback: (err: NodeJS.ErrnoException) => void) => {
+        const err = Object.assign(new Error('spawn npm ENOENT'), { code: 'ENOENT' });
+        callback(err);
+      }
+    );
+
+    const result = await npmTestVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    expect(result.errors[0].summary).toContain('npm');
+  });
+});
+
+// ============================================================
+// compositeVerifier — npm integration
+// ============================================================
+describe('compositeVerifier — npm integration', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('65. includes npm verifier results in composite output (npm build + test pass)', async () => {
+    // tsconfig found, vitest found, no pom.xml, package.json with build+test scripts, no eslint
+    mockAccess.mockImplementation((path: string) => {
+      if (path.endsWith('pom.xml')) return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+      if (path.endsWith('package.json')) return Promise.resolve(undefined);
+      // eslint configs not found
+      if (path.includes('eslint')) return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+      return Promise.resolve(undefined); // tsconfig, vitest
+    });
+
+    mockReadFile.mockImplementation((path: string) => {
+      if ((path as string).endsWith('package.json')) {
+        return Promise.resolve(JSON.stringify({ scripts: { build: 'webpack', test: 'jest' } }));
+      }
+      return Promise.reject(new Error('Not found'));
+    });
+
+    mockExecSequence([
+      { success: true, stdout: '' },  // tsc
+      { success: true, stdout: '' },  // vitest
+      // npm build
+      { success: true, stdout: 'Build complete' },
+      // npm test
+      { success: true, stdout: 'Tests: 5 passed' },
+    ]);
+
+    const result = await compositeVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('66. npm build failure skips npm test (noise reduction)', async () => {
+    // no tsconfig, no vitest config, no pom.xml, package.json with build+test, no eslint
+    mockAccess.mockImplementation((path: string) => {
+      if (path.endsWith('package.json')) return Promise.resolve(undefined);
+      return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    });
+    mockReadFile.mockImplementation((path: string) => {
+      if ((path as string).endsWith('package.json')) {
+        return Promise.resolve(JSON.stringify({ scripts: { build: 'webpack', test: 'jest' } }));
+      }
+      return Promise.reject(new Error('Not found'));
+    });
+
+    mockExecSequence([
+      // npm build fails
+      { success: false, stdout: 'ERROR in ./src/index.ts', stderr: 'npm ERR! code ELIFECYCLE' },
+      // npm test should NOT run — build failed
+    ]);
+
+    const result = await compositeVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    const buildErr = result.errors.find(e => e.type === 'build');
+    expect(buildErr).toBeDefined();
+    // npm test should be skipped (not reported as failure) when build fails
+    const skippedErr = result.errors.find(e => e.summary?.includes('skipped'));
+    expect(skippedErr).toBeUndefined();
+  });
+
+  it('67. error ordering: Build > Test > Maven Build > Maven Test > npm Build > npm Test > Lint', async () => {
+    // all configs found: tsconfig, vitest, pom.xml, mvnw, package.json with build+test, eslint
+    mockAccess.mockImplementation((path: string) => {
+      if (path.endsWith('package.json')) return Promise.resolve(undefined);
+      return Promise.resolve(undefined);
+    });
+    mockReadFile.mockImplementation((path: string) => {
+      if ((path as string).endsWith('package.json')) {
+        return Promise.resolve(JSON.stringify({ scripts: { build: 'webpack', test: 'jest' } }));
+      }
+      return Promise.reject(new Error('Not found'));
+    });
+
+    mockExecSequence([
+      // TS build fails
+      { success: false, stdout: 'src/a.ts(1,1): error TS2304: type error', stderr: '' },
+      // vitest fails
+      { success: false, stdout: '  ● Suite > test failed\nTests: 1 failed', stderr: '' },
+      // mvn compile fails
+      { success: false, stdout: '[ERROR] /path/File.java:[10,5] error: cannot find symbol', stderr: '' },
+      // mvn test skipped (build failed)
+      // npm build fails
+      { success: false, stdout: 'ERROR in ./src/index.ts', stderr: '' },
+      // npm test skipped (npm build failed)
+      // lint: git stash, baseline, pop, current
+      { success: true, stdout: 'Saved working directory and index state' },
+      { success: true, stdout: JSON.stringify([{ errorCount: 0 }]) },
+      { success: true, stdout: '' },
+      { success: false, stdout: JSON.stringify([{ errorCount: 3 }]) },
+    ]);
+
+    const result = await compositeVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    // All error types should be present (maven test and npm test may be "skipped" entries)
+    const types = result.errors.map(e => e.type);
+    // Build errors come first
+    expect(types[0]).toBe('build');
+  });
+});
+
+// ============================================================
+// compositeVerifier — Maven integration
+// ============================================================
+describe('compositeVerifier — Maven integration', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('42. includes Maven verifier results alongside TypeScript results', async () => {
+    // All configs found: tsconfig, vitest, pom.xml, mvnw, eslint
+    mockAccess.mockImplementation(() => Promise.resolve(undefined));
+
+    // TS build+test parallel, then Maven build, then Maven test, then lint
+    mockExecSequence([
+      { success: true, stdout: '' },  // tsc
+      { success: true, stdout: '' },  // vitest
+      { success: true, stdout: '' },  // mvn compile (sequential)
+      { success: true, stdout: '' },  // mvn test (sequential)
+      { success: true, stdout: 'Saved working directory and index state' }, // git stash
+      { success: true, stdout: JSON.stringify([{ errorCount: 0 }]) }, // eslint baseline
+      { success: true, stdout: '' },  // git stash pop
+      { success: true, stdout: JSON.stringify([{ errorCount: 0 }]) }, // eslint current
+    ]);
+
+    const result = await compositeVerifier('/workspace');
+
+    expect(result.passed).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('43. Maven build failure appears in compositeVerifier errors and skips Maven tests', async () => {
+    // pom.xml + mvnw found; no tsconfig, no vitest, no eslint
+    mockAccess.mockImplementation((path: string) => {
+      if (path.endsWith('pom.xml') || path.endsWith('mvnw'))
+        return Promise.resolve(undefined);
+      return Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    });
+    mockReadFile.mockRejectedValue(new Error('Not found'));
+
+    mockExecSequence([
+      { success: false, stdout: '[ERROR] /path/File.java:[10,5] error: cannot find symbol', stderr: '' }, // mvn compile fails
+      // mvn test should NOT run — build failed
+    ]);
+
+    const result = await compositeVerifier('/workspace');
+
+    expect(result.passed).toBe(false);
+    const types = result.errors.map(e => e.type);
+    expect(types).toContain('build');
+    expect(result.errors.find(e => e.type === 'build')!.summary).toContain('build error');
+    // Maven test should be skipped (not reported as failure) when build fails
+    expect(result.errors.find(e => e.summary?.includes('skipped'))).toBeUndefined();
   });
 });

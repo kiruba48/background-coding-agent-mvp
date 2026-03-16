@@ -113,6 +113,24 @@ export class RetryOrchestrator {
         };
       }
 
+      // Run pre-verification hook (e.g., host-side npm install for lockfile regen).
+      // Runs after session succeeds and before verifier — failure is terminal (no retry).
+      if (this.retryConfig.preVerify) {
+        try {
+          await this.retryConfig.preVerify(this.config.workspaceDir);
+        } catch (err) {
+          logger?.error({ attempt, err }, 'Pre-verify hook failed');
+          return {
+            finalStatus: 'failed',
+            attempts: attempt,
+            sessionResults,
+            verificationResults,
+            judgeResults,
+            error: `Pre-verify failed: ${err instanceof Error ? err.message : String(err)}`
+          };
+        }
+      }
+
       // Run verification on the workspace — catch verifier crashes to return
       // structured result instead of letting exceptions propagate unhandled
       let verification: VerificationResult;

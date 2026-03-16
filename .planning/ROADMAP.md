@@ -1,208 +1,151 @@
 # Roadmap: Background Coding Agent
 
-## Overview
+## Milestones
 
-Building a trustworthy background coding agent platform in 10 phases. Starting with secure Docker isolation and SDK integration, progressing through orchestration, tool access controls, and verification loops, culminating in two complete task implementations (Maven and npm dependency updates). The architecture proves the "student driver with dual controls" pattern: agent autonomy constrained by deterministic verification and LLM Judge oversight.
+- ✅ **v1.0 Foundation** — Phases 1-6 (shipped 2026-03-02)
+- ✅ **v1.1 End-to-End Pipeline** — Phases 7-9 (shipped 2026-03-11)
+- 🚧 **v2.0 Claude Agent SDK Migration** — Phases 10-13 (in progress)
 
 ## Phases
 
-**Phase Numbering:**
-- Integer phases (1, 2, 3): Planned milestone work
-- Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
+<details>
+<summary>✅ v1.0 Foundation (Phases 1-6) — SHIPPED 2026-03-02</summary>
 
-Decimal phases appear between their surrounding integers in numeric order.
+- [x] Phase 1: Foundation & Security (4/4 plans) — completed 2026-01-27
+- [x] Phase 2: CLI & Orchestration (3/3 plans) — completed 2026-02-06
+- [x] Phase 3: Agent Tool Access (2/2 plans) — completed 2026-02-12
+- [x] Phase 4: Retry & Context Engineering (2/2 plans) — completed 2026-02-17
+- [x] Phase 5: Deterministic Verification (2/2 plans) — completed 2026-02-18
+- [x] Phase 6: LLM Judge Integration (2/2 plans) — completed 2026-02-28
 
-- [x] **Phase 1: Foundation & Security** - Docker isolation and Anthropic SDK integration
-- [x] **Phase 2: CLI & Orchestration** - User interface and session lifecycle management
-- [x] **Phase 3: Agent Tool Access** - Safe file, Git, and Bash operations
-- [x] **Phase 4: Retry & Context Engineering** - Resilient execution with error context (completed 2026-02-17)
-- [x] **Phase 5: Deterministic Verification** - Build, test, and lint checks (completed 2026-02-18)
-- [x] **Phase 6: LLM Judge Integration** - Scope control and quality gate (completed 2026-02-28)
-- [ ] **Phase 7: PR Creation** - GitHub integration and output mechanism
-- [ ] **Phase 8: Maven Dependency Updates** - MVP use case implementation
-- [ ] **Phase 9: npm Dependency Updates** - Second task type implementation
-- [ ] **Phase 10: Verification Plugin System** - Extensibility for custom verifiers
+Full details: [v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
+
+</details>
+
+<details>
+<summary>✅ v1.1 End-to-End Pipeline (Phases 7-9) — SHIPPED 2026-03-11</summary>
+
+- [x] Phase 7: GitHub PR Creation (2/2 plans) — completed 2026-03-02
+- [x] Phase 8: Maven Dependency Update (3/3 plans) — completed 2026-03-05
+- [x] Phase 9: npm Dependency Update (3/3 plans) — completed 2026-03-11
+
+Full details: See archived phase details below.
+
+</details>
+
+### 🚧 v2.0 Claude Agent SDK Migration (In Progress)
+
+**Milestone Goal:** Replace ~1,200 lines of custom agent infrastructure with the Claude Agent SDK `query()` call. Delete AgentSession, AgentClient, and ContainerManager. Gain built-in tools, auto context compression, native hooks, and an optional MCP verifier server.
+
+- [ ] **Phase 10: Agent SDK Integration** - Replace AgentSession with AgentSdkSession wrapping `query()`; all security defaults established
+- [ ] **Phase 11: Legacy Deletion** - Delete agent.ts, session.ts, container.ts and their ~650 lines of tests
+- [ ] **Phase 12: MCP Verifier Server** - Expose compositeVerifier as `mcp__verifier__verify` tool for mid-session self-correction
+- [ ] **Phase 13: Container Strategy** - Run Agent SDK inside Docker with network isolation equivalent to v1.1
 
 ## Phase Details
 
-### Phase 1: Foundation & Security
-**Goal**: Agent can execute in isolated Docker container with no external network access and communicate via Anthropic SDK
-**Depends on**: Nothing (first phase)
-**Requirements**: EXEC-01, EXEC-02
+### Phase 7: GitHub PR Creation
+**Goal**: Users can run any verified agent task and have it automatically create a GitHub PR with full context (branch, diff, verification results, judge verdict, risk flags)
+**Depends on**: Phase 6 (LLM Judge Integration — v1.0)
+**Requirements**: PR-01, PR-02, PR-03, PR-04, PR-05, PR-06, PR-07
 **Success Criteria** (what must be TRUE):
-  1. Container spawns with non-root user and isolated workspace
-  2. Container has no external network access (network mode: none)
-  3. Agent SDK can send/receive messages to Claude API from orchestrator
-  4. Container can be torn down cleanly after session
-**Plans**: 4 plans in 3 waves
+  1. After a successful agent run, a GitHub PR exists on the target repo with no manual steps
+  2. The PR branch name is auto-generated from task context (e.g., `agent/update-spring-boot-3.2`) and user can override it via a CLI flag
+  3. The PR body contains the original task prompt, a summary of changes, and diff stats
+  4. The PR body shows verification results (build/test/lint pass) and LLM Judge verdict with reasoning
+  5. The PR body flags potential breaking changes so a human reviewer knows what to scrutinize
+**Plans**: 2 total
+- [x] **07-01** — GitHubPRCreator service (types, dependencies, pr-creator module, 37 tests)
+- [x] **07-02** — Wire GitHubPRCreator into CLI (`--create-pr`, `--branch` flags)
 
+### Phase 8: Maven Dependency Update
+**Goal**: Users can update a Maven dependency end-to-end — specify groupId:artifactId and target version in the CLI, agent updates pom.xml, adapts code if needed, and creates a PR with a changelog link
+**Depends on**: Phase 7 (GitHub PR Creation)
+**Requirements**: MVN-01, MVN-02, MVN-03, MVN-04, MVN-05
+**Success Criteria** (what must be TRUE):
+  1. User runs CLI with Maven dep coordinates and target version; agent locates and updates the version in pom.xml
+  2. Agent runs Maven build and tests inside Docker; verification failure triggers retry with error context
+  3. When the new version has breaking API changes, agent attempts code fixes before declaring failure
+  4. The resulting PR body includes a link to the dependency changelog or release notes
+**Plans**: 3 plans
 Plans:
-- [x] 01-01-PLAN.md — Project setup + Docker image (Wave 1)
-- [x] 01-02-PLAN.md — Container lifecycle management (Wave 2)
-- [x] 01-03-PLAN.md — Anthropic SDK integration (Wave 2)
-- [x] 01-04-PLAN.md — End-to-end session integration (Wave 3)
+- [x] 08-01-PLAN.md — CLI flags (--dep, --target-version) and prompt module with Maven prompt builder
+- [x] 08-02-PLAN.md — Maven build-system detection in composite verifier + error summarizers
+- [x] 08-03-PLAN.md — Wire prompt module into run.ts (integration)
 
-### Phase 2: CLI & Orchestration
-**Goal**: User can trigger agent runs via CLI and orchestrator manages full session lifecycle with safety limits
-**Depends on**: Phase 1
-**Requirements**: CLI-01, CLI-02, CLI-03, CLI-04, CLI-05, EXEC-03, EXEC-04
+### Phase 9: npm Dependency Update
+**Goal**: Users can update an npm package end-to-end — specify package name and target version in the CLI, agent updates package.json in Docker, host-side post-step regenerates lockfile, build/tests verified, and creates a PR on success
+**Depends on**: Phase 7 (GitHub PR Creation)
+**Requirements**: NPM-01, NPM-02, NPM-03, NPM-04, NPM-05
 **Success Criteria** (what must be TRUE):
-  1. User can run CLI command with task type and target repo parameters
-  2. Orchestrator spawns Docker container for agent session
-  3. Session respects turn limit (10 turns maximum)
-  4. Session respects timeout (5 minutes maximum)
-  5. Structured JSON logs capture full session for debugging
-  6. Session state tracked (pending, running, success, failed, vetoed)
-**Plans**: 3 plans in 2 waves
-
+  1. User runs CLI with npm package name and target version; agent updates version in package.json and regenerates the lockfile
+  2. Agent runs build and tests inside Docker; verification failure triggers retry with error context
+  3. When the new version has breaking API changes, agent attempts code fixes before declaring failure
+  4. The resulting PR body includes a link to the dependency changelog or release notes
+**Plans**: 3 plans
 Plans:
-- [x] 02-01-PLAN.md — Structured logging (Pino) + session lifecycle enhancement (Wave 1)
-- [x] 02-02-PLAN.md — CLI entry point with Commander.js + run command (Wave 2)
-- [x] 02-03-PLAN.md — Metrics collector + Docker health check (Wave 1)
+- [x] 09-01-PLAN.md — npm prompt builder and CLI validation for npm-dependency-update
+- [x] 09-02-PLAN.md — npm build/test verifiers in composite verifier + error summarizers
+- [x] 09-03-PLAN.md — Host-side npm install post-step (preVerify hook in retry loop)
 
-### Phase 3: Agent Tool Access
-**Goal**: Agent can read files, edit code, and perform Git operations within safe boundaries
-**Depends on**: Phase 2
-**Requirements**: TOOL-01, TOOL-02, TOOL-03, TOOL-04
+### Phase 10: Agent SDK Integration
+**Goal**: Users can run agent tasks driven by the Claude Agent SDK `query()` call with all v1.1 security guarantees preserved and established as defaults from day one
+**Depends on**: Phase 9 (npm Dependency Update — v1.1)
+**Requirements**: SDK-01, SDK-02, SDK-03, SDK-04, SDK-05, SDK-06, SDK-07, SDK-08, SDK-09, SDK-10
 **Success Criteria** (what must be TRUE):
-  1. Agent can read any file in workspace via Read tool
-  2. Agent can edit files in workspace via Edit tool
-  3. Agent can run Git status, diff, add, and commit (but not push)
-  4. Agent can run allowlisted Bash commands (rg, cat, head, tail, find, wc)
-  5. Tool attempts outside allowlist are rejected with clear error
-**Plans**: 2 plans in 2 waves
-
-Plans:
-- [x] 03-01-PLAN.md — Safe tool implementations: edit_file, git_operation, grep, bash_command allowlist (Wave 1)
-- [x] 03-02-PLAN.md — Comprehensive tests for all Phase 3 tools (Wave 2)
-
-### Phase 4: Retry & Context Engineering
-**Goal**: Agent can recover from failures with summarized error context and retry intelligently
-**Depends on**: Phase 3
-**Requirements**: EXEC-05, EXEC-06
-**Success Criteria** (what must be TRUE):
-  1. Failed verification triggers retry with error context (up to 3 retries)
-  2. Verification errors are summarized before being sent to agent (not raw dumps)
-  3. Agent receives actionable feedback ("3 tests failed in AuthModule" not 10K lines)
-  4. Retry counter is enforced (max 3 retries)
-  5. Session terminates cleanly after max retries exhausted
-**Plans**: 2 plans in 2 waves
-
-Plans:
-- [ ] 04-01-PLAN.md — RetryOrchestrator + ErrorSummarizer + verification types (Wave 1)
-- [ ] 04-02-PLAN.md — CLI integration + comprehensive tests (Wave 2)
-
-### Phase 5: Deterministic Verification
-**Goal**: Changes are automatically verified for buildability, test pass rate, and lint compliance
-**Depends on**: Phase 4
-**Requirements**: VERIFY-01, VERIFY-02, VERIFY-03, VERIFY-05
-**Success Criteria** (what must be TRUE):
-  1. Build verification confirms code compiles after changes
-  2. Test verification confirms existing tests still pass
-  3. Lint verification confirms no new style issues introduced
-  4. Failed verification triggers retry with summarized error context
-  5. All three verifiers (build/test/lint) must pass to proceed
-**Plans**: 2 plans in 2 waves
-
-Plans:
-- [ ] 05-01-PLAN.md — ESLint v10 setup + verifier functions (build/test/lint/composite) (Wave 1)
-- [ ] 05-02-PLAN.md — CLI wiring + comprehensive unit tests (Wave 2)
-
-### Phase 6: LLM Judge Integration
-**Goal**: Changes are evaluated for scope creep and intent alignment, with veto power over PRs
-**Depends on**: Phase 5
-**Requirements**: VERIFY-04, VERIFY-06
-**Success Criteria** (what must be TRUE):
-  1. LLM Judge receives diff and original prompt for evaluation
-  2. Judge evaluates changes against original task for scope creep
-  3. Judge veto prevents PR creation even if deterministic checks pass
-  4. Judge feedback is included in session logs for debugging
-  5. Veto rate tracked as key metric (target ~25%)
-**Plans**: 2 plans in 2 waves
-
-Plans:
-- [ ] 06-01-PLAN.md — LLM Judge core implementation: JudgeResult type, llmJudge function with structured output, diff retrieval, lockfile truncation (Wave 1)
-- [ ] 06-02-PLAN.md — RetryOrchestrator integration, CLI --no-judge flag, comprehensive unit tests (Wave 2)
-
-### Phase 7: PR Creation
-**Goal**: Successful verification creates descriptive PR with metadata for human review
-**Depends on**: Phase 6
-**Requirements**: PR-01, PR-02, PR-03, PR-04, PR-05
-**Success Criteria** (what must be TRUE):
-  1. Verified changes create PR on target repository
-  2. PR description explains what changed and why
-  3. PR includes full diff of all changes
-  4. PR includes metadata (agent session ID, verification results)
-  5. PR includes AI-generated change summary
-  6. PR is created but NOT auto-merged (human approval required)
+  1. Running `node dist/cli/index.js run --task-type maven-dependency-update ...` completes successfully using `query()` instead of AgentSession — existing RetryOrchestrator integration tests still pass
+  2. File edits outside the repo path and to `.env` or `.git` files are blocked by the PreToolUse hook and logged as rejected attempts
+  3. Every file change (Edit/Write tool calls) appears in the session audit log with path, tool name, and timestamp — via PostToolUse hook
+  4. `WebSearch` and `WebFetch` tool calls are refused by the SDK without prompting — `disallowedTools` enforced at session start
+  5. When the agent exhausts `maxTurns: 10`, `SessionResult.status` is `"turn_limit"` — not `"failed"` — so RetryOrchestrator does not retry an exhausted session
 **Plans**: TBD
 
-Plans:
-- [ ] 07-01: TBD
-- [ ] 07-02: TBD
-
-### Phase 8: Maven Dependency Updates
-**Goal**: Agent can update Maven dependencies end-to-end with proper verification
-**Depends on**: Phase 7
-**Requirements**: TASK-01, TASK-03, TASK-04
+### Phase 11: Legacy Deletion
+**Goal**: All custom agent infrastructure code is deleted and the codebase contains no references to AgentSession, AgentClient, or ContainerManager — the only agent runtime is the SDK
+**Depends on**: Phase 10 (Agent SDK Integration — all tests green)
+**Requirements**: DEL-01, DEL-02, DEL-03, DEL-04, DEL-05
 **Success Criteria** (what must be TRUE):
-  1. Agent can parse pom.xml and identify dependencies to update
-  2. Agent can update dependency versions in pom.xml
-  3. Task type is configurable via CLI parameter (maven-dependency-update)
-  4. Prompt uses end-state format (describe outcome, not steps)
-  5. Full workflow works: trigger -> update -> verify -> PR creation
-  6. Maven multi-module projects are handled correctly
+  1. `agent.ts`, `session.ts`, and `container.ts` no longer exist in `src/`; no import of these files anywhere in the codebase
+  2. `dockerode` and `@types/dockerode` are absent from `package.json` and `node_modules`
+  3. The test suite has the same or greater coverage of `AgentSdkSession` behaviors as the deleted tests had for `AgentSession` — `npm test` reports all tests passing
+  4. LLM Judge still produces structured scope-creep verdicts after its `@anthropic-ai/sdk` dependency is resolved
 **Plans**: TBD
 
-Plans:
-- [ ] 08-01: TBD
-- [ ] 08-02: TBD
-
-### Phase 9: npm Dependency Updates
-**Goal**: Agent can update npm dependencies end-to-end with lockfile handling
-**Depends on**: Phase 8
-**Requirements**: TASK-02
+### Phase 12: MCP Verifier Server
+**Goal**: The agent can call `mcp__verifier__verify` mid-session to self-check its changes before stopping — reducing outer retry consumption for fixable build failures
+**Depends on**: Phase 10 (Agent SDK Integration)
+**Requirements**: MCP-01, MCP-02, MCP-03
 **Success Criteria** (what must be TRUE):
-  1. Agent can parse package.json and identify dependencies to update
-  2. Agent can update dependency versions in package.json
-  3. Agent handles package-lock.json or yarn.lock correctly
-  4. Agent respects peer dependency constraints
-  5. Full workflow works: trigger -> update -> verify -> PR creation
+  1. An agent session that introduces a build failure can call `mcp__verifier__verify` and receive the build error output as a tool response — without consuming a full outer retry
+  2. `mcp/verifier-server.ts` runs in-process with no external HTTP server or spawned process — `createSdkMcpServer()` pattern only
+  3. The outer RetryOrchestrator remains the authoritative quality gate — a mid-session verify call passing does not bypass the post-session compositeVerifier run
 **Plans**: TBD
 
-Plans:
-- [ ] 09-01: TBD
-- [ ] 09-02: TBD
-
-### Phase 10: Verification Plugin System
-**Goal**: Custom verifiers can be added via plugin system for extensibility
-**Depends on**: Phase 9
-**Requirements**: TOOL-05
+### Phase 13: Container Strategy
+**Goal**: Production agent runs execute inside a Docker container with network isolation equivalent to v1.1 — API calls reach Anthropic, nothing else does
+**Depends on**: Phase 10 (Agent SDK Integration)
+**Requirements**: CTR-01, CTR-02, CTR-03, CTR-04
 **Success Criteria** (what must be TRUE):
-  1. Plugin interface defined for custom verifiers
-  2. Custom verifier can be registered via plugin configuration
-  3. Custom verifier runs in verification loop alongside built-in verifiers
-  4. Custom verifier failures trigger retry with context like built-in verifiers
-  5. Documentation explains how to create custom verifier plugin
+  1. The orchestrator process runs inside Docker; `docker run` starts the full pipeline and stdio connects host to container via `spawnClaudeCodeProcess`
+  2. Agent API calls to `api.anthropic.com` succeed from within the container; all other outbound connections are blocked
+  3. The container process runs as non-root user (UID 1001) — `whoami` inside the container does not return `root`
+  4. `ANTHROPIC_API_KEY` is not present in the container environment — the proxy pattern routes the key outside the container
 **Plans**: TBD
-
-Plans:
-- [ ] 10-01: TBD
 
 ## Progress
 
-**Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
-
-| Phase | Plans Complete | Status | Completed |
-|-------|----------------|--------|-----------|
-| 1. Foundation & Security | 4/4 | Complete | 2026-01-27 |
-| 2. CLI & Orchestration | 3/3 | Complete | 2026-02-06 |
-| 3. Agent Tool Access | 2/2 | Complete | 2026-02-12 |
-| 4. Retry & Context Engineering | 0/0 | Complete    | 2026-02-17 |
-| 5. Deterministic Verification | 2/2 | Complete    | 2026-02-18 |
-| 6. LLM Judge Integration | 2/2 | Complete   | 2026-02-28 |
-| 7. PR Creation | 0/0 | Not started | - |
-| 8. Maven Dependency Updates | 0/0 | Not started | - |
-| 9. npm Dependency Updates | 0/0 | Not started | - |
-| 10. Verification Plugin System | 0/0 | Not started | - |
+| Phase | Milestone | Plans Complete | Status | Completed |
+|-------|-----------|----------------|--------|-----------|
+| 1. Foundation & Security | v1.0 | 4/4 | Complete | 2026-01-27 |
+| 2. CLI & Orchestration | v1.0 | 3/3 | Complete | 2026-02-06 |
+| 3. Agent Tool Access | v1.0 | 2/2 | Complete | 2026-02-12 |
+| 4. Retry & Context Engineering | v1.0 | 2/2 | Complete | 2026-02-17 |
+| 5. Deterministic Verification | v1.0 | 2/2 | Complete | 2026-02-18 |
+| 6. LLM Judge Integration | v1.0 | 2/2 | Complete | 2026-02-28 |
+| 7. GitHub PR Creation | v1.1 | 2/2 | Complete | 2026-03-02 |
+| 8. Maven Dependency Update | v1.1 | 3/3 | Complete | 2026-03-05 |
+| 9. npm Dependency Update | v1.1 | 3/3 | Complete | 2026-03-11 |
+| 10. Agent SDK Integration | v2.0 | 0/TBD | Not started | - |
+| 11. Legacy Deletion | v2.0 | 0/TBD | Not started | - |
+| 12. MCP Verifier Server | v2.0 | 0/TBD | Not started | - |
+| 13. Container Strategy | v2.0 | 0/TBD | Not started | - |

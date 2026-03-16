@@ -1,473 +1,178 @@
-# Research Summary: Background Coding Agent Platform
+# Project Research Summary
 
-**Domain:** AI-driven software maintenance automation
-**Researched:** 2026-01-26
-**Overall confidence:** MEDIUM-HIGH
-- Stack recommendations: HIGH (Anthropic SDK verified)
-- Architecture patterns: MEDIUM-HIGH (Spotify learnings + MCP verified)
-- Features & Pitfalls: MEDIUM (training data + project context)
+**Project:** background-coding-agent v2.0 — Claude Agent SDK migration
+**Domain:** Background coding agent infrastructure migration
+**Researched:** 2026-03-16
+**Confidence:** HIGH
 
 ## Executive Summary
 
-Background coding agent platforms represent a new category of software automation that combines LLM reasoning with deterministic verification. The architecture that has emerged from production systems (Spotify) and standardization efforts (MCP) follows a clear pattern: **controlled autonomy through layered verification**.
+This project is a surgical migration of an existing, production-grade background coding agent (v1.1) from a custom hand-built agentic loop to the official Claude Agent SDK. The system already works — the RetryOrchestrator, compositeVerifier, LLM Judge, and PR creator are all proven and unchanged. The migration's sole goal is deleting ~1,200 lines of home-grown agent infrastructure (AgentSession, AgentClient, ContainerManager) and replacing them with ~50 lines that call the SDK's `query()` function. The net result is a 90% reduction in agent infrastructure code while gaining battle-tested capabilities: built-in tool loop, auto context compression, native hooks API, and MCP server support.
 
-The technology landscape in 2026 favors:
-1. **Direct SDK integration** over agent frameworks (LangChain, etc.)
-2. **MCP tooling standard** for agent-tool communication
-3. **Docker-based isolation** as non-negotiable security boundary
-4. **Structured logging** over experiment tracking platforms (MLflow overkill)
-5. **Type-safe Python** with async-first architecture
+The recommended approach is a four-phase incremental migration modeled directly on Spotify's "Honk" architecture — the top-performing agent in Spotify's 50-agent benchmark. Phase 10 creates a thin `AgentSdkSession` wrapper that satisfies the existing `SessionResult` interface so no other code changes. Phase 11 deletes the legacy files only after Phase 10 is green. Phase 12 optionally adds an in-process MCP verifier server that lets the agent self-correct mid-session. Phase 13 updates the container strategy to run the SDK process inside Docker with proper network isolation.
 
-The key architectural insight from Spotify: **"Student driver with dual controls"** - the agent writes code, but verification layers (deterministic + LLM Judge) prevent bad changes from reaching production. This pattern, combined with turn limits, tool allowlists, and context engineering, makes agentic automation trustworthy.
+The primary risk is not the migration itself — the interface swap is a single line change in `retry.ts` — but the security guarantees that must be preserved. Network isolation, which today is enforced by Docker's `NetworkMode: none`, requires a proxy architecture in the new model because the Agent SDK must reach `api.anthropic.com`. Developers commonly drop `--network none` to "make the SDK work," silently eliminating the isolation guarantee. Every security constraint from v1.1 must be explicitly re-established in the new stack, not assumed to carry over.
 
-**Critical success factors:**
-- Verification loop is non-negotiable (build/test/lint + LLM Judge)
-- Turn limits (~10) prevent cost runaway
-- One change type per session prevents context exhaustion
-- Human review remains essential (no auto-merge)
+---
 
 ## Key Findings
 
-**Stack:** Use Anthropic SDK directly with AsyncAnthropic, Docker SDK for containers, Typer CLI framework, and structlog for observability. Skip LangChain/MLflow - too much abstraction for this use case.
+### Recommended Stack
 
-**Architecture:** Four-layer "sandwich" - Orchestrator → Agent Engine (Claude SDK) → Tool Layer (MCP) → Verification. Each layer has clear boundaries and minimal coupling.
+The migration adds exactly one new dependency to the production codebase: `@anthropic-ai/claude-agent-sdk@^0.2.76`. This replaces `@anthropic-ai/sdk` and `dockerode`, which are both removed. Zod (`^3.24.x`) is only added if Phase 12's MCP verifier server is implemented — check whether it is already a transitive dependency before adding explicitly.
 
-**Critical pitfall:** Unbounded tool access is the #1 failure mode. Limited toolset (Read, Edit, Git-allowlist, Bash-restricted) is what makes agents predictable. Spotify learned this the hard way.
+The Agent SDK bundles Claude Code CLI as its runtime. No custom tool implementations are needed: the SDK's built-in Read, Write, Edit, Bash, Glob, and Grep tools replace all six hand-built tools in the current codebase. Programmatic Docker management (`dockerode`) is eliminated — container lifecycle moves to a `docker run` call in CI/CD or a `spawnClaudeCodeProcess` hook in the SDK options.
+
+**Core technologies:**
+- `@anthropic-ai/claude-agent-sdk@^0.2.76`: replaces AgentSession + AgentClient + all custom tools — official Anthropic SDK, validated by Spotify as top-performing agent engine across ~50 comparisons
+- `zod@^3.24.x` (Phase 12 only): schema validation for MCP tool definitions — Zod 3 preferred for broader ecosystem compatibility
+- Docker (runtime, not an npm dep): container wraps the orchestrator process in production — `--network none` + proxy socket for API access
+
+**Removed dependencies:**
+- `@anthropic-ai/sdk` — replaced entirely by Agent SDK
+- `dockerode` + `@types/dockerode` — container management moves outside the codebase
+
+### Expected Features
+
+The migration's table stakes are pure replacements: `query()` replaces the agentic loop, `maxTurns` replaces the manual turn counter, `permissionMode: "acceptEdits"` replaces per-file write permission interception, and built-in tools replace all six custom tool implementations. If any of these replacements regresses current behavior, the migration is a failure.
+
+The differentiators that increase capability above v1.1: PostToolUse audit hook (replaces brittle tool-level logging in ~15 lines), PreToolUse safety hook (blocks writes to .env/git internals), MCP verifier server (exposes compositeVerifier as `mcp__verifier__verify` so the agent self-corrects mid-session), and scoped Bash rules (`Bash(git:*)`) that replace the previous hardcoded bash allowlist.
+
+**Must have (table stakes):**
+- `query()` replaces `AgentSession.run()` — same contract, SDK manages loop
+- Built-in tools (Read, Write, Edit, Bash, Glob, Grep) — replace all six custom tools
+- `maxTurns: 10` — replaces manual turn counter, maps to `turn_limit` status
+- `permissionMode: "acceptEdits"` — auto-approves file edits, no prompt friction
+- `disallowedTools: ["WebSearch", "WebFetch"]` — enforces network isolation at tool layer
+- Explicit `systemPrompt` configuration — SDK default changed in v0.1.0; must set explicitly
+
+**Should have (differentiators):**
+- PostToolUse audit hook — unified file-change logging, ~15 lines, replaces per-tool logging
+- Scoped Bash rules (`Bash(git:*)`) — replaces hardcoded bash allowlist with declarative surface
+- PreToolUse safety hook — blocks writes outside workspace, ~20 lines
+- MCP verifier server (Phase 12) — in-session self-correction, Spotify's exact pattern
+
+**Defer (v2.1+):**
+- Subagents (Agent tool) — adds complexity; current tasks don't need parallelism
+- Session resume for retries — explicitly an anti-pattern; fresh session per retry is correct
+- `--network none` + Unix proxy socket — Phase 13 MVP uses `--network bridge` + firewall rules; full proxy is v2.1 hardening
+- `@anthropic-ai/sandbox-runtime` — lighter alternative to Docker; evaluate if container overhead is a concern
+
+**Never adopt:**
+- `bypassPermissions` mode — full system access; dangerous without verified container isolation
+- `settingSources: ["project"]` — loads CLAUDE.md from untrusted target repo; prompt injection vector
+- `AskUserQuestion` in batch mode — blocks background execution
+
+### Architecture Approach
+
+The migration is a wrapper-swap, not a rewrite. `AgentSdkSession` (~50 lines) wraps `query()` and returns the same `SessionResult` interface that `AgentSession` returns today. The single change in `retry.ts` is one line: `new AgentSession(config)` becomes `new AgentSdkSession(config)`. All other components — RetryOrchestrator, compositeVerifier, llmJudge, ErrorSummarizer, GitHubPRCreator, and all prompt builders — are untouched. Two architectural patterns govern the design: outer verification in RetryOrchestrator is always the authoritative quality gate (hooks are supplementary, not primary), and fresh session per retry prevents context contamination from failed attempts.
+
+**Major components:**
+1. `AgentSdkSession` (new, ~50 lines) — thin `query()` wrapper; maps `SDKResultMessage` subtypes to `SessionResult`; manages `AbortController` timeout
+2. `RetryOrchestrator` (unchanged) — outer verify/retry loop; remains the authoritative quality gate
+3. `compositeVerifier` (unchanged) — build/test/lint; exposed optionally as MCP server in Phase 12
+4. `llmJudge` (unchanged) — diff scope check; dependency on `@anthropic-ai/sdk` must be resolved in Phase 11
+5. `mcp/verifier-server.ts` (new, Phase 12 only, ~30 lines) — wraps compositeVerifier as `mcp__verifier__verify` tool
+
+### Critical Pitfalls
+
+1. **Network isolation silently removed** — Phase 13 container must implement proxy architecture (`ANTHROPIC_BASE_URL` + Unix socket), not just add `--network bridge`. Warning sign: Dockerfile passes `ANTHROPIC_API_KEY` directly into container env. Prevention: proxy pattern routes API calls through an allowlisted proxy outside the container.
+
+2. **`allowedTools` misunderstood as a blocklist** — `allowedTools` is an auto-approval list, not a restriction. Without `disallowedTools: ["WebSearch", "WebFetch", "Agent"]`, those tools can run. Always pair both lists; use `permissionMode: "dontAsk"` to deny anything not in `allowedTools`.
+
+3. **`SessionResult` mapping breaks on SDK result types** — `error_max_turns` must map to `status: "turn_limit"` (terminal, no retry), not `"failed"`. Wrong mapping wastes money retrying exhausted-turn sessions. Write explicit unit tests for all four `ResultMessage` subtype to `SessionResult.status` mappings before connecting to `RetryOrchestrator`.
+
+4. **Big-bang deletion leaves adapter untested** — Phase 11 deletes ~1,200 lines. Without writing tests for `AgentSdkSession` first, the adapter's mapping behavior goes untested. Write wrapper tests in Phase 10; delete old tests in Phase 11 only after new tests cover the same behaviors.
+
+5. **Unbounded Bash tool capability** — `"Bash"` in `allowedTools` runs any shell command. Use scoped rules: `"Bash(git:*)"`, `"Bash(npm install)"`. The previous system scoped bash at tool-definition time; the SDK requires explicit scoping in `allowedTools`.
+
+---
 
 ## Implications for Roadmap
 
-Based on research, suggested phase structure aligns well with BRIEF.md, with stack-specific refinements:
+Based on research, the migration follows a strict dependency chain with two independent parallel tracks after Phase 11.
 
-### Phase 1: Foundation (3-5 days) - CRITICAL PATH
-**Focus:** Security boundary + SDK integration
+### Phase 10: Agent SDK Core Integration
+**Rationale:** This is the blocking path. Everything downstream depends on `AgentSdkSession` existing and working. Must be done first, must be incremental (wrapper-swap, not rewrite), and must establish security defaults correctly from day one.
+**Delivers:** Working `AgentSdkSession` that satisfies `SessionResult` contract; all existing RetryOrchestrator tests still pass; `query()` drives the agent loop.
+**Addresses:** All table-stakes features — `query()`, built-in tools, `maxTurns`, `permissionMode: "acceptEdits"`, `disallowedTools`, `systemPrompt`, PostToolUse audit hook, scoped Bash rules.
+**Avoids:** `bypassPermissions` misuse (use `acceptEdits` from day one), `allowedTools` misconfiguration (pair with `disallowedTools`), wrong `SessionResult` mapping (write explicit mapping tests), `settingSources` loading hostile configs (omit by default and document why), unbounded Bash (use scoped rules), hooks used for critical cleanup (put cleanup in `finally` block).
 
-**Stack decisions:**
-- **Docker**: Official `docker` SDK (>=7.0.0), not subprocess calls
-- **Anthropic SDK**: AsyncAnthropic client with beta.messages.tool_runner
-- **Logging**: structlog for structured JSON logs (NOT MLflow yet - overkill for Phase 1)
-- **Config**: pydantic-settings for type-safe environment config
+### Phase 11: Legacy Deletion
+**Rationale:** Cannot delete legacy code until Phase 10 is green and verified. Deleting before the wrapper works leaves the system broken. Deleting after ensures the replacement is confirmed.
+**Delivers:** Removal of `agent.ts` (273 lines), `session.ts` (667 lines), `container.ts` (~200 lines), their tests (~650 lines). Resolution of `@anthropic-ai/sdk` dependency for the LLM Judge (decision: migrate Judge to Agent SDK `query()` with structured output, or keep `@anthropic-ai/sdk` solely for Judge calls). Removal of `dockerode` from package.json.
+**Avoids:** Test coverage gap (wrapper tests from Phase 10 must be green before this phase merges), big-bang deletion risk (gate Phase 11 PRs on Phase 10 test suite passing).
 
-**Why this order:** Security boundary (Docker) must exist before any agent code runs. SDK integration proves connectivity.
+### Phase 12: MCP Verifier Server (Optional)
+**Rationale:** In-session self-correction via the MCP verifier pattern increases success rate by giving the agent mid-session feedback before consuming a full outer retry. Independent of Phase 13. Can be skipped if the outer retry loop provides sufficient correction cycles for the target task types.
+**Delivers:** `mcp/verifier-server.ts` (~30 lines) exposing `compositeVerifier` as `mcp__verifier__verify` MCP tool; agent can call the verifier mid-session; optional Stop hook for in-session verification feedback.
+**Uses:** `createSdkMcpServer()` + `tool()` from Agent SDK; Zod for schema validation; streaming prompt input mode.
+**Avoids:** Stop hook as primary verification path (outer RetryOrchestrator remains authoritative), `continue: true` in Stop hook causing infinite loops (managed by external retry counter), Stop hook exceptions swallowing verification results (wrap entire hook body in try/catch).
 
-**Addresses:**
-- Sandbox isolation (PITFALLS: #4 Sandbox Escape)
-- Secure configuration (PITFALLS: #12 Credential Leakage)
+### Phase 13: Container Strategy
+**Rationale:** Production isolation. Development and CI run `query()` directly on host with `permissionMode: "dontAsk"` + `disallowedTools`. Production requires container isolation equivalent to v1.1's Docker sandbox. Independent of Phase 12.
+**Delivers:** Updated Dockerfile running the orchestrator (not just the agent subprocess) inside Docker; `spawnClaudeCodeProcess` implementation for Docker stdio bridge; network isolation via `--network bridge` + firewall rules (v2.0 MVP) with Unix proxy socket pattern deferred to v2.1.
+**Avoids:** Silent network isolation removal (implement proxy architecture, not just container wrapping), running as root (preserve `--user 1001:1001` from v1.1), passing API key directly into container (proxy pattern routes key outside container), not pinning Claude Code CLI version (pin in Dockerfile).
 
-**Avoids:**
-- Running agent on host (anti-pattern from ARCHITECTURE.md)
-- Subprocess docker CLI calls (brittle, hard to test)
+### Phase Ordering Rationale
 
-### Phase 2: CLI + Orchestrator (5-7 days) - ARCHITECTURE FOUNDATION
-**Focus:** Session management + prompt templates
+- Phase 10 before Phase 11: replacement must work before legacy is deleted. This is a hard dependency.
+- Phase 12 and Phase 13 are independent of each other after Phase 11 completes. Either can be done first, or Phase 12 can be skipped entirely.
+- All four phases are pure additions or subtractions to the existing codebase. No lateral refactoring required.
+- The existing test suite acts as a regression oracle throughout. If Phase 10 breaks existing tests, it is not ready to merge.
 
-**Stack decisions:**
-- **CLI**: Typer (>=0.12.0) + Rich for terminal output (NOT Click from BRIEF - Typer better DX)
-- **Session limits**: Hard-coded turn limit (10), timeout (5min), retry budget (3)
-- **Prompts**: End-state templates (NOT step-by-step)
+### Research Flags
 
-**Why this order:** Orchestrator manages everything else. Must establish turn limits NOW or cost runaway will happen.
+Phases likely needing deeper research during planning:
+- **Phase 11:** LLM Judge's dependency on `@anthropic-ai/sdk` — three options are documented (migrate to `query()`, keep as dev dep, use constrained JSON prompt) but the choice has quality and performance implications. Needs a decision before Phase 11 planning finalizes.
+- **Phase 13:** Proxy architecture specifics — the "Unix socket proxy" pattern is recommended by Anthropic's secure deployment guide and Spotify, but the implementation details (proxy server choice, socket path, container config) need a concrete plan. Flag for deeper research before planning Phase 13.
 
-**Addresses:**
-- Cost control (PITFALLS: #3 Cost Runaway)
-- End-state prompting (PITFALLS: #8 Step-by-Step)
+Phases with standard patterns (skip research-phase):
+- **Phase 10:** Agent SDK integration is well-documented with official TypeScript reference, verified option types, and concrete code examples in the research. The `AgentSdkSession` implementation is fully specified (~50 lines in ARCHITECTURE.md).
+- **Phase 12:** MCP verifier server pattern is documented and the implementation is specified (~30 lines in ARCHITECTURE.md). Zod version choice is resolved.
 
-**Avoids:**
-- Unbounded agent loops
-- Click's decorator-heavy syntax (Typer's type hints cleaner)
-
-### Phase 3: MCP Tools (5-7 days) - CONTROL LAYER
-**Focus:** Limited, safe tool access
-
-**Stack decisions:**
-- **MCP Client**: Part of Anthropic SDK (beta.messages.tool_runner)
-- **Tool allowlist**: Read, Edit, Git (status/diff/add/commit only), Bash (rg/cat/head/tail/find only)
-- **Output summarization**: Custom verification wrappers (don't dump raw logs)
-
-**Why this order:** Tools are useless without orchestrator. Must be minimal or agent becomes unpredictable.
-
-**Addresses:**
-- Tool access control (PITFALLS: #1 Unbounded Tool Access)
-- Context engineering (PITFALLS: #10 Log Dumping)
-
-**Avoids:**
-- Full terminal access (Spotify mistake)
-- Dynamic tool fetching (PITFALLS: #9)
-
-### Phase 4: Verification Loop (5-7 days) - TRUST BOUNDARY
-**Focus:** Deterministic checks + LLM Judge
-
-**Stack decisions:**
-- **Build detection**: Auto-detect Maven vs npm via file presence
-- **Verifiers**: Subprocess to build tools (mvn, npm), parse output
-- **LLM Judge**: Second Claude call with diff + original prompt
-- **Target veto rate**: ~25% (Spotify finding)
-
-**Why this order:** Must have working tools before verification can test changes. This is THE critical phase.
-
-**Addresses:**
-- Quality gate (PITFALLS: #2 Verification Theater)
-- Scope creep detection (FEATURES: LLM Judge differentiator)
-
-**Avoids:**
-- Skipping verification for "simple" changes (anti-pattern)
-- Verification that doesn't actually catch bad changes
-
-### Phase 5: PR Integration (3-5 days) - OUTPUT MECHANISM
-**Focus:** GitHub API + PR templates
-
-**Stack decisions:**
-- **Git operations**: GitPython (>=3.1.0) for local ops
-- **GitHub API**: PyGithub (>=2.0.0) for PR creation (NOT gh CLI - harder to test)
-- **PR template**: Standardized with metadata (agent session ID, verification results)
-
-**Why this order:** PR creation depends on verification passing. Simple GitHub API integration.
-
-**Addresses:**
-- Human review loop (FEATURES: Table stakes)
-- PR visibility (FEATURES: Table stakes)
-
-**Avoids:**
-- Auto-merge (PITFALLS: #13 Over-Automation)
-- Missing context in PRs
-
-### Phase 6: MVP Use Case (5-7 days) - VALUE VALIDATION
-**Focus:** Maven + npm dependency bumpers
-
-**Stack decisions:**
-- **Maven**: Parse pom.xml, run mvn commands, handle multi-module
-- **npm**: Parse package.json, handle lockfiles, peer dependencies
-- **Prompt templates**: End-state ("Update X to Y, ensure tests pass")
-
-**Why this order:** Proves entire stack works end-to-end. Real value delivery.
-
-**Addresses:**
-- Concrete use case (FEATURES: Dependency updates table stakes)
-- Breaking change handling (FEATURES: Differentiator)
-
-**Avoids:**
-- Prompt injection from dependency docs (PITFALLS: #5)
-- Version constraint violations (PITFALLS: #16)
-
-### Phase 7: Observability (3-5 days) - PRODUCTION READINESS
-**Focus:** Metrics, session replay, debugging
-
-**Stack decisions:**
-- **Keep structlog**: Already in place, sufficient
-- **Add metrics**: Track merge rate, veto rate, cost per run
-- **Session storage**: Store full conversation + tool history for replay
-- **SKIP MLflow**: Overkill for this use case (see STACK.md rationale)
-
-**Why this order:** Need MVP working before optimizing observability. But needed before scale.
-
-**Addresses:**
-- Debugging capability (PITFALLS: #17 Silent Failures)
-- Metric tracking (FEATURES: Cost Dashboard, Observability)
-
-**Avoids:**
-- MLflow complexity (STACK: Anti-pattern for non-ML)
-- Black box system (ARCHITECTURE: Anti-pattern #3)
-
-### Phase 8: Testing & Docs (5-7 days) - PRODUCTION HARDENING
-**Focus:** Comprehensive test suite + documentation
-
-**Stack decisions:**
-- **pytest** (>=8.0.0) + pytest-asyncio for async tests
-- **respx** (>=0.21.0) for mocking Anthropic API calls
-- **pytest-docker** or testcontainers for integration tests
-- **Test strategy**: Unit (mock API) → Integration (real Docker) → E2E (real API, sparingly)
-
-**Why this order:** Last phase ensures system is production-ready and maintainable.
-
-**Addresses:**
-- Test coverage (PITFALLS: #6 False Positives)
-- Flaky test handling (PITFALLS: #18)
-
-**Avoids:**
-- Testing Claude's correctness (trust the model)
-- Untestable subprocess calls (why we use SDKs)
-
-## Phase Ordering Rationale
-
-**Sequential dependencies:**
-```
-Foundation (Docker + SDK)
-    ↓ [Must have security boundary first]
-CLI + Orchestrator (Session management)
-    ↓ [Must manage sessions before spawning agents]
-MCP Tools (Limited tool access)
-    ↓ [Must have tools before verification can test them]
-Verification Loop (Build/test + LLM Judge)
-    ↓ [Must verify before creating PRs]
-PR Integration (GitHub API)
-    ↓ [Must have output mechanism before use cases]
-MVP Use Case (Dependency bumpers)
-    ↓ [Must prove value before optimizing]
-Observability (Metrics, replay)
-    ↓ [Must have data before scaling]
-Testing & Docs (Production hardening)
-```
-
-**Critical path:** Foundation → CLI → Tools → Verification (Phases 1-4)
-- These MUST be done in order
-- Each phase depends on previous
-- Shortcuts here create technical debt or security issues
-
-**Value delivery:** Phases 5-6 (PR Integration + MVP Use Case)
-- Can iterate quickly once foundation solid
-- This is where user value appears
-
-**Production readiness:** Phases 7-8 (Observability + Testing)
-- Can be done in parallel with new feature work
-- Critical before fleet-wide deployment
-
-**DO NOT:** Try to parallelize foundation phases. Security shortcuts compound.
-
-## Research Flags for Phases
-
-**Phase 1: Foundation** - Standard patterns, unlikely to need additional research
-- Docker security best practices are well-established
-- Anthropic SDK documentation is comprehensive
-
-**Phase 2: CLI + Orchestrator** - Standard patterns, but monitor Spotify blog for new insights
-- End-state prompting examples may need experimentation
-- Turn limit tuning is project-specific (start with 10)
-
-**Phase 3: MCP Tools** - Likely needs deeper research
-- **FLAG:** MCP ecosystem evolving. Check modelcontextprotocol.io for updated tool servers
-- **FLAG:** Output summarization strategies need experimentation (how much to abstract?)
-- **FLAG:** Bash allowlist - may need to expand based on build systems encountered
-
-**Phase 4: Verification Loop** - Likely needs MUCH deeper research
-- **FLAG:** LLM Judge prompt engineering is critical and under-documented
-- **FLAG:** Target veto rate (25%) needs calibration per use case
-- **FLAG:** Build system auto-detection may require heuristics research
-- **FLAG:** Breaking change detection requires semantic diff analysis (very hard)
-
-**Phase 5: PR Integration** - Standard patterns, unlikely to need research
-- GitHub API well-documented
-- GitPython mature library
-
-**Phase 6: MVP Use Case** - Moderate research needs
-- **FLAG:** Dependency version constraints (semver, peer deps) need research
-- **FLAG:** Prompt injection defenses need threat modeling
-- **FLAG:** Maven multi-module projects may have edge cases
-
-**Phase 7: Observability** - Standard patterns, but consider alternatives
-- **FLAG:** Verify MLflow truly not needed (may reconsider if debugging is painful)
-- **FLAG:** Research session replay storage strategies (S3, local, PostgreSQL?)
-
-**Phase 8: Testing & Docs** - Standard patterns
-- pytest ecosystem well-established
+---
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| **Stack** | **HIGH** | Anthropic SDK verified from GitHub. Other libraries from training data but versions need checking. |
-| **Agent Framework Choice** | **HIGH** | Direct SDK > LangChain is clear from Spotify learnings + training data. |
-| **CLI Framework** | **MEDIUM** | Typer recommendation strong (type hints, async), but BRIEF suggests Click. Worth the upgrade. |
-| **Container Stack** | **MEDIUM** | Docker SDK standard, but version >=7.0.0 needs PyPI verification. |
-| **Observability** | **MEDIUM-HIGH** | Skip MLflow is correct call, but needs validation in Phase 7. |
-| **Testing Stack** | **MEDIUM** | pytest ecosystem standard, but pytest-docker vs testcontainers needs evaluation. |
-| **Features** | **MEDIUM** | Based on Spotify learnings + training data. Table stakes clear, differentiators need validation. |
-| **Architecture** | **MEDIUM-HIGH** | Layered "sandwich" pattern verified from Spotify + MCP docs. Clear best practice. |
-| **Pitfalls** | **MEDIUM** | Top pitfalls (tool access, verification, cost) HIGH confidence from Spotify. Others from training data. |
+| Stack | HIGH | Primary sources are official Anthropic docs (platform.claude.com) and GitHub, verified 2026-03-16. npm registry data is MEDIUM (pages returned 403, confirmed via search results). |
+| Features | HIGH | All feature claims verified against official Agent SDK docs. `spawnClaudeCodeProcess` for Docker is MEDIUM (option confirmed in docs, implementation pattern inferred). Stop hook for verification is MEDIUM (Spotify blog + SDK docs combined). |
+| Architecture | HIGH | Official SDK TypeScript reference confirms `query()` signature, `Options` type, `SDKMessage` types, and `spawnClaudeCodeProcess`. Spotify engineering blog confirms the outer-verification-authoritative pattern and fresh-session-per-retry. Current codebase is first-party source for existing interfaces and contracts. |
+| Pitfalls | HIGH | Derived from official docs (breaking changes, hook behavior, `allowedTools` semantics) and direct code analysis of `src/orchestrator/`. Network isolation pitfall confirmed by Anthropic's secure deployment guide. |
 
-## Gaps to Address
+**Overall confidence:** HIGH
 
-### Immediate Gaps (Before Phase 1)
+### Gaps to Address
 
-1. **Version verification needed:**
-   - Run `pip index versions docker` to confirm >=7.0.0 is correct
-   - Run `pip index versions typer` to confirm >=0.12.0 is correct
-   - Run `pip index versions pytest` to confirm >=8.0.0 is correct
-   - All other non-Anthropic dependencies need version checks
+- **LLM Judge migration path (Phase 11):** Three options exist for handling the Judge's `@anthropic-ai/sdk` dependency after removal. The research flags this as a Phase 11 implementation decision. Decide before Phase 11 planning: Option A (migrate Judge to `query()` with structured output), Option B (keep `@anthropic-ai/sdk` as a peer dep for Judge only), or Option C (`query()` with constrained JSON prompt). Option A is cleanest but requires validating structured output quality matches current Judge behavior.
 
-2. **Docker security checklist:**
-   - Verify non-root user pattern for Python containers
-   - Confirm network isolation flags (--network none)
-   - Review AppArmor/SELinux requirements
+- **Claude Code CLI bundling (Phase 13):** The stack research notes: "Validate during Phase 13 whether the Agent SDK bundles the binary or requires a separate global install." The Dockerfile template includes `RUN npm install -g @anthropic-ai/claude-code` as a precaution, but this should be validated against the actual SDK package contents before finalizing the Dockerfile.
 
-3. **MCP tooling research:**
-   - Check modelcontextprotocol.io for current tool server implementations
-   - Verify MCP client integration patterns with Anthropic SDK
+- **Unix proxy socket implementation (Phase 13 / v2.1):** The v2.0 MVP uses `--network bridge` + outbound firewall rules. The full proxy pattern (`--network none` + Unix socket + `ANTHROPIC_BASE_URL`) is the production-hardened target but its implementation specifics are not detailed in the research. Flag for Phase 13 deep research before planning.
 
-### Phase-Specific Gaps
-
-**Phase 3 (MCP Tools):**
-- Research output summarization strategies (what level of detail?)
-- Build allowlist of safe Bash commands (beyond rg/cat/head/tail/find)
-- Edge cases for Git tool restrictions
-
-**Phase 4 (Verification Loop):**
-- **CRITICAL:** LLM Judge prompt engineering
-  - What criteria to evaluate? (in_scope, safe, quality)
-  - How to calibrate veto rate to target 25%?
-  - How to handle Judge disagreeing with deterministic verifiers?
-- Breaking change detection patterns (if attempting advanced feature)
-
-**Phase 6 (MVP Use Case):**
-- Dependency version constraint parsing (semver, ^, ~, exact)
-- Prompt injection attack surface (dependency docs, error messages)
-- Maven multi-module project patterns
-
-**Phase 7 (Observability):**
-- Session replay storage strategy (filesystem, S3, database?)
-- Metrics dashboard technology (Grafana, custom, etc.)
-- Consider LangSmith or similar if structured logs insufficient
-
-### Research Methodology Limitations
-
-**Tools unavailable during research:**
-- WebSearch blocked (couldn't verify 2026 ecosystem trends)
-- WebFetch mostly blocked (couldn't access official docs beyond Anthropic)
-- Context7 not applicable to non-library research
-
-**Impact on confidence:**
-- Stack recommendations: MEDIUM confidence for non-Anthropic libraries (versions from training data)
-- Features/Pitfalls: MEDIUM confidence (based on Spotify learnings + training data, not verified externally)
-- Architecture: MEDIUM-HIGH confidence (Spotify + MCP docs accessible)
-
-**Mitigation:**
-- Verify versions against PyPI before implementation (Phase 0)
-- Cross-reference Spotify blog posts directly (links in BRIEF.md)
-- Check MCP documentation for updates (modelcontextprotocol.io)
-- Monitor Anthropic SDK changelog for beta API changes
-
-## Stack Summary for Quick Reference
-
-### Core (Must Have - Phase 1)
-```bash
-pip install anthropic>=0.40.0          # HIGH confidence
-pip install docker>=7.0.0              # MEDIUM confidence - verify version
-pip install pydantic>=2.0              # HIGH confidence
-pip install pydantic-settings>=2.0     # HIGH confidence
-pip install structlog>=24.0.0          # MEDIUM confidence
-pip install python-dotenv>=1.0.0       # MEDIUM confidence
-```
-
-### CLI (Phase 2)
-```bash
-pip install typer>=0.12.0              # MEDIUM confidence - verify version
-pip install rich>=13.0.0               # MEDIUM confidence
-```
-
-### Git Operations (Phase 5)
-```bash
-pip install gitpython>=3.1.0           # MEDIUM confidence
-pip install PyGithub>=2.0.0            # MEDIUM confidence
-```
-
-### Testing (Phase 8)
-```bash
-pip install pytest>=8.0.0              # MEDIUM confidence - verify version
-pip install pytest-asyncio>=0.23.0     # MEDIUM confidence
-pip install respx>=0.21.0              # MEDIUM confidence
-```
-
-### Development
-```bash
-pip install ruff>=0.6.0                # MEDIUM confidence
-pip install mypy>=1.11.0               # MEDIUM confidence
-pip install pre-commit>=3.0.0          # MEDIUM confidence
-```
-
-**Python version:** 3.11 or 3.12 recommended (3.9 minimum per Anthropic SDK)
-
-## Key Recommendations
-
-### Do These Things (High Confidence)
-
-1. **Use Anthropic SDK directly** - Skip LangChain/LlamaIndex. Direct SDK gives control needed for verification loops.
-
-2. **Docker isolation is non-negotiable** - No subprocess, no host execution. Security boundary must be absolute.
-
-3. **Implement turn limits immediately (Phase 2)** - Hard limit of 10 turns. Cost runaway will happen without this.
-
-4. **Use end-state prompting** - Describe outcomes, not steps. Spotify finding: this works better.
-
-5. **Limit tool access from day 1** - Start with minimal tools (Read, Edit), expand deliberately. Don't give full terminal.
-
-6. **LLM Judge is not optional** - Deterministic verifiers catch "does it run?", Judge catches "did it do what I asked?"
-
-7. **One change type per session** - Don't combine dependency update + refactor. Context exhaustion is real.
-
-8. **Always require human approval** - No auto-merge, even if all verifiers pass. Non-negotiable.
-
-### Don't Do These Things (High Confidence)
-
-1. **Don't use LangChain** - Abstraction overhead, breaking changes, opinionated patterns conflict with verification needs.
-
-2. **Don't skip verification** - Not even for "simple" changes. Consistency builds trust.
-
-3. **Don't use MLflow for Phase 1-6** - Overkill for orchestrating API calls. Use structlog, add MLflow later if truly needed.
-
-4. **Don't allow dynamic tool fetching** - Static tool manifest at spawn time. Predictability > flexibility.
-
-5. **Don't dump raw logs to agent** - Summarize verification output. "3 tests failed: NullPointerException" not 10K lines.
-
-6. **Don't run agent on host** - Security boundary must be container. No exceptions.
-
-7. **Don't use Click** - Typer provides better DX with type hints. Worth the deviation from BRIEF.md.
-
-### Validate These Decisions (Medium Confidence)
-
-1. **Typer over Click** - BRIEF.md suggests Click, but Typer's type-hint approach is cleaner. Validate with team.
-
-2. **Skip MLflow entirely** - Strong rationale in STACK.md, but may reconsider in Phase 7 if debugging painful.
-
-3. **Docker SDK version >=7.0.0** - Verify against PyPI. Training data may be outdated.
-
-4. **pytest-docker vs testcontainers** - Both options exist. Evaluate based on integration test needs in Phase 8.
-
-5. **GitPython vs gh CLI** - GitPython recommended for testability, but gh CLI simpler. Re-evaluate in Phase 5.
-
-## Ready for Roadmap
-
-Research complete. Sufficient confidence to proceed with roadmap creation:
-
-- **Stack decisions:** Clear recommendations with rationale
-- **Phase structure:** Validated against research findings
-- **Critical path identified:** Foundation → CLI → Tools → Verification
-- **Risk areas flagged:** LLM Judge prompt engineering (Phase 4), version verification (Phase 0)
-- **Anti-patterns documented:** 6 major anti-patterns to avoid
-- **Success metrics defined:** Merge rate, veto rate (~25%), cost per run
-
-**Next steps:**
-1. Verify library versions against PyPI (Phase 0)
-2. Create detailed roadmap from phase structure above
-3. Establish metrics baseline in Phase 1
-4. Build security checklist for Phase 1 (Docker hardening)
-5. Design LLM Judge evaluation criteria for Phase 4
-
-**Open questions for implementation:**
-- Exact LLM Judge prompt structure (needs experimentation)
-- Output summarization verbosity (needs tuning)
-- Bash command allowlist completeness (may need expansion)
-
-These are expected gaps at research stage. Phase-specific implementation will address them.
+---
 
 ## Sources
 
-**HIGH Confidence:**
-- Anthropic Python SDK: https://github.com/anthropics/anthropic-sdk-python (verified 2026-01-26)
-- MCP Architecture: https://modelcontextprotocol.io (referenced in project)
-- Spotify Learnings: Via BRIEF.md project context (engineering blog references)
+### Primary (HIGH confidence)
+- [Claude Agent SDK TypeScript Reference](https://platform.claude.com/docs/en/agent-sdk/typescript) — `query()` signature, `Options` type, `HookEvent` types, `McpServerConfig`, `PermissionMode`, `SDKResultMessage`
+- [Claude Agent SDK Overview](https://platform.claude.com/docs/en/agent-sdk/overview) — built-in tools list, SDK vs Client SDK comparison, Zod compatibility
+- [Claude Agent SDK Hooks](https://platform.claude.com/docs/en/agent-sdk/hooks) — PreToolUse, PostToolUse, Stop callback types, hook availability on `maxTurns`
+- [Claude Agent SDK Permissions](https://platform.claude.com/docs/en/agent-sdk/permissions) — `acceptEdits`, `dontAsk`, `bypassPermissions`, `allowedTools` vs `disallowedTools` semantics
+- [Claude Agent SDK MCP](https://platform.claude.com/docs/en/agent-sdk/mcp) — `mcpServers` config, `createSdkMcpServer`, `tool()`
+- [Claude Agent SDK Secure Deployment](https://platform.claude.com/docs/en/agent-sdk/secure-deployment) — Docker hardening, `--network none` + Unix proxy socket pattern
+- [Claude Agent SDK Hosting](https://platform.claude.com/docs/en/agent-sdk/hosting) — container deployment patterns, system requirements, Claude Code CLI runtime dependency
+- [Migrate to Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/migration-guide) — breaking changes including system prompt default change in v0.1.0
+- [GitHub anthropics/claude-agent-sdk-typescript](https://github.com/anthropics/claude-agent-sdk-typescript) — package name, version 0.2.76 confirmed
+- Existing codebase `src/orchestrator/` — first-party source for current interfaces and contracts
 
-**MEDIUM Confidence:**
-- Python libraries: Training data (January 2025 cutoff) - versions need PyPI verification
-- Agent platform patterns: Training data + Spotify learnings synthesis
-- Docker/testing best practices: Training data (established patterns)
+### Secondary (MEDIUM confidence)
+- [Spotify Engineering: Background Coding Agent Part 1](https://engineering.atspotify.com/2025/11/spotifys-background-coding-agent-part-1) — architecture evolution, top-performing agent claim, surrounding infrastructure pattern
+- [Spotify Engineering: Feedback Loops Part 3](https://engineering.atspotify.com/2025/12/feedback-loops-background-coding-agents-part-3) — container isolation, MCP verifiers, stop hook, LLM Judge 25% veto rate
+- npm registry (via search) — `@anthropic-ai/claude-agent-sdk` version 0.2.76; `@modelcontextprotocol/sdk` version 1.27.1
 
-**LOW Confidence (Flagged for Validation):**
-- LLM Judge implementation details (not documented in available sources)
-- Exact turn limit tuning (Spotify mentioned ~10, but project-specific)
-- Breaking change detection feasibility (very hard, may need scope reduction)
-
-**Research Limitations:**
-- WebSearch unavailable (couldn't verify 2026 ecosystem trends)
-- WebFetch mostly blocked (limited official doc access)
-- No external validation of Spotify claims (couldn't access engineering blogs directly)
-- Recommendations based on synthesis of available sources, not comprehensive survey
-
-**Recommendation:** Treat HIGH confidence items as decisions, MEDIUM confidence as defaults (validate in implementation), LOW confidence as research flags for relevant phases.
+---
+*Research completed: 2026-03-16*
+*Ready for roadmap: yes*

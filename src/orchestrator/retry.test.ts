@@ -347,6 +347,119 @@ describe('RetryOrchestrator', () => {
     runPromise.catch(() => {});
   });
 
+  it('15. preVerify is called before verifier when session succeeds', async () => {
+    const preVerify = vi.fn().mockResolvedValue(undefined);
+    const verifier = vi.fn().mockResolvedValue(makePassedVerification());
+    const session = createMockSession(makeSessionResult());
+    MockAgentSession.mockImplementationOnce(function() { return session; });
+
+    const callOrder: string[] = [];
+    preVerify.mockImplementation(async () => { callOrder.push('preVerify'); });
+    verifier.mockImplementation(async () => { callOrder.push('verifier'); return makePassedVerification(); });
+
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace' },
+      { maxRetries: 3, verifier, preVerify }
+    );
+
+    const result = await orchestrator.run('Fix the bug');
+
+    expect(result.finalStatus).toBe('success');
+    expect(preVerify).toHaveBeenCalledOnce();
+    expect(preVerify).toHaveBeenCalledWith('/tmp/workspace');
+    expect(verifier).toHaveBeenCalledOnce();
+    expect(callOrder).toEqual(['preVerify', 'verifier']);
+  });
+
+  it('16. preVerify is not called when session fails', async () => {
+    const preVerify = vi.fn().mockResolvedValue(undefined);
+    const verifier = vi.fn().mockResolvedValue(makePassedVerification());
+    const session = createMockSession(makeSessionResult({ status: 'failed', error: 'Docker crashed' }));
+    MockAgentSession.mockImplementationOnce(function() { return session; });
+
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace' },
+      { maxRetries: 3, verifier, preVerify }
+    );
+
+    const result = await orchestrator.run('Fix the bug');
+
+    expect(result.finalStatus).toBe('failed');
+    expect(preVerify).not.toHaveBeenCalled();
+  });
+
+  it('17. preVerify failure returns finalStatus failed immediately (no retry)', async () => {
+    const preVerify = vi.fn().mockRejectedValue(new Error('npm install failed: invalid version'));
+    const verifier = vi.fn().mockResolvedValue(makePassedVerification());
+    const session = createMockSession(makeSessionResult());
+    MockAgentSession.mockImplementationOnce(function() { return session; });
+
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace' },
+      { maxRetries: 3, verifier, preVerify }
+    );
+
+    const result = await orchestrator.run('Fix the bug');
+
+    expect(result.finalStatus).toBe('failed');
+    expect(result.attempts).toBe(1);
+    expect(result.error).toContain('Pre-verify failed');
+    expect(result.error).toContain('npm install failed: invalid version');
+    // Verifier must NOT have been called — preVerify failure is terminal
+    expect(verifier).not.toHaveBeenCalled();
+    // Only 1 session created (no retry)
+    expect(MockAgentSession.mock.calls).toHaveLength(1);
+  });
+
+  it('18. retry loop without preVerify works exactly as before (backwards compatible)', async () => {
+    const verifier = vi.fn()
+      .mockResolvedValueOnce(makeFailedVerification('Build failed'))
+      .mockResolvedValueOnce(makePassedVerification());
+
+    const session1 = createMockSession(makeSessionResult());
+    const session2 = createMockSession(makeSessionResult());
+    MockAgentSession
+      .mockImplementationOnce(function() { return session1; })
+      .mockImplementationOnce(function() { return session2; });
+
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace' },
+      { maxRetries: 3, verifier }
+      // NOTE: no preVerify — backwards compatibility test
+    );
+
+    const result = await orchestrator.run('Fix the bug');
+
+    expect(result.finalStatus).toBe('success');
+    expect(result.attempts).toBe(2);
+    expect(verifier).toHaveBeenCalledTimes(2);
+  });
+
+  it('19. preVerify is called on each retry attempt (not just first)', async () => {
+    const preVerify = vi.fn().mockResolvedValue(undefined);
+    const verifier = vi.fn()
+      .mockResolvedValueOnce(makeFailedVerification('Build failed attempt 1'))
+      .mockResolvedValueOnce(makePassedVerification());
+
+    const session1 = createMockSession(makeSessionResult());
+    const session2 = createMockSession(makeSessionResult());
+    MockAgentSession
+      .mockImplementationOnce(function() { return session1; })
+      .mockImplementationOnce(function() { return session2; });
+
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace' },
+      { maxRetries: 3, verifier, preVerify }
+    );
+
+    const result = await orchestrator.run('Fix the bug');
+
+    expect(result.finalStatus).toBe('success');
+    expect(result.attempts).toBe(2);
+    // preVerify must be called on every attempt where session succeeds
+    expect(preVerify).toHaveBeenCalledTimes(2);
+  });
+
   it('14. retry message only includes last failed verification (not stale errors)', async () => {
     const verifier = vi.fn()
       .mockResolvedValueOnce(makeFailedVerification('TS error from attempt 1'))
