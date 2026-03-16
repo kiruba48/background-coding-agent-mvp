@@ -23,23 +23,28 @@ The full verification loop must work: agent changes code, deterministic verifier
 - ✓ Failed verification triggers retry with summarized error context (max 3) — v1.0
 - ✓ Judge veto prevents PR creation even if deterministic checks pass — v1.0
 
+- ✓ Agent creates GitHub PR with full context (task prompt, diff, verification results, judge verdict) — v1.1
+- ✓ Agent auto-generates branch names, user can override via CLI — v1.1
+- ✓ Maven dependency update task type — user specifies dep, agent updates and adapts code — v1.1
+- ✓ npm dependency update task type — user specifies dep, agent updates and adapts code — v1.1
+- ✓ PR body flags potential breaking changes for human reviewer — v1.1
+
 ### Active
 
-- [ ] Agent creates GitHub PR with full context (task prompt, diff, verification results, judge verdict)
-- [ ] Agent auto-generates branch names, user can override via CLI
-- [ ] Maven dependency update task type — user specifies dep, agent updates and adapts code
-- [ ] npm dependency update task type — user specifies dep, agent updates and adapts code
-- [ ] PR body flags potential breaking changes for human reviewer
+- [ ] Replace custom AgentSession/AgentClient with Claude Agent SDK `query()`
+- [ ] Delete legacy agent infrastructure (~1,200 lines)
+- [ ] Run Agent SDK inside Docker container for production isolation
+- [ ] Expose composite verifier as MCP server (optional, Spotify pattern)
 
-## Current Milestone: v1.1 End-to-End Pipeline
+## Current Milestone: v2.0 Claude Agent SDK Migration
 
-**Goal:** Ship the complete pipeline — agent takes a dependency update task, executes in Docker, verifies changes, and creates a GitHub PR with full context.
+**Goal:** Replace the custom agent loop with the Claude Agent SDK — delete ~1,200 lines of hand-built agent infrastructure, gain 15+ built-in tools, auto context compression, and hooks-based safety model.
 
 **Target features:**
-- GitHub PR creation with descriptive body and metadata
-- Maven dependency update (user-specified dep, handles breaking changes with risk flags)
-- npm dependency update (same behavior as Maven)
-- Auto-generated branch naming with user override
+- Claude Agent SDK integration (`query()` replaces AgentSession + AgentClient)
+- Legacy agent code deletion (agent.ts, session.ts, container.ts)
+- Container strategy (Agent SDK runs inside Docker for isolation)
+- MCP verifier server (optional — agent self-verifies within session)
 
 ### Out of Scope
 
@@ -49,22 +54,27 @@ The full verification loop must work: agent changes code, deterministic verifier
 - Multi-repo batch operations — single repo per run
 - Real-time streaming UI — CLI output sufficient
 - Mobile app — not applicable
-- Custom verifier plugins — deferred to v1.2+
-- Cost per run metric — deferred to v1.2+
+- Custom verifier plugins — deferred to v2.1+
+- Cost per run metric — deferred to v2.1+
 - GitLab/Bitbucket PR support — GitHub only for now
 - "Update all outdated deps" mode — user specifies dep for v1.1
 
 ## Context
 
-**Shipped v1.0** with 5,460 LOC TypeScript across 6 phases in 35 days.
+**Shipped v1.0** (Foundation) with 5,460 LOC TypeScript across 6 phases in 35 days.
+**Shipped v1.1** (End-to-End Pipeline) with 3 phases: GitHub PR creation, Maven dependency update, npm dependency update.
 
 **Tech stack:** Node.js 20, TypeScript (NodeNext), Docker (Alpine 3.18), Anthropic SDK, Commander.js, Pino, Vitest, ESLint v10.
 
-**Architecture:** CLI → RetryOrchestrator → AgentSession → Docker container (network-none, non-root). Agent communicates via Anthropic SDK agentic loop. Tools execute in container (read-only) or host-side (git, edit). Composite verifier (build+test+lint) feeds into retry loop. LLM Judge (Claude Haiku 4.5, structured output) evaluates scope post-verification.
+**Architecture (current — v2.0 will change this):** CLI → RetryOrchestrator → AgentSession → Docker container (network-none, non-root). Agent communicates via Anthropic SDK agentic loop. Tools execute in container (read-only) or host-side (git, edit). Composite verifier (build+test+lint) feeds into retry loop. LLM Judge (Claude Haiku 4.5, structured output) evaluates scope post-verification.
 
-**Test suite:** 90 unit tests (Vitest), 100% passing. Integration tests require Docker + API key.
+**Architecture (v2.0 target):** CLI → RetryOrchestrator → Claude Agent SDK `query()` → Docker container. Built-in tools (Read, Write, Edit, Bash, Glob, Grep). Hooks for verification and audit. Permission mode: acceptEdits.
 
-**Known tech debt from v1.0:** CLI-05 partial (cost tracking), exit code switch missing explicit vetoed/turn_limit cases, SessionTimeoutError dead code, stale documentation field names. See [v1.0-MILESTONE-AUDIT.md](milestones/v1.0-MILESTONE-AUDIT.md).
+**Test suite:** ~100 unit tests (Vitest), 100% passing. Integration tests require Docker + API key.
+
+**Migration reference:** See BRIEF.md for detailed analysis (Spotify's "Honk" agent evolution, what to delete/keep/modify, what we gain/lose).
+
+**Known tech debt:** CLI-05 partial (cost tracking), exit code switch missing explicit vetoed/turn_limit cases, SessionTimeoutError dead code, stale documentation field names.
 
 ## Constraints
 
@@ -87,8 +97,9 @@ The full verification loop must work: agent changes code, deterministic verifier
 | Vitest over Jest | Native ESM/NodeNext support, no transpilation | ✓ Good — zero config needed |
 | Pino over Winston | 5x faster, production-grade structured JSON | ✓ Good — clean logging throughout |
 | Commander.js for CLI | Industry standard, automatic help generation | ✓ Good — minimal boilerplate |
-| PR description as spec | Keeps documentation with the change | — Pending (Phase 7) |
-| Maven first, npm later | Prove architecture with one type before extending | — Pending (Phase 8) |
+| PR description as spec | Keeps documentation with the change | ✓ Good — shipped in Phase 7 |
+| Maven first, npm later | Prove architecture with one type before extending | ✓ Good — Maven (Phase 8) proved pattern, npm (Phase 9) extended cleanly |
+| Claude Agent SDK over custom loop | Better tools, auto context compression, less code to maintain (Spotify validated this path) | — Pending (v2.0) |
 
 ---
-*Last updated: 2026-03-02 after v1.1 milestone start*
+*Last updated: 2026-03-16 after v2.0 milestone start*

@@ -24,3 +24,23 @@
 
 ---
 
+## v1.1 End-to-End Pipeline (Shipped: 2026-03-11)
+
+**Phases completed:** 3 phases, 8 plans
+**Timeline:** 9 days (2026-03-02 → 2026-03-11)
+**LOC added:** ~1,600 TypeScript | **Tests added:** ~30
+
+**Key accomplishments:**
+- GitHub PR creation with Octokit (branch, push, PR with rich description)
+- Maven dependency update task type with end-state prompting
+- npm dependency update task type with shared verifier architecture
+- Host-side npm install preVerify hook for lockfile regeneration
+- Prompt module decoupled from CLI types (extensible to new task types)
+
+**Known gaps (accepted as tech debt):**
+- MVN-05 (changelog links) deferred — Docker has no network access
+- NPM-05 (changelog links) deferred — same reason
+- v1.1 milestone audit not formally run
+
+---
+
