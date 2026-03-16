@@ -1,261 +1,321 @@
-# Technology Stack
+# Stack Research
 
-**Project:** Background Coding Agent Platform
-**Researched:** 2026-01-26
-**Overall Confidence:** MEDIUM (Anthropic SDK verified, other components based on training data)
+**Domain:** Claude Agent SDK migration — background-coding-agent v2.0
+**Researched:** 2026-03-16
+**Confidence:** HIGH — primary sources are official Anthropic docs and live npm registry data
 
-## Recommended Stack
+---
 
-### Core Agent Framework
+## Scope
 
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| anthropic | latest (>=0.40.0) | Claude API client | **HIGH confidence.** Official SDK with native tool use, streaming, async support. Verified active development (2.7k stars). Supports Python 3.9+. Avoid raw API calls - SDK provides type safety, error handling, streaming helpers. |
-| pydantic | >=2.0 | Data validation & settings | **MEDIUM confidence.** Industry standard for API response models, configuration validation. V2 brings major performance improvements. Anthropic SDK uses Pydantic response models. |
+This file covers ONLY new stack additions and removals required for the v2.0 Claude Agent SDK migration.
+Validated existing dependencies (Node.js 20, TypeScript ESM/NodeNext, Commander.js, Pino, Vitest, ESLint v10,
+Octokit, simple-git, write-file-atomic) are not re-researched here.
 
-**Rationale:** Use Anthropic SDK directly, NOT wrapper frameworks. Wrappers add abstraction overhead and lag behind SDK updates. For background agents, you need:
-- Control over conversation flow (SDK messages API)
-- Tool execution control (SDK beta.messages.tool_runner)
-- Token counting (SDK count_tokens) for cost control
-- Async support (AsyncAnthropic) for concurrent operations
+---
 
-### Container Orchestration
+## Existing Dependencies: What Changes
 
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| docker | >=7.0.0 | Python Docker SDK | **MEDIUM confidence.** Official Docker SDK for Python. Provides programmatic container lifecycle management (create, start, stop, remove, logs). Required for isolated execution environments. |
-| python-on-whales | >=0.70.0 | High-level Docker wrapper | **LOW confidence.** Alternative to docker-py with better API ergonomics. Consider if docker-py API is too verbose. Needs verification for stability. |
+| Dependency | Current Version | v2.0 Action | Reason |
+|------------|-----------------|-------------|--------|
+| `@anthropic-ai/sdk` | ^0.71.2 | **Remove** | Replaced entirely by Agent SDK |
+| `dockerode` | ^4.0.2 | **Remove** | Host no longer manages Docker programmatically |
+| `@types/dockerode` | ^3.3.36 | **Remove** | Removed with dockerode |
 
-**Rationale:** Use `docker` SDK (docker-py), not subprocess calls to docker CLI. SDK provides:
-- Container lifecycle management
-- Volume mounting for code injection
-- Network isolation
-- Log streaming
-- Resource limits (memory, CPU)
+All other existing dependencies are unchanged.
 
-**Critical:** Don't use Docker-in-Docker. Run agent outside containers, spawn work containers.
+---
 
-### CLI Framework
+## New Stack Additions
 
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| typer | >=0.12.0 | CLI interface | **MEDIUM confidence.** Modern CLI framework built on Click with type hints. Better DX than Click or argparse. Auto-generates help text from type annotations. FastAPI-like syntax (same author). |
-| rich | >=13.0.0 | Terminal formatting | **MEDIUM confidence.** Rich text and beautiful formatting in terminal. Progress bars for long operations, syntax highlighting for code diffs, tables for results. Pairs well with Typer. |
+### Core: Claude Agent SDK
 
-**Rationale:** Use Typer, not Click or argparse:
-- **Typer over Click:** Type hints > decorators. Async command support. Better parameter validation.
-- **Typer over argparse:** Less boilerplate, auto-completion, better help text.
-- **Rich for output:** Agent operations are long-running - users need progress feedback, not silent execution.
+| Technology | Version | Purpose | Why Recommended |
+|------------|---------|---------|-----------------|
+| `@anthropic-ai/claude-agent-sdk` | `^0.2.76` | Replaces `AgentSession` + `AgentClient` — provides `query()` agentic loop, 9 built-in tools, auto context compression, hooks API, native MCP server creation | Official Anthropic SDK. Validated by Spotify ("Honk" agent) as their top-performing engine across ~50 migrations. Eliminates ~1,200 lines of hand-built infrastructure. Bundles Claude Code CLI as part of its runtime — no separate install in source code. |
 
-### Configuration Management
+**Version rationale:** 0.2.76 is the latest as of 2026-03-14 (npm). The SDK is in rapid development at 0.x. Pin to `^0.2.76` to receive patch fixes while controlling minor version upgrades manually.
 
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| pydantic-settings | >=2.0 | Environment config | **MEDIUM confidence.** Load config from env vars, .env files, with type validation. Part of Pydantic V2. Prevents runtime errors from misconfiguration. |
-| python-dotenv | >=1.0.0 | .env file loading | **MEDIUM confidence.** Development convenience for local environment variables. Standard in Python ecosystem. |
+**What it replaces in this codebase:**
 
-**Rationale:** Use Pydantic Settings for all configuration:
-- Type-safe config loading
-- Validation at startup (fail fast)
-- Multiple sources (env vars, .env, defaults)
-- Auto-documentation of required config
+| Deleted file | Lines | Agent SDK equivalent |
+|---|---|---|
+| `orchestrator/agent.ts` | 273 | Built-in agentic loop (automatic tool use iterations) |
+| `orchestrator/session.ts` | 667 | `query()` function handles session lifecycle, turn limits, abort |
+| `orchestrator/container.ts` | ~200 | Container strategy moves to Dockerfile (see Docker section) |
+| `@anthropic-ai/sdk` import | n/a | All LLM calls route through Agent SDK |
+| `dockerode` import | n/a | No programmatic container management on host |
 
-### Observability & Tracking
+**Built-in capabilities (zero additional packages):**
+
+- Tools: Read, Write, Edit, Bash, Glob, Grep, WebSearch, WebFetch, AskUserQuestion
+- `createSdkMcpServer()` — creates in-process MCP servers (Phase 12 verifier server)
+- `tool()` — type-safe MCP tool definitions with Zod schema input validation
+- Hooks: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Stop`, `SessionStart`, `SessionEnd`, `SubagentStart`, `SubagentStop`, `PreCompact`, `PermissionRequest`, and more
+- Auto context compression at window boundary
+- `maxTurns`, `maxBudgetUsd` — native turn/cost limits (replace manual turn counter)
+- `SDKResultMessage` with `total_cost_usd`, `num_turns`, `stop_reason`, `usage` — native metrics
+
+### Zod (Phase 12 only — MCP verifier server)
 
 | Technology | Version | Purpose | Why |
 |------------|---------|---------|-----|
-| structlog | >=24.0.0 | Structured logging | **MEDIUM confidence.** JSON-structured logs with context. Better than stdlib logging for debugging agent behavior. Machine-parseable for log aggregation. |
-| prometheus-client | >=0.20.0 | Metrics collection | **LOW confidence.** If metrics needed. Standard for operational metrics (success rate, execution time, cost). May be overkill for MVP. |
-| anthropic native tracking | built-in | Token usage, costs | **HIGH confidence.** Anthropic SDK includes token counting. Track per-operation, not just total. Critical for cost control with background agents. |
+| `zod` | `^3.24.x` | Schema validation for `tool()` input parameters | Required by Agent SDK's `tool()` function, which takes `AnyZodRawShape` as its schema parameter. Only needed if implementing the MCP verifier server in Phase 12. |
 
-**Rationale:** Skip MLflow/LangSmith for MVP:
-- **MLflow:** Overkill for non-ML model experimentation. You're not training models, just orchestrating Claude.
-- **LangSmith:** Useful for debugging chains, but adds complexity. Use structured logs first.
-- **Start simple:** structlog + Anthropic's token counting. Add experiment tracking later if needed.
+**Note:** Zod may already be a transitive dependency. Check `node_modules/zod/package.json` before adding explicitly. If implementing Phase 12, add it explicitly to lock the version and prevent relying on transitive resolution.
 
-**Critical tracking needs:**
-- Tokens per operation (Anthropic SDK)
-- Success/failure rate per change type
-- Cost per change (tokens × pricing)
-- Execution time (stdlib time)
+**Version choice:** Agent SDK docs state "supports both Zod 3 and Zod 4." Use Zod 3 (`^3.24.x`) — broader ecosystem compatibility and avoids migration risk.
 
-### Testing
+---
 
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| pytest | >=8.0.0 | Test runner | **MEDIUM confidence.** Industry standard. Excellent plugin ecosystem (pytest-asyncio, pytest-docker, pytest-mock). |
-| pytest-asyncio | >=0.23.0 | Async test support | **MEDIUM confidence.** Required for testing AsyncAnthropic client and async container operations. |
-| pytest-docker | >=3.0.0 | Docker fixtures | **LOW confidence.** Provides Docker container fixtures for integration tests. Verify stability. |
-| respx | >=0.21.0 | HTTP mocking | **MEDIUM confidence.** Mock Anthropic API calls in unit tests. Built on httpx (what Anthropic SDK uses). Better than responses library for async. |
-| testcontainers-python | >=4.0.0 | Integration testing | **LOW confidence.** Alternative to pytest-docker for spinning up real containers in tests. More feature-rich but heavier. |
+## MCP Server Strategy
 
-**Rationale:** Testing strategy for agent platforms:
-1. **Unit tests:** Mock Anthropic API (respx), test logic without containers
-2. **Integration tests:** Real Docker containers, mocked Anthropic API
-3. **E2E tests:** Real containers + real Anthropic API (expensive, run sparingly)
+The Agent SDK ships `createSdkMcpServer()` and `tool()` built-in for creating in-process MCP servers. This means `@modelcontextprotocol/sdk` (current version: 1.27.1 on npm) is NOT needed as a separate dependency.
 
-**Don't test:**
-- Claude's correctness (trust the model)
-- Docker's reliability (trust the platform)
+**The in-process MCP pattern (Phase 12):**
 
-**Do test:**
-- Your prompt construction
-- Tool execution logic
-- Container lifecycle management
-- Verification loop logic
+```typescript
+import { query, tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
 
-### Version Control & Git
+const verifyTool = tool(
+  "verify",
+  "Run composite verifier (build, test, lint) on the current working directory",
+  { cwd: z.string() },
+  async ({ cwd }) => {
+    const result = await compositeVerifier(cwd);
+    return { content: [{ type: "text", text: JSON.stringify(result) }] };
+  }
+);
 
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| gitpython | >=3.1.0 | Git operations | **MEDIUM confidence.** Programmatic Git operations (clone, checkout, commit, push). More reliable than subprocess git commands. Required for PR creation workflow. |
-| PyGithub | >=2.0.0 | GitHub API client | **MEDIUM confidence.** Create PRs, add comments, manage labels. Official Python client for GitHub API. Alternative: gh CLI via subprocess. |
+const verifierServer = createSdkMcpServer({
+  name: "verifier",
+  version: "1.0.0",
+  tools: [verifyTool]
+});
 
-**Rationale:** Use GitPython for local operations, PyGithub for GitHub API:
-- Clone repo into container
-- Make changes
-- Commit with verified changes
-- Push to branch
-- Create PR via GitHub API
+for await (const msg of query({
+  prompt: "...",
+  options: {
+    cwd: repoPath,
+    mcpServers: {
+      verifier: { type: "sdk", name: "verifier", instance: verifierServer.instance }
+    }
+  }
+})) { ... }
+```
 
-**Alternative:** gh CLI via subprocess. Simpler but less control, harder to test.
+The `type: "sdk"` transport is in-process — no subprocess, no stdio, no HTTP server. The verifier's TypeScript code runs directly in the same Node.js process as the orchestrator.
 
-### Development Tools
+---
 
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| ruff | >=0.6.0 | Linting & formatting | **MEDIUM confidence.** Replaces Black, isort, flake8. 10-100x faster than existing tools. Written in Rust. Increasingly standard in Python projects. |
-| mypy | >=1.11.0 | Type checking | **MEDIUM confidence.** Static type checking. Critical for agent platforms where runtime errors are expensive (API calls cost money). |
-| pre-commit | >=3.0.0 | Git hooks | **MEDIUM confidence.** Run ruff + mypy before commits. Prevents broken code from entering history. |
+## Docker Strategy Changes
 
-## Alternatives Considered
+### What Changes
 
-| Category | Recommended | Alternative | Why Not |
-|----------|-------------|-------------|---------|
-| Agent Framework | Raw Anthropic SDK | LangChain | **MEDIUM confidence.** LangChain adds abstraction overhead, frequent breaking changes, opinionated patterns. You need control over conversation flow for verification loops. Direct SDK is simpler and more maintainable. |
-| Agent Framework | Raw Anthropic SDK | LlamaIndex | **MEDIUM confidence.** LlamaIndex optimized for RAG, not agentic workflows. Doesn't fit coding agent use case. |
-| Agent Framework | Raw Anthropic SDK | CrewAI / AutoGPT | **LOW confidence.** Multi-agent frameworks are overkill. You need single agent with verification, not agent swarms. |
-| CLI Framework | Typer | Click | Click is mature but more verbose. Typer provides better DX with type hints. Same maintainer as FastAPI. |
-| CLI Framework | Typer | argparse | Too much boilerplate. No auto-completion. Manual help text. Typer automates this. |
-| Docker Control | docker SDK | subprocess docker CLI | Subprocess is brittle (parsing output), harder to test, no type safety. SDK provides programmatic control. |
-| Observability | structlog + token tracking | MLflow | MLflow is for ML experiment tracking. You're not tuning models, just orchestrating API calls. Overkill. |
-| Observability | structlog + token tracking | LangSmith | Useful for debugging chains but adds complexity and cost. Start simple with logs. |
-| Observability | structlog + token tracking | Weights & Biases | ML experiment tracking. Not needed for API orchestration. |
-| Testing | pytest + respx | unittest + responses | pytest has better fixtures, plugin ecosystem. respx handles async better than responses. |
-| Git Operations | GitPython | subprocess git | GitPython more reliable, testable. subprocess brittle (output parsing). |
-| GitHub API | PyGithub | gh CLI subprocess | PyGithub more testable, better error handling. gh CLI simpler but harder to mock in tests. |
+**Before (v1.1):** Host Node.js process manages Docker via `dockerode`. Container runs custom Alpine 3.18 image with agent tools baked in. Host orchestrates exec calls into container.
 
-## Anti-Patterns to Avoid
+**After (v2.0):** Host Node.js process calls `query()`. Agent SDK spawns Claude Code as a subprocess on the host. For production isolation, the entire orchestrator runs inside a Docker container — managed by `docker run`, not by `dockerode`.
 
-### 1. LangChain / Agent Framework Wrappers
-**Why:** Abstraction overhead, frequent breaking changes, opinionated patterns that conflict with verification loop requirements.
-**Instead:** Use Anthropic SDK directly. Build thin abstractions only where needed.
+### Two Deployment Modes
 
-### 2. Docker-in-Docker
-**Why:** Security risks, complexity, nested container issues.
-**Instead:** Run agent outside containers, spawn work containers via Docker SDK.
+**Mode A: Host-process (development, CI)**
 
-### 3. Synchronous-only code
-**Why:** Background agents need concurrency (multiple repos, parallel verifiers).
-**Instead:** Use AsyncAnthropic, asyncio for I/O-bound operations.
+Run `query()` directly on the host. No Docker required. Use `disallowedTools` for safety:
 
-### 4. Missing token tracking
-**Why:** Costs can explode with background agents running frequently.
-**Instead:** Track tokens per operation using Anthropic SDK's count_tokens. Set budgets.
+```typescript
+for await (const msg of query({
+  prompt: taskPrompt,
+  options: {
+    cwd: repoPath,
+    permissionMode: "acceptEdits",
+    disallowedTools: ["WebSearch", "WebFetch"],
+    maxTurns: 10
+  }
+})) { ... }
+```
 
-### 5. subprocess.run() for git/docker
-**Why:** Brittle (output parsing), hard to test, no type safety.
-**Instead:** Use GitPython and docker SDK.
+**Mode B: Container isolation (production)**
+
+Run the Node.js orchestrator process itself inside a Docker container. The orchestrator calls `query()`, which spawns Claude Code as a subprocess within that same container. Network isolation is enforced at the container level.
+
+```dockerfile
+# New Dockerfile for v2.0 — replaces Alpine 3.18 agent image
+FROM node:20-alpine
+
+# Claude Code CLI is required by the Agent SDK at runtime
+RUN npm install -g @anthropic-ai/claude-code
+
+# Install orchestrator
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --production
+COPY dist/ ./dist/
+
+# Repo is mounted at runtime via -v
+WORKDIR /workspace
+
+ENTRYPOINT ["node", "/app/dist/cli/index.js"]
+```
+
+```bash
+docker run \
+  --cap-drop ALL \
+  --security-opt no-new-privileges \
+  --network none \
+  --memory 2g \
+  --cpus 2 \
+  --pids-limit 200 \
+  --user 1000:1000 \
+  -v /path/to/repo:/workspace:rw \
+  -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+  background-agent-v2
+```
+
+**Key difference from v1.1:** `dockerode` is no longer needed. The container lifecycle is managed externally (by CI/CD scripts or the CLI's caller) — not by the orchestrator code itself.
+
+**Network constraint:** With `--network none`, the Agent SDK subprocess cannot reach `api.anthropic.com`. Two approaches:
+1. **(v2.0 MVP)** Use `--network bridge` + outbound firewall rules restricted to `api.anthropic.com:443`
+2. **(v2.1 hardening)** Mount a Unix proxy socket, set `ANTHROPIC_BASE_URL` to proxy — allows `--network none` while API calls route through an allowlisted proxy outside the container
+
+**Claude Code CLI requirement:** The Agent SDK requires the Claude Code CLI installed in the runtime environment. Official docs state: `npm install -g @anthropic-ai/claude-code`. Validate during Phase 13 whether the Agent SDK bundles the binary or requires a separate global install.
+
+---
+
+## Core API Surface Reference
+
+The `query()` function is the only integration point from `RetryOrchestrator`:
+
+```typescript
+function query({
+  prompt: string | AsyncIterable<SDKUserMessage>;
+  options?: Options;
+}): Query; // AsyncGenerator<SDKMessage, void> + control methods
+```
+
+**Key `Options` fields for this project:**
+
+| Option | Type | Use |
+|--------|------|-----|
+| `cwd` | `string` | Set to target repo path (replaces container volume mount) |
+| `permissionMode` | `"acceptEdits" \| "bypassPermissions" \| "default"` | Use `"acceptEdits"` to auto-approve file edits without prompting |
+| `maxTurns` | `number` | Replaces manual turn counter — set to 10 |
+| `maxBudgetUsd` | `number` | Optional cost cap per session |
+| `allowedTools` | `string[]` | Auto-approve these tools (subset of built-in tools) |
+| `disallowedTools` | `string[]` | Block these tools — use to restrict network access on host-mode |
+| `hooks` | `Partial<Record<HookEvent, HookCallbackMatcher[]>>` | Attach `Stop` hook for post-agent verification; `PostToolUse` for audit logging |
+| `mcpServers` | `Record<string, McpServerConfig>` | Wire in-process verifier server (Phase 12) |
+| `settingSources` | `SettingSource[]` | Default `[]` = no filesystem settings loaded. Set `["project"]` to load CLAUDE.md |
+| `abortController` | `AbortController` | Timeout signal (replaces 5-minute session timeout) |
+
+**Result message** (the terminal event to collect from `query()`):
+
+```typescript
+type SDKResultMessage =
+  | { type: "result"; subtype: "success"; total_cost_usd: number; num_turns: number; result: string; ... }
+  | { type: "result"; subtype: "error_max_turns" | "error_during_execution" | ...; errors: string[]; ... };
+```
+
+`subtype: "error_max_turns"` replaces the current `TurnLimitError`. `total_cost_usd` and `num_turns` feed `SessionMetrics` natively.
+
+**Hook types used in this project:**
+
+| Hook | Use Case |
+|------|----------|
+| `PostToolUse` with matcher `"Edit\|Write"` | Audit logging — log every file modified |
+| `Stop` | Trigger verification before session completes (Spotify pattern — optional for v2.0) |
+
+---
+
+## Integration Points with Existing Code
+
+**`orchestrator/retry.ts` (Modify — Phase 10)**
+
+Replace `new AgentSession(prompt, options).run()` with:
+
+```typescript
+import { query, type SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
+
+let resultMsg: SDKResultMessage | undefined;
+for await (const msg of query({ prompt, options: { cwd, maxTurns: 10, permissionMode: "acceptEdits" } })) {
+  if (msg.type === "result") resultMsg = msg;
+}
+// resultMsg.total_cost_usd, resultMsg.num_turns, resultMsg.subtype feed SessionResult
+```
+
+**`orchestrator/judge.ts` (Flag for Phase 11)**
+
+The Judge currently imports `@anthropic-ai/sdk` directly for structured output LLM calls. After removing `@anthropic-ai/sdk`, the Judge needs assessment:
+- Option A: Rewrite Judge to use `query()` with `outputFormat` structured output option
+- Option B: Keep `@anthropic-ai/sdk` as a dev/peer dependency solely for Judge LLM calls
+- Option C: Use Agent SDK's `query()` with a constrained prompt that returns JSON
+
+This is a Phase 11 implementation decision. Flag it early to avoid a late-phase blocker.
+
+**All other orchestrator files:** No changes required (`verifier.ts`, `summarizer.ts`, `pr-creator.ts`, `metrics.ts`, `prompts/`).
+
+---
 
 ## Installation
 
 ```bash
-# Core dependencies
-pip install anthropic>=0.40.0 pydantic>=2.0 pydantic-settings>=2.0
+# Add Agent SDK
+npm install @anthropic-ai/claude-agent-sdk
 
-# Container orchestration
-pip install docker>=7.0.0
+# Add Zod only if implementing Phase 12 MCP verifier server
+npm install zod
 
-# CLI
-pip install typer>=0.12.0 rich>=13.0.0
-
-# Configuration
-pip install python-dotenv>=1.0.0
-
-# Observability
-pip install structlog>=24.0.0
-
-# Version control
-pip install gitpython>=3.1.0 PyGithub>=2.0.0
-
-# Development
-pip install ruff>=0.6.0 mypy>=1.11.0 pre-commit>=3.0.0
-
-# Testing
-pip install pytest>=8.0.0 pytest-asyncio>=0.23.0 respx>=0.21.0
+# Remove replaced dependencies
+npm uninstall @anthropic-ai/sdk dockerode
+npm uninstall -D @types/dockerode
 ```
 
-## Python Version
+---
 
-**Minimum:** Python 3.9 (Anthropic SDK requirement)
-**Recommended:** Python 3.11 or 3.12
+## Alternatives Considered
 
-**Why 3.11/3.12:**
-- Better async performance
-- Improved error messages
-- typing improvements (Self, TypeVarTuple)
-- 3.11 has 10-60% performance improvements over 3.10
+| Recommended | Alternative | When to Use Alternative |
+|-------------|-------------|-------------------------|
+| `@anthropic-ai/claude-agent-sdk` `query()` | Keep custom `AgentSession` + `@anthropic-ai/sdk` | Never for this migration — the goal is to delete infrastructure, not maintain two systems in parallel |
+| `createSdkMcpServer()` built into Agent SDK | `@modelcontextprotocol/sdk` as separate dependency | Only if verifier MCP server must run as a separate process (stdio transport) or be shared across multiple projects. Unnecessary for in-process pattern. |
+| Container wraps orchestrator (Mode B) | `spawnClaudeCodeProcess` custom function | `spawnClaudeCodeProcess` is designed for advanced cases: VMs, remote environments, custom runtimes. Container wrapping achieves the same isolation with less code. |
+| `--network bridge` + firewall (v2.0 MVP) | `--network none` + proxy socket | Proxy pattern is more secure but adds operational complexity. Fine for v2.1 hardening, too much for v2.0. |
+| `@anthropic-ai/sandbox-runtime` | Docker + `--network none` | sandbox-runtime is lighter and simpler (uses OS-level bubblewrap/sandbox-exec). Docker gives stronger isolation matching the existing v1.1 model. Consider sandbox-runtime if Docker overhead is a concern in v2.1+. |
 
-## Architecture Implications
+---
 
-This stack supports:
+## What NOT to Add
 
-1. **Isolated execution:** Docker SDK for container lifecycle
-2. **Cost control:** Anthropic token counting, configurable limits
-3. **Async operations:** AsyncAnthropic for concurrent repo processing
-4. **Type safety:** Pydantic, mypy for catching errors before runtime
-5. **Observability:** structlog for debugging agent behavior
-6. **CLI-first:** Typer for intuitive command interface
-7. **Testability:** pytest + respx for mocking, pytest-docker for integration tests
+| Avoid | Why | Use Instead |
+|-------|-----|-------------|
+| `@modelcontextprotocol/sdk` | Built into Agent SDK as `createSdkMcpServer()` | Agent SDK's `tool()` + `createSdkMcpServer()` |
+| Keep `@anthropic-ai/sdk` alongside Agent SDK | Two packages owning LLM calls causes confusion and version drift | Migrate Judge to Agent SDK in Phase 11 (see integration points above) |
+| Keep `dockerode` | Container management moves from code to Dockerfile + docker CLI. Programmatic container management no longer needed on the host. | Dockerfile + `docker run` in CI/CD |
+| LangChain / LangGraph | Unnecessary abstraction — Agent SDK provides the complete agent loop | `query()` + hooks |
+| Custom tool implementations | Agent SDK built-in tools (Read, Write, Edit, Bash, Glob, Grep) replace all 6 hand-built tools | `allowedTools` / `disallowedTools` options |
 
-## Confidence Assessment
+---
 
-| Component | Confidence | Source | Notes |
-|-----------|------------|--------|-------|
-| Anthropic SDK | HIGH | GitHub verified | Confirmed version, features, API |
-| Pydantic | HIGH | Training data | Industry standard, stable V2 |
-| docker SDK | MEDIUM | Training data | Standard but couldn't verify latest version |
-| Typer | MEDIUM | Training data | Stable library but version unverified |
-| Rich | MEDIUM | Training data | Well-established but version unverified |
-| structlog | MEDIUM | Training data | Known library but version unverified |
-| pytest ecosystem | MEDIUM | Training data | Standard tools but versions unverified |
-| GitPython / PyGithub | MEDIUM | Training data | Established but versions unverified |
-| prometheus-client | LOW | Training data | Not critical for MVP, may not be needed |
-| python-on-whales | LOW | Training data | Alternative to docker-py, needs validation |
-| testcontainers-python | LOW | Training data | Integration testing option, needs validation |
+## Version Compatibility
 
-## Version Verification Needed
+| Package | Compatible With | Notes |
+|---------|-----------------|-------|
+| `@anthropic-ai/claude-agent-sdk@^0.2.76` | Node.js 18+ | Node.js 20 (project standard) fully supported |
+| `@anthropic-ai/claude-agent-sdk@^0.2.76` | TypeScript ^5.7.2 | SDK ships its own type declarations — no `@types/` package needed |
+| `zod@^3.24.x` | Agent SDK `tool()` | SDK docs: "supports both Zod 3 and Zod 4"; Zod 3 has broader ecosystem compatibility |
+| Agent SDK | `@anthropic-ai/sdk` | Do NOT run both simultaneously — they conflict on LLM call ownership |
 
-The following should be verified against official sources before finalizing:
-- docker SDK current version (listed >=7.0.0 from training)
-- Typer current version (listed >=0.12.0 from training)
-- pytest current version (listed >=8.0.0 from training)
-- All other non-Anthropic dependencies
-
-**Action:** Run `pip index versions <package>` to confirm latest stable versions before implementation.
+---
 
 ## Sources
 
-- **HIGH confidence:** Anthropic SDK - https://github.com/anthropics/anthropic-sdk-python (verified 2026-01-26)
-- **MEDIUM confidence:** Other libraries based on training data (January 2025 cutoff)
-- **Verification needed:** Run version checks against PyPI before implementation
+- [Agent SDK TypeScript Reference](https://platform.claude.com/docs/en/agent-sdk/typescript) — `query()` signature, `Options` type, `HookEvent` types, `McpServerConfig`, `PermissionMode`, `SDKResultMessage` (HIGH confidence — official Anthropic docs, verified 2026-03-16)
+- [Agent SDK Overview](https://platform.claude.com/docs/en/agent-sdk/overview) — Built-in tools list, SDK vs Client SDK comparison, Zod version compatibility (HIGH confidence — official Anthropic docs, verified 2026-03-16)
+- [Hosting the Agent SDK](https://platform.claude.com/docs/en/agent-sdk/hosting) — Container deployment patterns, system requirements, Claude Code CLI runtime dependency (HIGH confidence — official Anthropic docs, verified 2026-03-16)
+- [Securely Deploying AI Agents](https://platform.claude.com/docs/en/agent-sdk/secure-deployment) — Docker hardening flags, `--network none` with Unix socket proxy pattern, gVisor option (HIGH confidence — official Anthropic docs, verified 2026-03-16)
+- [GitHub anthropics/claude-agent-sdk-typescript](https://github.com/anthropics/claude-agent-sdk-typescript) — Package name `@anthropic-ai/claude-agent-sdk`, version 0.2.76 (HIGH confidence — official Anthropic GitHub, verified 2026-03-16)
+- npm registry (via WebSearch) — `@anthropic-ai/claude-agent-sdk` version 0.2.76 as of 2026-03-14; `@modelcontextprotocol/sdk` version 1.27.1 as of late February 2026 (MEDIUM confidence — reported by search results, npm pages returned 403)
 
-## Notes for Roadmap
-
-1. **Phase 1 (MVP):** Focus on Anthropic SDK + docker + basic CLI (Typer) + structlog. Skip observability beyond logging.
-2. **Phase 2:** Add comprehensive testing (pytest suite with respx mocking)
-3. **Phase 3:** Add Git operations (GitPython) and PR creation (PyGithub)
-4. **Phase 4:** Add advanced observability (metrics, cost tracking dashboard)
-
-**Critical path:** Anthropic SDK → Docker SDK → Typer CLI → GitPython/PyGithub
-**Optional/later:** prometheus-client, advanced testing tools
+---
+*Stack research for: Claude Agent SDK migration (background-coding-agent v2.0)*
+*Researched: 2026-03-16*
