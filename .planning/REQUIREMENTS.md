@@ -74,34 +74,34 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SDK-01 | — | Pending |
-| SDK-02 | — | Pending |
-| SDK-03 | — | Pending |
-| SDK-04 | — | Pending |
-| SDK-05 | — | Pending |
-| SDK-06 | — | Pending |
-| SDK-07 | — | Pending |
-| SDK-08 | — | Pending |
-| SDK-09 | — | Pending |
-| SDK-10 | — | Pending |
-| DEL-01 | — | Pending |
-| DEL-02 | — | Pending |
-| DEL-03 | — | Pending |
-| DEL-04 | — | Pending |
-| DEL-05 | — | Pending |
-| MCP-01 | — | Pending |
-| MCP-02 | — | Pending |
-| MCP-03 | — | Pending |
-| CTR-01 | — | Pending |
-| CTR-02 | — | Pending |
-| CTR-03 | — | Pending |
-| CTR-04 | — | Pending |
+| SDK-01 | Phase 10 | Pending |
+| SDK-02 | Phase 10 | Pending |
+| SDK-03 | Phase 10 | Pending |
+| SDK-04 | Phase 10 | Pending |
+| SDK-05 | Phase 10 | Pending |
+| SDK-06 | Phase 10 | Pending |
+| SDK-07 | Phase 10 | Pending |
+| SDK-08 | Phase 10 | Pending |
+| SDK-09 | Phase 10 | Pending |
+| SDK-10 | Phase 10 | Pending |
+| DEL-01 | Phase 11 | Pending |
+| DEL-02 | Phase 11 | Pending |
+| DEL-03 | Phase 11 | Pending |
+| DEL-04 | Phase 11 | Pending |
+| DEL-05 | Phase 11 | Pending |
+| MCP-01 | Phase 12 | Pending |
+| MCP-02 | Phase 12 | Pending |
+| MCP-03 | Phase 12 | Pending |
+| CTR-01 | Phase 13 | Pending |
+| CTR-02 | Phase 13 | Pending |
+| CTR-03 | Phase 13 | Pending |
+| CTR-04 | Phase 13 | Pending |
 
 **Coverage:**
 - v2.0 requirements: 22 total
-- Mapped to phases: 0
-- Unmapped: 22 ⚠️
+- Mapped to phases: 22
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-03-16*
-*Last updated: 2026-03-16 after initial definition*
+*Last updated: 2026-03-16 after roadmap creation*

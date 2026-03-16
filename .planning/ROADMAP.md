@@ -3,7 +3,8 @@
 ## Milestones
 
 - ✅ **v1.0 Foundation** — Phases 1-6 (shipped 2026-03-02)
-- 🚧 **v1.1 End-to-End Pipeline** — Phases 7-9 (in progress)
+- ✅ **v1.1 End-to-End Pipeline** — Phases 7-9 (shipped 2026-03-11)
+- 🚧 **v2.0 Claude Agent SDK Migration** — Phases 10-13 (in progress)
 
 ## Phases
 
@@ -21,13 +22,25 @@ Full details: [v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 
 </details>
 
-### 🚧 v1.1 End-to-End Pipeline (In Progress)
+<details>
+<summary>✅ v1.1 End-to-End Pipeline (Phases 7-9) — SHIPPED 2026-03-11</summary>
 
-**Milestone Goal:** Ship the complete pipeline — agent takes a dependency update task, executes in Docker, verifies changes, and creates a GitHub PR with full context.
+- [x] Phase 7: GitHub PR Creation (2/2 plans) — completed 2026-03-02
+- [x] Phase 8: Maven Dependency Update (3/3 plans) — completed 2026-03-05
+- [x] Phase 9: npm Dependency Update (3/3 plans) — completed 2026-03-11
 
-- [x] **Phase 7: GitHub PR Creation** - Agent creates richly-described PRs on GitHub after successful verification
-- [x] **Phase 8: Maven Dependency Update** - Full Maven dep update task: CLI → Docker agent → verify → PR (completed 2026-03-05)
-- [x] **Phase 9: npm Dependency Update** - Full npm dep update task: CLI → Docker agent → verify → PR (completed 2026-03-11)
+Full details: See archived phase details below.
+
+</details>
+
+### 🚧 v2.0 Claude Agent SDK Migration (In Progress)
+
+**Milestone Goal:** Replace ~1,200 lines of custom agent infrastructure with the Claude Agent SDK `query()` call. Delete AgentSession, AgentClient, and ContainerManager. Gain built-in tools, auto context compression, native hooks, and an optional MCP verifier server.
+
+- [ ] **Phase 10: Agent SDK Integration** - Replace AgentSession with AgentSdkSession wrapping `query()`; all security defaults established
+- [ ] **Phase 11: Legacy Deletion** - Delete agent.ts, session.ts, container.ts and their ~650 lines of tests
+- [ ] **Phase 12: MCP Verifier Server** - Expose compositeVerifier as `mcp__verifier__verify` tool for mid-session self-correction
+- [ ] **Phase 13: Container Strategy** - Run Agent SDK inside Docker with network isolation equivalent to v1.1
 
 ## Phase Details
 
@@ -49,7 +62,6 @@ Full details: [v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 **Goal**: Users can update a Maven dependency end-to-end — specify groupId:artifactId and target version in the CLI, agent updates pom.xml, adapts code if needed, and creates a PR with a changelog link
 **Depends on**: Phase 7 (GitHub PR Creation)
 **Requirements**: MVN-01, MVN-02, MVN-03, MVN-04, MVN-05
-**Prep (from Phase 7 audit)**: Add barrel exports to `src/orchestrator/index.ts`, fix 07-01-SUMMARY.md frontmatter/docs
 **Success Criteria** (what must be TRUE):
   1. User runs CLI with Maven dep coordinates and target version; agent locates and updates the version in pom.xml
   2. Agent runs Maven build and tests inside Docker; verification failure triggers retry with error context
@@ -72,9 +84,53 @@ Plans:
   4. The resulting PR body includes a link to the dependency changelog or release notes
 **Plans**: 3 plans
 Plans:
-- [ ] 09-01-PLAN.md — npm prompt builder and CLI validation for npm-dependency-update
-- [ ] 09-02-PLAN.md — npm build/test verifiers in composite verifier + error summarizers
-- [ ] 09-03-PLAN.md — Host-side npm install post-step (preVerify hook in retry loop)
+- [x] 09-01-PLAN.md — npm prompt builder and CLI validation for npm-dependency-update
+- [x] 09-02-PLAN.md — npm build/test verifiers in composite verifier + error summarizers
+- [x] 09-03-PLAN.md — Host-side npm install post-step (preVerify hook in retry loop)
+
+### Phase 10: Agent SDK Integration
+**Goal**: Users can run agent tasks driven by the Claude Agent SDK `query()` call with all v1.1 security guarantees preserved and established as defaults from day one
+**Depends on**: Phase 9 (npm Dependency Update — v1.1)
+**Requirements**: SDK-01, SDK-02, SDK-03, SDK-04, SDK-05, SDK-06, SDK-07, SDK-08, SDK-09, SDK-10
+**Success Criteria** (what must be TRUE):
+  1. Running `node dist/cli/index.js run --task-type maven-dependency-update ...` completes successfully using `query()` instead of AgentSession — existing RetryOrchestrator integration tests still pass
+  2. File edits outside the repo path and to `.env` or `.git` files are blocked by the PreToolUse hook and logged as rejected attempts
+  3. Every file change (Edit/Write tool calls) appears in the session audit log with path, tool name, and timestamp — via PostToolUse hook
+  4. `WebSearch` and `WebFetch` tool calls are refused by the SDK without prompting — `disallowedTools` enforced at session start
+  5. When the agent exhausts `maxTurns: 10`, `SessionResult.status` is `"turn_limit"` — not `"failed"` — so RetryOrchestrator does not retry an exhausted session
+**Plans**: TBD
+
+### Phase 11: Legacy Deletion
+**Goal**: All custom agent infrastructure code is deleted and the codebase contains no references to AgentSession, AgentClient, or ContainerManager — the only agent runtime is the SDK
+**Depends on**: Phase 10 (Agent SDK Integration — all tests green)
+**Requirements**: DEL-01, DEL-02, DEL-03, DEL-04, DEL-05
+**Success Criteria** (what must be TRUE):
+  1. `agent.ts`, `session.ts`, and `container.ts` no longer exist in `src/`; no import of these files anywhere in the codebase
+  2. `dockerode` and `@types/dockerode` are absent from `package.json` and `node_modules`
+  3. The test suite has the same or greater coverage of `AgentSdkSession` behaviors as the deleted tests had for `AgentSession` — `npm test` reports all tests passing
+  4. LLM Judge still produces structured scope-creep verdicts after its `@anthropic-ai/sdk` dependency is resolved
+**Plans**: TBD
+
+### Phase 12: MCP Verifier Server
+**Goal**: The agent can call `mcp__verifier__verify` mid-session to self-check its changes before stopping — reducing outer retry consumption for fixable build failures
+**Depends on**: Phase 10 (Agent SDK Integration)
+**Requirements**: MCP-01, MCP-02, MCP-03
+**Success Criteria** (what must be TRUE):
+  1. An agent session that introduces a build failure can call `mcp__verifier__verify` and receive the build error output as a tool response — without consuming a full outer retry
+  2. `mcp/verifier-server.ts` runs in-process with no external HTTP server or spawned process — `createSdkMcpServer()` pattern only
+  3. The outer RetryOrchestrator remains the authoritative quality gate — a mid-session verify call passing does not bypass the post-session compositeVerifier run
+**Plans**: TBD
+
+### Phase 13: Container Strategy
+**Goal**: Production agent runs execute inside a Docker container with network isolation equivalent to v1.1 — API calls reach Anthropic, nothing else does
+**Depends on**: Phase 10 (Agent SDK Integration)
+**Requirements**: CTR-01, CTR-02, CTR-03, CTR-04
+**Success Criteria** (what must be TRUE):
+  1. The orchestrator process runs inside Docker; `docker run` starts the full pipeline and stdio connects host to container via `spawnClaudeCodeProcess`
+  2. Agent API calls to `api.anthropic.com` succeed from within the container; all other outbound connections are blocked
+  3. The container process runs as non-root user (UID 1001) — `whoami` inside the container does not return `root`
+  4. `ANTHROPIC_API_KEY` is not present in the container environment — the proxy pattern routes the key outside the container
+**Plans**: TBD
 
 ## Progress
 
@@ -88,4 +144,8 @@ Plans:
 | 6. LLM Judge Integration | v1.0 | 2/2 | Complete | 2026-02-28 |
 | 7. GitHub PR Creation | v1.1 | 2/2 | Complete | 2026-03-02 |
 | 8. Maven Dependency Update | v1.1 | 3/3 | Complete | 2026-03-05 |
-| 9. npm Dependency Update | 3/3 | Complete   | 2026-03-11 | - |
+| 9. npm Dependency Update | v1.1 | 3/3 | Complete | 2026-03-11 |
+| 10. Agent SDK Integration | v2.0 | 0/TBD | Not started | - |
+| 11. Legacy Deletion | v2.0 | 0/TBD | Not started | - |
+| 12. MCP Verifier Server | v2.0 | 0/TBD | Not started | - |
+| 13. Container Strategy | v2.0 | 0/TBD | Not started | - |
