@@ -1,55 +1,58 @@
 # Requirements: Background Coding Agent
 
-**Defined:** 2026-03-02
-**Core Value:** The full verification loop must work: agent changes code, deterministic verifiers catch failures, LLM Judge catches scope creep, and only verified changes become PRs.
+**Defined:** 2026-03-16
+**Core Value:** The full verification loop must work: agent changes code, deterministic verifiers catch failures, LLM Judge catches scope creep, and only verified changes proceed.
 
-## v1.1 Requirements
+## v2.0 Requirements
 
-Requirements for v1.1 End-to-End Pipeline. Each maps to roadmap phases.
+Requirements for Claude Agent SDK migration. Each maps to roadmap phases.
 
-### PR Creation
+### SDK Integration
 
-- [x] **PR-01**: Agent creates GitHub PR on target repo after successful verification (service built in 07-01; CLI wiring in 07-02)
-- [x] **PR-02**: Agent auto-generates branch name from task context (e.g., `agent/update-spring-boot-3.2`)
-- [x] **PR-03**: User can override branch name via CLI flag (07-02)
-- [x] **PR-04**: PR body includes task prompt, summary of changes, diff stats
-- [x] **PR-05**: PR body includes verification results (build/test/lint pass/fail)
-- [x] **PR-06**: PR body includes LLM Judge verdict and reasoning
-- [x] **PR-07**: PR body flags potential breaking changes for reviewer
+- [ ] **SDK-01**: Agent sessions use Claude Agent SDK `query()` instead of custom AgentSession/AgentClient
+- [ ] **SDK-02**: Built-in tools (Read, Write, Edit, Bash, Glob, Grep) replace all 6 hand-built tools
+- [ ] **SDK-03**: Permission mode `acceptEdits` auto-approves file operations without manual interception
+- [ ] **SDK-04**: `disallowedTools` blocks WebSearch/WebFetch in sandbox runs
+- [ ] **SDK-05**: `maxTurns` option replaces manual turn counter
+- [ ] **SDK-06**: `systemPrompt` option replaces custom prompt construction
+- [ ] **SDK-07**: PostToolUse hook logs every file change (Edit/Write) to audit trail
+- [ ] **SDK-08**: PreToolUse hook blocks writes outside repo path and to sensitive files (.env, .git)
+- [ ] **SDK-09**: `maxBudgetUsd` caps session cost as a hard USD limit
+- [ ] **SDK-10**: `ClaudeCodeSession` wrapper returns `SessionResult` compatible with RetryOrchestrator interface
 
-### Maven Dependency Update
+### Legacy Deletion
 
-- [x] **MVN-01**: User specifies Maven dependency (groupId:artifactId) and target version via CLI
-- [x] **MVN-02**: Agent locates and updates version in pom.xml
-- [x] **MVN-03**: Agent runs Maven build and tests to verify update
-- [x] **MVN-04**: Agent attempts code changes if new version has breaking API changes
-- [x] **MVN-05**: Agent includes dependency changelog/release notes link in PR body
+- [ ] **DEL-01**: `agent.ts` (AgentClient) deleted — replaced by Agent SDK built-in agentic loop
+- [ ] **DEL-02**: `session.ts` (AgentSession) deleted — replaced by ClaudeCodeSession wrapper
+- [ ] **DEL-03**: `container.ts` (ContainerManager) deleted — replaced by spawnClaudeCodeProcess
+- [ ] **DEL-04**: `dockerode` dependency removed from package.json
+- [ ] **DEL-05**: All tests for deleted files replaced with ClaudeCodeSession integration tests
 
-### npm Dependency Update
+### MCP Verifier
 
-- [x] **NPM-01**: User specifies npm package name and target version via CLI
-- [x] **NPM-02**: Agent updates version in package.json and regenerates lockfile
-- [x] **NPM-03**: Agent runs build and tests to verify update
-- [x] **NPM-04**: Agent attempts code changes if new version has breaking API changes
-- [x] **NPM-05**: Agent includes dependency changelog/release notes link in PR body
+- [ ] **MCP-01**: In-process MCP server wraps compositeVerifier as `mcp__verifier__verify` tool
+- [ ] **MCP-02**: Agent can call verify tool mid-session to self-check before stopping
+- [ ] **MCP-03**: MCP server uses `createSdkMcpServer()` — no external process or HTTP server
+
+### Container Strategy
+
+- [ ] **CTR-01**: Dockerfile runs Claude Agent SDK (Claude Code) inside Docker container
+- [ ] **CTR-02**: `spawnClaudeCodeProcess` pipes stdio between host orchestrator and container
+- [ ] **CTR-03**: Container maintains network isolation equivalent to v1.x `NetworkMode: none`
+- [ ] **CTR-04**: Container runs as non-root user with minimal capabilities
 
 ## Future Requirements
 
-Deferred to v1.2+. Tracked but not in current roadmap.
+Deferred to v2.1+. Tracked but not in current roadmap.
 
-### Extensibility
+### Enhanced Capabilities
 
-- **EXT-01**: Custom verifiers can be added via plugin system
-- **EXT-02**: Cost per run metric tracked per session
-
-### Multi-Platform
-
-- **PLT-01**: GitLab merge request creation support
-- **PLT-02**: Bitbucket pull request creation support
-
-### Batch Operations
-
-- **BAT-01**: Agent scans for all outdated dependencies and updates them
+- **ENH-01**: WebSearch enabled for non-sandboxed runs (changelog lookups during dependency updates)
+- **ENH-02**: Subagent support (Agent tool) for parallel subtask execution
+- **ENH-03**: File checkpointing with `enableFileCheckpointing` and `rewindFiles()`
+- **ENH-04**: Effort control (`effort: 'low' | 'medium' | 'high'`) per task type
+- **ENH-05**: Custom verifier plugins (from v1.x backlog)
+- **ENH-06**: Cost per run metric tracking (from v1.x backlog)
 
 ## Out of Scope
 
@@ -57,13 +60,13 @@ Explicitly excluded. Documented to prevent scope creep.
 
 | Feature | Reason |
 |---------|--------|
-| Custom verifier plugins | Deferred to v1.2+ — current verifiers sufficient |
-| Cost per run metric | Deferred to v1.2+ — not blocking core pipeline |
-| GitLab/Bitbucket support | GitHub only for v1.1 — prove pattern first |
-| "Update all outdated" mode | User specifies dep for v1.1 — bulk mode later |
-| Auto-merge PRs | Human approval required (trust model) |
-| Queue/webhook triggers | CLI only for MVP |
-| Real-time streaming UI | CLI output sufficient |
+| `bypassPermissions` mode | Grants full system access; `acceptEdits` + `disallowedTools` is safer |
+| Session resume in retry loop | Context accumulation causes scope drift; fresh session per retry is correct pattern |
+| AskUserQuestion in batch mode | Blocks background execution; agent must work autonomously |
+| Stop hook for retry logic | Creates infinite loop risk; RetryOrchestrator is cleaner boundary |
+| `settingSources: ["user"]` | Imports operator's personal config into agent; breaks isolation |
+| Full `@anthropic-ai/sdk` removal | LLM Judge still needs it for structured output; keep for judge only |
+| Network proxy architecture | Complex Unix socket proxy; defer if simpler Docker networking suffices |
 
 ## Traceability
 
@@ -71,29 +74,34 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PR-01 | Phase 7 | Complete (07-01 service + 07-02 CLI wiring) |
-| PR-02 | Phase 7 | Complete (07-01) |
-| PR-03 | Phase 7 | Complete (07-02) |
-| PR-04 | Phase 7 | Complete (07-01) |
-| PR-05 | Phase 7 | Complete (07-01) |
-| PR-06 | Phase 7 | Complete (07-01) |
-| PR-07 | Phase 7 | Complete (07-01) |
-| MVN-01 | Phase 8 | Complete |
-| MVN-02 | Phase 8 | Complete |
-| MVN-03 | Phase 8 | Complete |
-| MVN-04 | Phase 8 | Complete |
-| MVN-05 | Phase 8 | Complete |
-| NPM-01 | Phase 9 | Complete |
-| NPM-02 | Phase 9 | Complete |
-| NPM-03 | Phase 9 | Complete |
-| NPM-04 | Phase 9 | Complete |
-| NPM-05 | Phase 9 | Complete |
+| SDK-01 | — | Pending |
+| SDK-02 | — | Pending |
+| SDK-03 | — | Pending |
+| SDK-04 | — | Pending |
+| SDK-05 | — | Pending |
+| SDK-06 | — | Pending |
+| SDK-07 | — | Pending |
+| SDK-08 | — | Pending |
+| SDK-09 | — | Pending |
+| SDK-10 | — | Pending |
+| DEL-01 | — | Pending |
+| DEL-02 | — | Pending |
+| DEL-03 | — | Pending |
+| DEL-04 | — | Pending |
+| DEL-05 | — | Pending |
+| MCP-01 | — | Pending |
+| MCP-02 | — | Pending |
+| MCP-03 | — | Pending |
+| CTR-01 | — | Pending |
+| CTR-02 | — | Pending |
+| CTR-03 | — | Pending |
+| CTR-04 | — | Pending |
 
 **Coverage:**
-- v1.1 requirements: 17 total
-- Mapped to phases: 17
-- Unmapped: 0 ✓
+- v2.0 requirements: 22 total
+- Mapped to phases: 0
+- Unmapped: 22 ⚠️
 
 ---
-*Requirements defined: 2026-03-02*
-*Last updated: 2026-03-02 after gap audit (PR-01, PR-03 status fixed; Phase 7 tech debt folded into Phase 8)*
+*Requirements defined: 2026-03-16*
+*Last updated: 2026-03-16 after initial definition*
