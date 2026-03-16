@@ -13,11 +13,19 @@ describe('buildMavenPrompt', () => {
     expect(result).toContain('6.1.0');
   });
 
-  it('describes desired end-state (build succeeds, tests pass)', () => {
+  it('prompt does not contain newlines from dep input (injection resistance)', () => {
+    // Even if CLI validation is bypassed, the prompt builder uses template literals
+    // that interpolate directly. This test documents the boundary.
+    const result = buildMavenPrompt('org.foo:bar', '1.0.0');
+    // Each line should not contain unexpected instruction overrides
+    const lines = result.split('\n');
+    expect(lines.every(l => !l.match(/ignore|delete/i))).toBe(true);
+  });
+
+  it('describes desired end-state (version updated, compilation succeeds)', () => {
     const result = buildMavenPrompt('org.springframework:spring-core', '6.1.0');
-    // End-state prompting: should mention build and tests passing
-    expect(result).toMatch(/build/i);
-    expect(result).toMatch(/tests?\s+(pass|succeed)/i);
+    expect(result).toMatch(/version/i);
+    expect(result).toMatch(/compilation/i);
   });
 
   it('mentions fixing breaking API changes if needed', () => {

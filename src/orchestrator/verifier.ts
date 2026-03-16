@@ -409,11 +409,6 @@ export async function mavenTestVerifier(workspaceDir: string): Promise<Verificat
  */
 async function readPackageJsonScripts(workspaceDir: string): Promise<Record<string, string> | null> {
   try {
-    await access(join(workspaceDir, 'package.json'));
-  } catch {
-    return null;
-  }
-  try {
     const content = await readFile(join(workspaceDir, 'package.json'), 'utf-8');
     const pkg = JSON.parse(content) as Record<string, unknown>;
     const scripts = pkg.scripts;
@@ -552,7 +547,8 @@ export async function compositeVerifier(workspaceDir: string): Promise<Verificat
   // Skip Maven tests if build failed — test output would be noise
   let mavenTestSettled: PromiseSettledResult<VerificationResult>;
   if (!resolvedMavenBuild.passed && resolvedMavenBuild.errors.length > 0) {
-    mavenTestSettled = { status: 'fulfilled', value: { passed: false, errors: [{ type: 'test', summary: 'Maven tests skipped — build failed', rawOutput: '' }], durationMs: 0 } };
+    console.info('[Maven Test] Skipped — Maven build failed');
+    mavenTestSettled = { status: 'fulfilled', value: { passed: true, errors: [], durationMs: 0 } };
   } else {
     mavenTestSettled = await mavenTestVerifier(workspaceDir)
       .then((v): PromiseSettledResult<VerificationResult> => ({ status: 'fulfilled', value: v }))
@@ -569,7 +565,8 @@ export async function compositeVerifier(workspaceDir: string): Promise<Verificat
   // Skip npm tests if npm build failed — test output would be noise
   let npmTestSettled: PromiseSettledResult<VerificationResult>;
   if (!resolvedNpmBuild.passed && resolvedNpmBuild.errors.length > 0) {
-    npmTestSettled = { status: 'fulfilled', value: { passed: false, errors: [{ type: 'test', summary: 'npm tests skipped — build failed', rawOutput: '' }], durationMs: 0 } };
+    console.info('[npm Test] Skipped — npm build failed');
+    npmTestSettled = { status: 'fulfilled', value: { passed: true, errors: [], durationMs: 0 } };
   } else {
     npmTestSettled = await npmTestVerifier(workspaceDir)
       .then((v): PromiseSettledResult<VerificationResult> => ({ status: 'fulfilled', value: v }))
@@ -597,7 +594,7 @@ export async function compositeVerifier(workspaceDir: string): Promise<Verificat
   const npmBuildSecs = (npmBuild.durationMs / 1000).toFixed(1);
   const npmTestSecs = (npmTest.durationMs / 1000).toFixed(1);
   const lintSecs = (lint.durationMs / 1000).toFixed(1);
-  console.log(
+  console.info(
     `[Verifier] Build: ${build.passed ? 'PASS' : 'FAIL'} (${buildSecs}s), ` +
     `Test: ${test.passed ? 'PASS' : 'FAIL'} (${testSecs}s), ` +
     `Maven Build: ${mavenBuild.passed ? 'PASS' : 'FAIL'} (${mvnBuildSecs}s), ` +

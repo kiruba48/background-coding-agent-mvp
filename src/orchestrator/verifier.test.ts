@@ -898,7 +898,7 @@ describe('ErrorSummarizer.summarizeNpmBuildErrors', () => {
   });
 
   it('45. caps at 5 shown errors with remaining count', () => {
-    const lines = Array.from({ length: 8 }, (_, i) => `error: problem ${i} in module`);
+    const lines = Array.from({ length: 8 }, (_, i) => `npm ERR! problem ${i} in module`);
     const raw = lines.join('\n');
 
     const result = ErrorSummarizer.summarizeNpmBuildErrors(raw);
@@ -943,13 +943,13 @@ describe('ErrorSummarizer.summarizeNpmTestFailures', () => {
 
   it('49. caps at 5 failures with remaining count', () => {
     const lines = Array.from({ length: 8 }, (_, i) =>
-      `FAIL src/module${i}.test.ts`
+      `  ● Suite > test case ${i}`
     );
     const raw = lines.join('\n');
 
     const result = ErrorSummarizer.summarizeNpmTestFailures(raw);
 
-    expect(result).toContain('(+ 3 more');
+    expect(result).toContain('(+ 3 more test failures)');
   });
 
   it('50. returns fallback when no recognizable output', () => {
@@ -960,15 +960,16 @@ describe('ErrorSummarizer.summarizeNpmTestFailures', () => {
     expect(result).toBe('npm tests failed (unable to extract specific test names)');
   });
 
-  it('51. detects "failed" and "Error:" patterns', () => {
+  it('51. detects Jest bullet and summary patterns', () => {
     const raw = [
-      '  1 test failed',
-      '  Error: Expected 1 but got 2',
+      '  ● Component > should render',
+      'Tests: 1 failed, 5 passed, 6 total',
     ].join('\n');
 
     const result = ErrorSummarizer.summarizeNpmTestFailures(raw);
 
-    expect(result).not.toBe('npm tests failed (unable to extract specific test names)');
+    expect(result).toContain('Component > should render');
+    expect(result).toContain('Tests: 1 failed');
   });
 });
 
@@ -1247,9 +1248,9 @@ describe('compositeVerifier — npm integration', () => {
     expect(result.passed).toBe(false);
     const buildErr = result.errors.find(e => e.type === 'build');
     expect(buildErr).toBeDefined();
-    // npm test skipped message should appear
+    // npm test should be skipped (not reported as failure) when build fails
     const skippedErr = result.errors.find(e => e.summary?.includes('skipped'));
-    expect(skippedErr).toBeDefined();
+    expect(skippedErr).toBeUndefined();
   });
 
   it('67. error ordering: Build > Test > Maven Build > Maven Test > npm Build > npm Test > Lint', async () => {
@@ -1343,7 +1344,7 @@ describe('compositeVerifier — Maven integration', () => {
     const types = result.errors.map(e => e.type);
     expect(types).toContain('build');
     expect(result.errors.find(e => e.type === 'build')!.summary).toContain('build error');
-    // Maven test should be skipped since build failed
-    expect(result.errors.find(e => e.summary?.includes('skipped'))).toBeDefined();
+    // Maven test should be skipped (not reported as failure) when build fails
+    expect(result.errors.find(e => e.summary?.includes('skipped'))).toBeUndefined();
   });
 });

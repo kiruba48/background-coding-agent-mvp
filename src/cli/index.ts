@@ -81,9 +81,10 @@ program
           process.exit(2);
         }
       } else if (options.taskType === 'npm-dependency-update') {
-        // npm: minimal validation -- non-empty (guaranteed above), no control characters or whitespace
-        if (/[\x00-\x1f\s]/.test(options.dep)) {
-          console.error(pc.red('Error: --dep contains invalid characters (control characters or whitespace not allowed)'));
+        // npm: validate against npm package name spec (scoped and unscoped)
+        const npmPkgPattern = /^(@[a-z0-9\-~][a-z0-9._\-~]*\/)?[a-z0-9\-~][a-z0-9._\-~]*$/;
+        if (!npmPkgPattern.test(options.dep) || options.dep.length > 214) {
+          console.error(pc.red('Error: --dep must be a valid npm package name (e.g., lodash, @types/node)'));
           process.exit(2);
         }
       }

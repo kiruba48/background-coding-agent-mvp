@@ -13,7 +13,7 @@ export { AgentSession } from './session.js';
 export { MetricsCollector } from './metrics.js';
 export { RetryOrchestrator } from './retry.js';
 export { ErrorSummarizer } from './summarizer.js';
-export { buildVerifier, testVerifier, lintVerifier, compositeVerifier } from './verifier.js';
+export { buildVerifier, testVerifier, lintVerifier, mavenBuildVerifier, mavenTestVerifier, npmBuildVerifier, npmTestVerifier, compositeVerifier } from './verifier.js';
 export { llmJudge } from './judge.js';
 export type {
   Tool,

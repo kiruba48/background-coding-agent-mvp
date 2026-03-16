@@ -340,6 +340,17 @@ export class AgentSession {
   }
 
   /**
+   * Truncate large tool output to prevent blowing the context window.
+   */
+  private truncateOutput(output: string, maxChars: number = 100_000): string {
+    if (output.length <= maxChars) return output;
+    const truncated = output.slice(0, maxChars);
+    const totalLines = output.split('\n').length;
+    const shownLines = truncated.split('\n').length;
+    return truncated + `\n\n[... truncated: showing ${shownLines} of ${totalLines} lines. Output too large — use grep or head to inspect specific sections.]`;
+  }
+
+  /**
    * Route tool calls to the appropriate handler.
    */
   private async executeTool(
@@ -369,7 +380,7 @@ export class AgentSession {
     if (result.exitCode !== 0) {
       return `Error reading file: ${result.stderr}`;
     }
-    return result.stdout;
+    return this.truncateOutput(result.stdout);
   }
 
   private async handleEditFile(input: Record<string, unknown>): Promise<string> {
@@ -583,7 +594,7 @@ export class AgentSession {
 
     const result = await this.container.exec(cmd);
     if (result.exitCode === 0) {
-      return result.stdout;
+      return this.truncateOutput(result.stdout);
     } else if (result.exitCode === 1) {
       return '(no matches found)';
     } else {
@@ -621,7 +632,7 @@ export class AgentSession {
 
     const result = await this.container.exec([cmdPath, ...validatedArgs], 30000);
     const output = result.stdout + result.stderr;
-    return output || `(exit code: ${result.exitCode})`;
+    return this.truncateOutput(output || `(exit code: ${result.exitCode})`);
   }
 
   private async handleListFiles(input: Record<string, unknown>): Promise<string> {

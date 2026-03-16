@@ -19,10 +19,10 @@ describe('buildNpmPrompt', () => {
     expect(result).not.toContain('pom.xml');
   });
 
-  it('describes desired end-state (build succeeds, tests pass)', () => {
+  it('describes desired end-state (version updated, compilation succeeds)', () => {
     const result = buildNpmPrompt('lodash', '5.0.0');
-    expect(result).toMatch(/build/i);
-    expect(result).toMatch(/tests?\s+(pass|succeed)/i);
+    expect(result).toMatch(/version/i);
+    expect(result).toMatch(/compilation/i);
   });
 
   it('mentions fixing breaking API changes', () => {
@@ -41,9 +41,10 @@ describe('buildNpmPrompt', () => {
     expect(result).toContain('Work in the current directory');
   });
 
-  it('does NOT mention lockfile (lockfile is host-side concern)', () => {
+  it('instructs agent NOT to modify lockfile (lockfile is host-side concern)', () => {
     const result = buildNpmPrompt('lodash', '5.0.0');
-    expect(result).not.toMatch(/lock.*file|package-lock|yarn\.lock/i);
+    expect(result).toMatch(/package-lock/i);
+    expect(result).toMatch(/not|do not/i);
   });
 });
 

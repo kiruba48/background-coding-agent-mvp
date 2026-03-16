@@ -193,20 +193,36 @@ export class ErrorSummarizer {
    * Output: structured summary of up to 5 errors with count of remaining.
    */
   static summarizeNpmBuildErrors(rawOutput: string): string {
-    // Extract lines containing "error" (case-insensitive) or "ERR!" (npm error prefix)
-    const errorLines = rawOutput
-      .split('\n')
-      .filter(line => /\berror\b/i.test(line) || line.includes('ERR!'));
+    const lines = rawOutput.split('\n');
 
-    if (errorLines.length === 0) {
-      return 'npm build failed (no specific error lines found)';
+    // Priority 1: webpack/bundler "ERROR in" lines
+    const webpackErrors = lines.filter(line => /^ERROR in\b/.test(line));
+    if (webpackErrors.length > 0) {
+      const shown = webpackErrors.slice(0, 5);
+      const remaining = webpackErrors.length - shown.length;
+      const more = remaining > 0 ? `\n(+ ${remaining} more errors)` : '';
+      return `${webpackErrors.length} build error(s):\n${shown.join('\n')}${more}`;
     }
 
-    const shown = errorLines.slice(0, 5);
-    const remaining = errorLines.length - shown.length;
-    const more = remaining > 0 ? `\n(+ ${remaining} more errors)` : '';
+    // Priority 2: TypeScript errors (tsc output within npm build)
+    const tsErrors = rawOutput.match(/\S+\.\w+\(\d+,\d+\): error TS\d+: [^\n]+/g) ?? [];
+    if (tsErrors.length > 0) {
+      const shown = tsErrors.slice(0, 5);
+      const remaining = tsErrors.length - shown.length;
+      const more = remaining > 0 ? `\n(+ ${remaining} more errors)` : '';
+      return `${tsErrors.length} build error(s):\n${shown.join('\n')}${more}`;
+    }
 
-    return `${shown.join('\n')}${more}`;
+    // Priority 3: npm ERR! lines (npm's own error prefix)
+    const npmErrLines = lines.filter(line => line.includes('ERR!'));
+    if (npmErrLines.length > 0) {
+      const shown = npmErrLines.slice(0, 5);
+      const remaining = npmErrLines.length - shown.length;
+      const more = remaining > 0 ? `\n(+ ${remaining} more errors)` : '';
+      return `${shown.join('\n')}${more}`;
+    }
+
+    return 'npm build failed (no specific error lines found)';
   }
 
   /**
@@ -215,20 +231,36 @@ export class ErrorSummarizer {
    * Output: structured summary of up to 5 failures with count of remaining.
    */
   static summarizeNpmTestFailures(rawOutput: string): string {
-    // Extract failure lines: FAIL, failed, Error: patterns
-    const failureLines = rawOutput
-      .split('\n')
-      .filter(line => /\bFAIL\b/.test(line) || /\bfailed\b/i.test(line) || /\bError:/i.test(line));
+    // Priority 1: Jest/Vitest bullet failures (● ✕ ✗ ×)
+    const bulletFailures = rawOutput.match(/[●✕✗×]\s+[^\n]+/g) ?? [];
 
-    if (failureLines.length === 0) {
-      return 'npm tests failed (unable to extract specific test names)';
+    // Priority 2: Jest/Vitest summary line
+    const summaryLine = rawOutput.match(/Tests:\s+\d+ failed[^\n]*/)?.[0] ?? '';
+
+    // Priority 3: Mocha "N failing"
+    const mochaCount = rawOutput.match(/(\d+) failing/)?.[0] ?? '';
+
+    if (bulletFailures.length > 0 || summaryLine || mochaCount) {
+      const parts: string[] = [];
+      if (summaryLine) parts.push(summaryLine);
+      if (mochaCount) parts.push(mochaCount);
+
+      const shownFailures = bulletFailures.slice(0, 5);
+      if (shownFailures.length > 0) parts.push(shownFailures.join('\n'));
+
+      const remaining = bulletFailures.length - shownFailures.length;
+      if (remaining > 0) parts.push(`(+ ${remaining} more test failures)`);
+
+      return parts.join('\n');
     }
 
-    const shown = failureLines.slice(0, 5);
-    const remaining = failureLines.length - shown.length;
-    const more = remaining > 0 ? `\n(+ ${remaining} more failures)` : '';
+    // Priority 4: FAIL file paths (Jest "FAIL src/foo.test.ts")
+    const failPaths = rawOutput.split('\n').filter(line => /^\s*FAIL\s+\S+/.test(line)).slice(0, 5);
+    if (failPaths.length > 0) {
+      return `Test failures:\n${failPaths.join('\n')}`;
+    }
 
-    return `${shown.join('\n')}${more}`;
+    return 'npm tests failed (unable to extract specific test names)';
   }
 
   /**

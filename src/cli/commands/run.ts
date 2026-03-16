@@ -58,10 +58,11 @@ export async function runAgent(options: RunOptions): Promise<number> {
     ? async (workspaceDir: string): Promise<void> => {
         childLogger.info('Running host-side npm install to regenerate lockfile...');
         try {
-          await execFileAsync('npm', ['install'], {
+          await execFileAsync('npm', ['install', '--ignore-scripts'], {
             cwd: workspaceDir,
             timeout: 120_000,
             maxBuffer: 10 * 1024 * 1024,
+            killSignal: 'SIGKILL',
           });
           childLogger.info('npm install completed successfully');
         } catch (err: unknown) {

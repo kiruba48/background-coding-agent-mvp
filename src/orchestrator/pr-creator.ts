@@ -7,38 +7,38 @@
  *
  * Key behaviors:
  * - Throws if GITHUB_TOKEN is not set
- * - Auto-generates branch name as `agent/<slug>-YYYY-MM-DD` from task type
+ * - Auto-generates unique branch name as `agent/<slug>-YYYY-MM-DD-<hex>` from task type
  * - If branch already exists on remote, fails with clear error (includes branch name)
  * - PR body has six sections: Task, Changes, Verification, LLM Judge, Breaking Changes, footer
  * - Breaking Changes section always present — shows 'None detected' when clean
  * - PR creation failure is non-fatal — returns PRResult with error field instead of throwing
+ * - Token is sanitized from all error messages to prevent credential leaks
+ * - Original branch is restored after push (even on failure)
+ * - Only tracked files are staged (no accidental .env commits)
  */
 
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { randomBytes } from 'node:crypto';
 import { simpleGit } from 'simple-git';
 import { Octokit } from 'octokit';
 import type { RetryResult, PRResult, VerificationResult, JudgeResult } from '../types.js';
-
-const execFileAsync = promisify(execFile);
 
 // ---------------------------------------------------------------------------
 // generateBranchName
 // ---------------------------------------------------------------------------
 
 /**
- * Generate a branch name from a task type string.
+ * Generate a unique branch name from a task type string.
  *
  * Slugification:
  * - Lowercase
  * - Replace non-alphanumeric chars with hyphens
  * - Collapse runs of hyphens into one
  * - Trim hyphens from start/end
- * - Append YYYY-MM-DD date suffix
+ * - Append YYYY-MM-DD date suffix and 6-char hex for uniqueness
  * - Prefix with `agent/`
  *
  * @example
- * generateBranchName('maven dependency update') // 'agent/maven-dependency-update-2026-03-02'
+ * generateBranchName('maven dependency update') // 'agent/maven-dependency-update-2026-03-02-a1b2c3'
  */
 export function generateBranchName(taskType: string): string {
   const slug = taskType
@@ -48,7 +48,8 @@ export function generateBranchName(taskType: string): string {
     .replace(/^-+|-+$/g, '');        // trim leading/trailing hyphens
 
   const date = new Date().toISOString().slice(0, 10);
-  return `agent/${slug}-${date}`;
+  const suffix = randomBytes(3).toString('hex');
+  return `agent/${slug}-${date}-${suffix}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -59,10 +60,10 @@ export function generateBranchName(taskType: string): string {
  * Heuristics for detecting breaking changes in a git diff.
  *
  * Conservative set — only fires on very clear signals to minimize false positives.
+ * For exported symbol removal, verifies the symbol isn't re-added (rename detection).
  */
-const SIGNALS = [
+const KEYWORD_SIGNALS = [
   { pattern: /BREAKING CHANGE/i, label: 'Commit message or diff declares BREAKING CHANGE' },
-  { pattern: /^-\s*(export\s+(class|function|const|type|interface))/m, label: 'Exported symbol removed' },
   { pattern: /major version bump/i, label: 'Major version increment detected' },
 ];
 
@@ -76,11 +77,28 @@ export function detectBreakingChanges(diff: string): string[] {
   if (!diff) return [];
 
   const warnings: string[] = [];
-  for (const signal of SIGNALS) {
+
+  // Keyword-based signals
+  for (const signal of KEYWORD_SIGNALS) {
     if (signal.pattern.test(diff)) {
       warnings.push(signal.label);
     }
   }
+
+  // Exported symbol removal — verify the symbol isn't re-added (avoids false
+  // positives on renames where the export is removed then re-added on a + line)
+  const removedExportPattern = /^-\s*export\s+(?:class|function|const|type|interface)\s+(\w+)/gm;
+  let match;
+  while ((match = removedExportPattern.exec(diff)) !== null) {
+    const symbolName = match[1];
+    const reAddedPattern = new RegExp(
+      `^\\+\\s*export\\s+(?:class|function|const|type|interface)\\s+${symbolName}\\b`, 'm'
+    );
+    if (!reAddedPattern.test(diff)) {
+      warnings.push(`Exported symbol removed: ${symbolName}`);
+    }
+  }
+
   return warnings;
 }
 
@@ -247,21 +265,23 @@ export function buildPRBody(opts: BuildPRBodyOptions): string {
  * - HTTPS: https://github.com/owner/repo.git
  * - SSH:   git@github.com:owner/repo.git
  *
+ * Uses greedy matching and strips .git suffix separately for clarity.
+ *
  * @throws Error if the URL cannot be parsed
  */
 function parseGitHubRemote(remoteUrl: string): { owner: string; repo: string } {
   const url = remoteUrl.trim();
 
-  // HTTPS format: https://github.com/owner/repo or https://github.com/owner/repo.git
-  const httpsMatch = url.match(/github\.com\/([^/]+)\/([^/\s]+?)(?:\.git)?$/);
+  // HTTPS format — greedy match, strip .git suffix separately
+  const httpsMatch = url.match(/github\.com\/([^/]+)\/([^/\s]+)$/);
   if (httpsMatch) {
-    return { owner: httpsMatch[1], repo: httpsMatch[2] };
+    return { owner: httpsMatch[1], repo: httpsMatch[2].replace(/\.git$/, '') };
   }
 
-  // SSH format: git@github.com:owner/repo.git
-  const sshMatch = url.match(/github\.com:([^/]+)\/([^\s]+?)(?:\.git)?$/);
+  // SSH format — greedy match, strip .git suffix separately
+  const sshMatch = url.match(/github\.com:([^/]+)\/([^\s]+)$/);
   if (sshMatch) {
-    return { owner: sshMatch[1], repo: sshMatch[2] };
+    return { owner: sshMatch[1], repo: sshMatch[2].replace(/\.git$/, '') };
   }
 
   throw new Error(`Cannot parse GitHub owner/repo from remote URL: ${url}`);
@@ -269,6 +289,11 @@ function parseGitHubRemote(remoteUrl: string): { owner: string; repo: string } {
 
 /**
  * Service that pushes an agent branch to GitHub and creates a PR.
+ *
+ * Safety guarantees:
+ * - GITHUB_TOKEN is never included in error messages or PRResult.error
+ * - Original branch is restored after push (even on failure)
+ * - Only tracked files are staged (no accidental .env commits)
  */
 export class GitHubPRCreator {
   constructor(private workspaceDir: string) {}
@@ -294,52 +319,66 @@ export class GitHubPRCreator {
       throw new Error('GITHUB_TOKEN environment variable is required for --create-pr');
     }
 
-    // Step 2: Parse owner/repo from git remote — throws immediately if unparseable
-    const { stdout: remoteUrlRaw } = await execFileAsync(
-      'git',
-      ['remote', 'get-url', 'origin'],
-      { cwd: this.workspaceDir }
-    );
-    const { owner, repo } = parseGitHubRemote(remoteUrlRaw);
+    // Sanitize any error message to strip the token before it reaches logs or output
+    const sanitize = (msg: string) => msg.replaceAll(token, '***');
+
+    const git = simpleGit(this.workspaceDir);
+
+    // Step 2: Parse owner/repo from git remote (uses simple-git, not execFile)
+    const remoteUrl = await git.remote(['get-url', 'origin']);
+    if (!remoteUrl) {
+      throw new Error('No origin remote configured in workspace');
+    }
+    const { owner, repo } = parseGitHubRemote(remoteUrl);
 
     const branchName = opts.branchOverride ?? generateBranchName(opts.taskType);
 
+    // Save original branch for restoration — don't leave user on agent branch
+    let originalBranch: string | null = null;
     try {
+      originalBranch = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
+    } catch {
+      // Detached HEAD or other issue — best-effort, no restore possible
+    }
 
-      // Step 3: Get diff stat for PR body
+    try {
+      // Step 3: Find diff base — use merge-base with remote default branch
+      // so we capture ALL agent commits, not just the last one (fixes HEAD~1 issue)
+      let diffBase = 'HEAD~1';
+      for (const candidate of ['origin/main', 'origin/master']) {
+        try {
+          const base = (await git.raw(['merge-base', candidate, 'HEAD'])).trim();
+          if (base) { diffBase = base; break; }
+        } catch { /* candidate doesn't exist, try next */ }
+      }
+
+      // Step 4: Get diff stat for PR body
       let diffStat = 'No changes detected';
       try {
-        const { stdout: statOut } = await execFileAsync(
-          'git',
-          ['diff', '--stat', 'HEAD~1', 'HEAD'],
-          { cwd: this.workspaceDir }
-        );
-        if (statOut.trim()) {
-          diffStat = statOut;
-        }
+        const statOut = await git.diff(['--stat', diffBase, 'HEAD']);
+        if (statOut.trim()) diffStat = statOut;
       } catch {
-        // Swallow — no prior commit or no changes
+        // No prior commit or diff base invalid — proceed with default
       }
 
-      // Step 4: Get full diff for breaking change detection (capped at 8000 chars)
+      // Step 5: Get full diff for breaking change detection (capped at 8000 chars)
       let fullDiff = '';
       try {
-        const { stdout: diffOut } = await execFileAsync(
-          'git',
-          ['diff', 'HEAD~1', 'HEAD', '--no-color'],
-          { cwd: this.workspaceDir }
-        );
+        const diffOut = await git.diff([diffBase, 'HEAD', '--no-color']);
         fullDiff = diffOut.slice(0, 8000);
       } catch {
-        // Swallow
+        // No changes to diff — proceed with empty
       }
 
-      // Step 5: Detect breaking changes
+      // Step 6: Detect breaking changes
       const breakingChangeWarnings = detectBreakingChanges(fullDiff);
 
-      // Step 6: Build PR body
+      // Step 7: Build PR body
+      if (opts.retryResult.sessionResults.length === 0) {
+        throw new Error('No session results available — cannot build PR body');
+      }
       const lastSession = opts.retryResult.sessionResults[opts.retryResult.sessionResults.length - 1];
-      const finalResponse = lastSession?.finalResponse ?? '';
+      const finalResponse = lastSession.finalResponse ?? '';
 
       const prBody = buildPRBody({
         task: opts.originalTask,
@@ -350,42 +389,46 @@ export class GitHubPRCreator {
         breakingChangeWarnings,
       });
 
-      // Step 7: Push branch via simple-git
+      // Step 8: Push branch via simple-git
       // Build authenticated URL — NEVER log this (token would leak)
       const authedUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
 
-      const git = simpleGit(this.workspaceDir);
-
-      // Check for uncommitted changes and auto-commit
+      // Stage only tracked file changes — avoids committing .env, secrets, etc.
       const statusResult = await git.status();
       if (!statusResult.isClean()) {
-        await git.add('--all');
+        await git.add('-u');
         await git.commit('chore: agent changes');
       }
 
-      // Checkout or create the branch
+      // Checkout or create the branch — check error specifically
       try {
         await git.checkoutLocalBranch(branchName);
-      } catch {
-        // Branch already exists locally — just check it out
-        await git.checkout(branchName);
+      } catch (e) {
+        const msg = (e as Error).message;
+        if (msg.includes('already exists')) {
+          await git.checkout(branchName);
+        } else {
+          throw new Error(`Failed to create branch '${branchName}': ${sanitize(msg)}`);
+        }
       }
 
-      // Push — if branch already exists on remote, fail with clear error
+      // Push without --force-with-lease: not meaningful with URL push (no tracking
+      // ref to compare against), and we're pushing a new branch anyway. A plain push
+      // correctly rejects if the branch already exists on remote.
       try {
-        await git.push(authedUrl, `HEAD:refs/heads/${branchName}`, { '--force-with-lease': null });
+        await git.push(authedUrl, `HEAD:refs/heads/${branchName}`);
       } catch (pushErr) {
-        const pushMsg = (pushErr as Error).message;
+        const pushMsg = sanitize((pushErr as Error).message);
         if (pushMsg.includes('already exists') || pushMsg.includes('rejected')) {
           throw new Error(
             `Branch '${branchName}' already exists on the remote and push was rejected. ` +
             `Use --branch to specify a different branch name or resolve the conflict manually.`
           );
         }
-        throw pushErr;
+        throw new Error(`Push failed: ${pushMsg}`);
       }
 
-      // Step 8: Create PR via Octokit
+      // Step 9: Create PR via Octokit
       const octokit = new Octokit({ auth: token });
 
       // Get default branch
@@ -431,8 +474,20 @@ export class GitHubPRCreator {
         url: '',
         created: false,
         branch: branchName,
-        error: (err as Error).message,
+        error: sanitize((err as Error).message),
       };
+    } finally {
+      // Restore original branch if we switched away from it
+      if (originalBranch) {
+        try {
+          const currentBranch = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
+          if (currentBranch !== originalBranch) {
+            await git.checkout(originalBranch);
+          }
+        } catch {
+          // Best-effort restoration — if this fails, user is left on agent branch
+        }
+      }
     }
   }
 }
