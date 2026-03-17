@@ -39,6 +39,7 @@ export interface SessionConfig {
   turnLimit?: number;    // default: 10
   timeoutMs?: number;    // default: 300000 (5 minutes)
   logger?: pino.Logger;
+  useSDK?: boolean;      // default: true — use ClaudeCodeSession; false falls back to legacy AgentSession. Phase 11 removes this.
 }
 
 /**

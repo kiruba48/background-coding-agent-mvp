@@ -1,10 +1,12 @@
 import pino from 'pino';
 import { AgentSession, SessionConfig } from './session.js';
+import { ClaudeCodeSession } from './claude-code-session.js';
+import { captureBaselineSha } from './judge.js';
 import { SessionResult, RetryConfig, RetryResult, VerificationResult, JudgeResult } from '../types.js';
 import { ErrorSummarizer } from './summarizer.js';
 
 /**
- * RetryOrchestrator wraps AgentSession in an outer retry loop.
+ * RetryOrchestrator wraps ClaudeCodeSession (or legacy AgentSession) in an outer retry loop.
  *
  * Distinct from the API-level retry in agent.ts (which handles transient
  * 429/529 errors). This orchestrator handles session-level retries: when a
@@ -24,7 +26,7 @@ import { ErrorSummarizer } from './summarizer.js';
 export class RetryOrchestrator {
   private config: SessionConfig;
   private retryConfig: RetryConfig;
-  private activeSession: AgentSession | null = null;
+  private activeSession: AgentSession | ClaudeCodeSession | null = null;
 
   constructor(sessionConfig: SessionConfig, retryConfig: RetryConfig = { maxRetries: 3 }) {
     this.config = sessionConfig;
@@ -55,6 +57,10 @@ export class RetryOrchestrator {
     const verificationResults: VerificationResult[] = [];
     const judgeResults: JudgeResult[] = [];
 
+    // Capture HEAD SHA before agent runs so the Judge diffs against the exact
+    // pre-agent state — prevents false vetoes from prior commits in the repo.
+    const baselineSha = await captureBaselineSha(this.config.workspaceDir);
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       logger?.info({ attempt, maxRetries }, 'Starting retry attempt');
 
@@ -64,10 +70,12 @@ export class RetryOrchestrator {
         ? originalTask
         : this.buildRetryMessage(originalTask, attempt, verificationResults);
 
-      // CRITICAL: Create a fresh AgentSession for each attempt.
+      // CRITICAL: Create a fresh session for each attempt.
       // Never reuse sessions — prior conversation history accumulates and
       // fills the context window, causing the model to forget the original task.
-      const session = new AgentSession(this.config);
+      const session = this.config.useSDK !== false
+        ? new ClaudeCodeSession(this.config)
+        : new AgentSession(this.config);
       this.activeSession = session;
 
       let sessionResult: SessionResult;
@@ -172,7 +180,7 @@ export class RetryOrchestrator {
 
           let judgeResult: JudgeResult;
           try {
-            judgeResult = await this.retryConfig.judge(this.config.workspaceDir, originalTask);
+            judgeResult = await this.retryConfig.judge(this.config.workspaceDir, originalTask, baselineSha);
           } catch (err) {
             // Judge crash = fail open (approve) — not a reason to block
             logger?.warn({ attempt, err }, 'Judge crashed, failing open');

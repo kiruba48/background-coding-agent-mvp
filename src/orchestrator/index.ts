@@ -10,6 +10,7 @@
 export { ContainerManager } from './container.js';
 export { AgentClient } from './agent.js';
 export { AgentSession } from './session.js';
+export { ClaudeCodeSession } from './claude-code-session.js';
 export { MetricsCollector } from './metrics.js';
 export { RetryOrchestrator } from './retry.js';
 export { ErrorSummarizer } from './summarizer.js';

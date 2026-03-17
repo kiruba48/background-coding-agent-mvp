@@ -37,7 +37,7 @@ Full details: See archived phase details below.
 
 **Milestone Goal:** Replace ~1,200 lines of custom agent infrastructure with the Claude Agent SDK `query()` call. Delete AgentSession, AgentClient, and ContainerManager. Gain built-in tools, auto context compression, native hooks, and an optional MCP verifier server.
 
-- [ ] **Phase 10: Agent SDK Integration** - Replace AgentSession with AgentSdkSession wrapping `query()`; all security defaults established
+- [x] **Phase 10: Agent SDK Integration** - Replace AgentSession with AgentSdkSession wrapping `query()`; all security defaults established (completed 2026-03-17)
 - [ ] **Phase 11: Legacy Deletion** - Delete agent.ts, session.ts, container.ts and their ~650 lines of tests
 - [ ] **Phase 12: MCP Verifier Server** - Expose compositeVerifier as `mcp__verifier__verify` tool for mid-session self-correction
 - [ ] **Phase 13: Container Strategy** - Run Agent SDK inside Docker with network isolation equivalent to v1.1
@@ -98,7 +98,10 @@ Plans:
   3. Every file change (Edit/Write tool calls) appears in the session audit log with path, tool name, and timestamp — via PostToolUse hook
   4. `WebSearch` and `WebFetch` tool calls are refused by the SDK without prompting — `disallowedTools` enforced at session start
   5. When the agent exhausts `maxTurns: 10`, `SessionResult.status` is `"turn_limit"` — not `"failed"` — so RetryOrchestrator does not retry an exhausted session
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 10-01-PLAN.md — Install SDK, implement ClaudeCodeSession with security hooks and TDD test suite
+- [ ] 10-02-PLAN.md — Wire ClaudeCodeSession into RetryOrchestrator and CLI (--use-sdk flag)
 
 ### Phase 11: Legacy Deletion
 **Goal**: All custom agent infrastructure code is deleted and the codebase contains no references to AgentSession, AgentClient, or ContainerManager — the only agent runtime is the SDK
@@ -145,7 +148,7 @@ Plans:
 | 7. GitHub PR Creation | v1.1 | 2/2 | Complete | 2026-03-02 |
 | 8. Maven Dependency Update | v1.1 | 3/3 | Complete | 2026-03-05 |
 | 9. npm Dependency Update | v1.1 | 3/3 | Complete | 2026-03-11 |
-| 10. Agent SDK Integration | v2.0 | 0/TBD | Not started | - |
+| 10. Agent SDK Integration | 2/2 | Complete    | 2026-03-17 | - |
 | 11. Legacy Deletion | v2.0 | 0/TBD | Not started | - |
 | 12. MCP Verifier Server | v2.0 | 0/TBD | Not started | - |
 | 13. Container Strategy | v2.0 | 0/TBD | Not started | - |

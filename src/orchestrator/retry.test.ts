@@ -8,11 +8,20 @@ vi.mock('./session.js', () => {
   return { AgentSession: MockAgentSession };
 });
 
-// Import AFTER mock is set up
+// Mock ClaudeCodeSession — it is the default session type (useSDK !== false).
+// Without this mock, tests would attempt real SDK calls.
+vi.mock('./claude-code-session.js', () => {
+  const MockClaudeCodeSession = vi.fn();
+  return { ClaudeCodeSession: MockClaudeCodeSession };
+});
+
+// Import AFTER mocks are set up
 import { RetryOrchestrator } from './retry.js';
 import { AgentSession } from './session.js';
+import { ClaudeCodeSession } from './claude-code-session.js';
 
 const MockAgentSession = AgentSession as ReturnType<typeof vi.fn>;
+const MockClaudeCodeSession = ClaudeCodeSession as ReturnType<typeof vi.fn>;
 
 // Helper to create a mock session object with configurable run result
 function createMockSession(runResult: SessionResult | ((...args: any[]) => Promise<SessionResult>)) {
@@ -60,7 +69,7 @@ describe('RetryOrchestrator', () => {
   it('1. succeeds on first attempt with no verifier', async () => {
     // Setup: session succeeds, no verifier configured
     const session = createMockSession(makeSessionResult());
-    MockAgentSession.mockImplementationOnce(function() { return session; });
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
 
     const orchestrator = new RetryOrchestrator(
       { workspaceDir: '/tmp/workspace' },
@@ -78,7 +87,7 @@ describe('RetryOrchestrator', () => {
   it('2. succeeds on first attempt when verifier passes', async () => {
     const verifier = vi.fn().mockResolvedValue(makePassedVerification());
     const session = createMockSession(makeSessionResult());
-    MockAgentSession.mockImplementationOnce(function() { return session; });
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
 
     const orchestrator = new RetryOrchestrator(
       { workspaceDir: '/tmp/workspace' },
@@ -101,7 +110,7 @@ describe('RetryOrchestrator', () => {
 
     const session1 = createMockSession(makeSessionResult());
     const session2 = createMockSession(makeSessionResult());
-    MockAgentSession
+    MockClaudeCodeSession
       .mockImplementationOnce(function() { return session1; })
       .mockImplementationOnce(function() { return session2; });
 
@@ -125,7 +134,7 @@ describe('RetryOrchestrator', () => {
 
     [0, 1, 2].forEach(() => {
       const session = createMockSession(makeSessionResult());
-      MockAgentSession.mockImplementationOnce(function() { return session; });
+      MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
     });
 
     const orchestrator = new RetryOrchestrator(
@@ -145,7 +154,7 @@ describe('RetryOrchestrator', () => {
   it('5. session timeout stops retrying immediately', async () => {
     const verifier = vi.fn();
     const session = createMockSession(makeSessionResult({ status: 'timeout' }));
-    MockAgentSession.mockImplementationOnce(function() { return session; });
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
 
     const orchestrator = new RetryOrchestrator(
       { workspaceDir: '/tmp/workspace' },
@@ -164,7 +173,7 @@ describe('RetryOrchestrator', () => {
   it('6. session turn_limit stops retrying immediately', async () => {
     const verifier = vi.fn();
     const session = createMockSession(makeSessionResult({ status: 'turn_limit' }));
-    MockAgentSession.mockImplementationOnce(function() { return session; });
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
 
     const orchestrator = new RetryOrchestrator(
       { workspaceDir: '/tmp/workspace' },
@@ -181,7 +190,7 @@ describe('RetryOrchestrator', () => {
   it('7. session failed stops retrying immediately', async () => {
     const verifier = vi.fn();
     const session = createMockSession(makeSessionResult({ status: 'failed', error: 'Docker crashed' }));
-    MockAgentSession.mockImplementationOnce(function() { return session; });
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
 
     const orchestrator = new RetryOrchestrator(
       { workspaceDir: '/tmp/workspace' },
@@ -211,7 +220,7 @@ describe('RetryOrchestrator', () => {
       capturedMessages.push(msg);
       return makeSessionResult();
     });
-    MockAgentSession
+    MockClaudeCodeSession
       .mockImplementationOnce(function() { return session1; })
       .mockImplementationOnce(function() { return session2; });
 
@@ -241,7 +250,7 @@ describe('RetryOrchestrator', () => {
     expect(taskIndex).toBeLessThan(separatorIndex);
   });
 
-  it('9. creates a fresh AgentSession per attempt', async () => {
+  it('9. creates a fresh session per attempt (ClaudeCodeSession by default)', async () => {
     const verifier = vi.fn()
       .mockResolvedValueOnce(makeFailedVerification())
       .mockResolvedValueOnce(makeFailedVerification())
@@ -249,7 +258,7 @@ describe('RetryOrchestrator', () => {
 
     [0, 1, 2].forEach(() => {
       const session = createMockSession(makeSessionResult());
-      MockAgentSession.mockImplementationOnce(function() { return session; });
+      MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
     });
 
     const orchestrator = new RetryOrchestrator(
@@ -259,8 +268,8 @@ describe('RetryOrchestrator', () => {
 
     await orchestrator.run('Fix the bug');
 
-    // AgentSession constructor should have been called once per attempt
-    expect(MockAgentSession.mock.calls).toHaveLength(3);
+    // ClaudeCodeSession constructor should have been called once per attempt (default useSDK)
+    expect(MockClaudeCodeSession.mock.calls).toHaveLength(3);
   });
 
   it('10. custom maxRetries of 2 limits to 2 attempts', async () => {
@@ -268,7 +277,7 @@ describe('RetryOrchestrator', () => {
 
     [0, 1].forEach(() => {
       const session = createMockSession(makeSessionResult());
-      MockAgentSession.mockImplementationOnce(function() { return session; });
+      MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
     });
 
     const orchestrator = new RetryOrchestrator(
@@ -280,14 +289,14 @@ describe('RetryOrchestrator', () => {
 
     expect(result.finalStatus).toBe('max_retries_exhausted');
     expect(result.attempts).toBe(2);
-    expect(MockAgentSession.mock.calls).toHaveLength(2);
+    expect(MockClaudeCodeSession.mock.calls).toHaveLength(2);
     expect(result.error).toContain('2 attempts');
   });
 
   it('11. verifier crash returns structured RetryResult instead of throwing', async () => {
     const verifier = vi.fn().mockRejectedValue(new Error('tsc binary not found'));
     const session = createMockSession(makeSessionResult());
-    MockAgentSession.mockImplementationOnce(function() { return session; });
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
 
     const orchestrator = new RetryOrchestrator(
       { workspaceDir: '/tmp/workspace' },
@@ -307,7 +316,7 @@ describe('RetryOrchestrator', () => {
   it('12. session.start() failure cleans up via finally block', async () => {
     const session = createMockSession(makeSessionResult());
     session.start.mockRejectedValue(new Error('Docker daemon not running'));
-    MockAgentSession.mockImplementationOnce(function() { return session; });
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
 
     const orchestrator = new RetryOrchestrator(
       { workspaceDir: '/tmp/workspace' },
@@ -324,7 +333,7 @@ describe('RetryOrchestrator', () => {
       new Promise(() => {}) // never resolves — simulates long-running verifier
     );
     const session = createMockSession(makeSessionResult());
-    MockAgentSession.mockImplementationOnce(function() { return session; });
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
 
     const orchestrator = new RetryOrchestrator(
       { workspaceDir: '/tmp/workspace' },
@@ -351,7 +360,7 @@ describe('RetryOrchestrator', () => {
     const preVerify = vi.fn().mockResolvedValue(undefined);
     const verifier = vi.fn().mockResolvedValue(makePassedVerification());
     const session = createMockSession(makeSessionResult());
-    MockAgentSession.mockImplementationOnce(function() { return session; });
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
 
     const callOrder: string[] = [];
     preVerify.mockImplementation(async () => { callOrder.push('preVerify'); });
@@ -375,7 +384,7 @@ describe('RetryOrchestrator', () => {
     const preVerify = vi.fn().mockResolvedValue(undefined);
     const verifier = vi.fn().mockResolvedValue(makePassedVerification());
     const session = createMockSession(makeSessionResult({ status: 'failed', error: 'Docker crashed' }));
-    MockAgentSession.mockImplementationOnce(function() { return session; });
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
 
     const orchestrator = new RetryOrchestrator(
       { workspaceDir: '/tmp/workspace' },
@@ -392,7 +401,7 @@ describe('RetryOrchestrator', () => {
     const preVerify = vi.fn().mockRejectedValue(new Error('npm install failed: invalid version'));
     const verifier = vi.fn().mockResolvedValue(makePassedVerification());
     const session = createMockSession(makeSessionResult());
-    MockAgentSession.mockImplementationOnce(function() { return session; });
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
 
     const orchestrator = new RetryOrchestrator(
       { workspaceDir: '/tmp/workspace' },
@@ -408,7 +417,7 @@ describe('RetryOrchestrator', () => {
     // Verifier must NOT have been called — preVerify failure is terminal
     expect(verifier).not.toHaveBeenCalled();
     // Only 1 session created (no retry)
-    expect(MockAgentSession.mock.calls).toHaveLength(1);
+    expect(MockClaudeCodeSession.mock.calls).toHaveLength(1);
   });
 
   it('18. retry loop without preVerify works exactly as before (backwards compatible)', async () => {
@@ -418,7 +427,7 @@ describe('RetryOrchestrator', () => {
 
     const session1 = createMockSession(makeSessionResult());
     const session2 = createMockSession(makeSessionResult());
-    MockAgentSession
+    MockClaudeCodeSession
       .mockImplementationOnce(function() { return session1; })
       .mockImplementationOnce(function() { return session2; });
 
@@ -443,7 +452,7 @@ describe('RetryOrchestrator', () => {
 
     const session1 = createMockSession(makeSessionResult());
     const session2 = createMockSession(makeSessionResult());
-    MockAgentSession
+    MockClaudeCodeSession
       .mockImplementationOnce(function() { return session1; })
       .mockImplementationOnce(function() { return session2; });
 
@@ -472,7 +481,7 @@ describe('RetryOrchestrator', () => {
         capturedMessages.push(msg);
         return makeSessionResult();
       });
-      MockAgentSession.mockImplementationOnce(function() { return session; });
+      MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
     });
 
     const orchestrator = new RetryOrchestrator(

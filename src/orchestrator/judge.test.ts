@@ -30,6 +30,12 @@ vi.mock('./session.js', () => {
   return { AgentSession: MockAgentSession };
 });
 
+// Mock ClaudeCodeSession — it is the default session type (useSDK !== false)
+vi.mock('./claude-code-session.js', () => {
+  const MockClaudeCodeSession = vi.fn();
+  return { ClaudeCodeSession: MockClaudeCodeSession };
+});
+
 import { execFile } from 'node:child_process';
 import {
   llmJudge,
@@ -41,8 +47,10 @@ import {
 } from './judge.js';
 import { RetryOrchestrator } from './retry.js';
 import { AgentSession } from './session.js';
+import { ClaudeCodeSession } from './claude-code-session.js';
 
 const MockAgentSession = AgentSession as ReturnType<typeof vi.fn>;
+const MockClaudeCodeSession = ClaudeCodeSession as ReturnType<typeof vi.fn>;
 
 // Cast mocks for typed access
 const mockExecFile = execFile as unknown as ReturnType<typeof vi.fn>;
@@ -115,7 +123,7 @@ describe('truncateDiff', () => {
 });
 
 describe('truncateLockfileDiffs', () => {
-  it('replaces package-lock.json hunk with lockfile updated note', () => {
+  it('strips package-lock.json hunk entirely', () => {
     const diff = [
       'diff --git a/src/index.ts b/src/index.ts',
       'index abc..def 100644',
@@ -140,14 +148,13 @@ describe('truncateLockfileDiffs', () => {
     // Non-lockfile hunk preserved
     expect(result).toContain('diff --git a/src/index.ts b/src/index.ts');
     expect(result).toContain('+new line');
-    // Lockfile hunk replaced
-    expect(result).toContain('diff --git a/package-lock.json b/package-lock.json');
-    expect(result).toContain('+ lockfile updated');
+    // Lockfile hunk stripped entirely
+    expect(result).not.toContain('package-lock.json');
     expect(result).not.toContain('"old": "data"');
     expect(result).not.toContain('"new": "data"');
   });
 
-  it('replaces yarn.lock hunk with lockfile updated note', () => {
+  it('strips yarn.lock hunk entirely', () => {
     const diff = [
       'diff --git a/yarn.lock b/yarn.lock',
       'index abc..def 100644',
@@ -159,8 +166,7 @@ describe('truncateLockfileDiffs', () => {
     ].join('\n');
 
     const result = truncateLockfileDiffs(diff);
-    expect(result).toContain('diff --git a/yarn.lock b/yarn.lock');
-    expect(result).toContain('+ lockfile updated');
+    expect(result).not.toContain('yarn.lock');
     expect(result).not.toContain('lodash@^4.0.0');
   });
 
@@ -365,7 +371,7 @@ describe('llmJudge', () => {
     expect(callArgs.output_config.format.schema.properties).toHaveProperty('veto_reason');
   });
 
-  it('truncates lockfile diffs before calling API', async () => {
+  it('strips lockfile diffs before calling API', async () => {
     const diffWithLockfile = [
       'diff --git a/src/index.ts b/src/index.ts',
       '+new line',
@@ -384,9 +390,13 @@ describe('llmJudge', () => {
     await llmJudge('/workspace', 'Update dependency');
 
     const callArgs = mockCreate.mock.calls[0][0];
-    const diffInPrompt = callArgs.messages[0].content;
-    expect(diffInPrompt).toContain('+ lockfile updated');
-    expect(diffInPrompt).not.toContain('"dependency": "1.0.0"');
+    const fullPrompt = callArgs.messages[0].content;
+    // Extract just the <diff> section to check lockfile stripping
+    const diffSection = fullPrompt.match(/<diff>([\s\S]*?)<\/diff>/)?.[1] ?? '';
+    expect(diffSection).not.toContain('package-lock.json');
+    expect(diffSection).not.toContain('"dependency": "1.0.0"');
+    // Non-lockfile diff preserved
+    expect(diffSection).toContain('+new line');
   });
 
   it('uses DEFAULT_JUDGE_MODEL when JUDGE_MODEL env var not set', async () => {
@@ -476,7 +486,7 @@ describe('RetryOrchestrator with judge', () => {
     const verifier = vi.fn().mockResolvedValue(makePassedVerification());
     const judge = makeJudgeFn(makeApproveResult());
     const session = createMockSession(makeSessionResult());
-    MockAgentSession.mockImplementationOnce(function() { return session; });
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
 
     const orchestrator = new RetryOrchestrator(
       { workspaceDir: '/tmp/workspace' },
@@ -489,7 +499,7 @@ describe('RetryOrchestrator with judge', () => {
     expect(result.attempts).toBe(1);
     expect(result.judgeResults).toHaveLength(1);
     expect(result.judgeResults![0].verdict).toBe('APPROVE');
-    expect(judge).toHaveBeenCalledWith('/tmp/workspace', 'Fix the bug');
+    expect(judge).toHaveBeenCalledWith('/tmp/workspace', 'Fix the bug', expect.anything());
   });
 
   it('returns vetoed when judge vetoes maxJudgeVetoes times', async () => {
@@ -500,7 +510,7 @@ describe('RetryOrchestrator with judge', () => {
     // We need 2 sessions: attempt 1 (veto → retry) + attempt 2 (veto budget exhausted → vetoed)
     const session1 = createMockSession(makeSessionResult());
     const session2 = createMockSession(makeSessionResult());
-    MockAgentSession
+    MockClaudeCodeSession
       .mockImplementationOnce(function() { return session1; })
       .mockImplementationOnce(function() { return session2; });
 
@@ -526,7 +536,7 @@ describe('RetryOrchestrator with judge', () => {
 
     const session1 = createMockSession(makeSessionResult());
     const session2 = createMockSession(makeSessionResult());
-    MockAgentSession
+    MockClaudeCodeSession
       .mockImplementationOnce(function() { return session1; })
       .mockImplementationOnce(function() { return session2; });
 
@@ -549,7 +559,7 @@ describe('RetryOrchestrator with judge', () => {
   it('skips judge when not configured (backward compatibility)', async () => {
     const verifier = vi.fn().mockResolvedValue(makePassedVerification());
     const session = createMockSession(makeSessionResult());
-    MockAgentSession.mockImplementationOnce(function() { return session; });
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
 
     // No judge in config
     const orchestrator = new RetryOrchestrator(
@@ -587,7 +597,7 @@ describe('RetryOrchestrator with judge', () => {
         return makeSessionResult();
       }),
     };
-    MockAgentSession
+    MockClaudeCodeSession
       .mockImplementationOnce(function() { return session1; })
       .mockImplementationOnce(function() { return session2; });
 
@@ -611,7 +621,7 @@ describe('RetryOrchestrator with judge', () => {
     const judge = vi.fn().mockRejectedValue(new Error('Judge API unavailable'));
 
     const session = createMockSession(makeSessionResult());
-    MockAgentSession.mockImplementationOnce(function() { return session; });
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
 
     const orchestrator = new RetryOrchestrator(
       { workspaceDir: '/tmp/workspace' },

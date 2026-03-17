@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Claude Agent SDK Migration
-status: ready_to_plan
-stopped_at: null
-last_updated: "2026-03-16"
-last_activity: 2026-03-16 — Roadmap created for v2.0
+status: executing
+stopped_at: Completed 10-02-PLAN.md
+last_updated: "2026-03-17T13:03:26.572Z"
+last_activity: 2026-03-17 — Plan 10-01 complete, ClaudeCodeSession implemented
 progress:
-  total_phases: 4
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_phases: 7
+  completed_phases: 4
+  total_plans: 10
+  completed_plans: 10
+  percent: 14
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-16)
 ## Current Position
 
 Phase: 10 of 13 (Agent SDK Integration)
-Plan: — (not yet planned)
-Status: Ready to plan
-Last activity: 2026-03-16 — Roadmap created, v2.0 phases 10-13 defined
+Plan: 1 of 2 (ClaudeCodeSession complete)
+Status: In progress
+Last activity: 2026-03-17 — Plan 10-01 complete, ClaudeCodeSession implemented
 
-Progress: [░░░░░░░░░░] 0% (v2.0 phases)
+Progress: [█░░░░░░░░░] 14% (v2.0 phases)
 
 ## Performance Metrics
 
@@ -49,6 +49,7 @@ Progress: [░░░░░░░░░░] 0% (v2.0 phases)
 | 13. Container Strategy | TBD | - | - |
 
 *Updated after each plan completion*
+| Phase 10 P02 | 15m | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -58,6 +59,12 @@ Progress: [░░░░░░░░░░] 0% (v2.0 phases)
 - [v2.0 planning]: Stop hooks do not fire on maxTurns — do not rely on them for verification triggers. RetryOrchestrator remains the authoritative quality gate.
 - [v2.0 planning]: Full `@anthropic-ai/sdk` removal is out of scope — LLM Judge keeps it for structured output. Phase 11 must decide: migrate Judge to `query()`, keep as peer dep, or constrained JSON prompt.
 - [v2.0 planning]: Phase 13 MVP uses `--network bridge` + firewall rules. Full Unix proxy socket pattern deferred to v2.1.
+- [10-01]: maxBudgetUsd = 2.00 USD per session — 6-40x safety margin above typical task cost ($0.05-0.30); exhaustion maps to turn_limit (terminal).
+- [10-01]: toolCallCount counted via PostToolUse hook counter ref, not num_turns (which counts API round-trips).
+- [10-01]: error_max_budget_usd maps to turn_limit status (same as error_max_turns) — prevents RetryOrchestrator from retrying expensive failed sessions.
+- [10-01]: settingSources: [] — no filesystem config imported into agent sessions; isolation guaranteed.
+- [Phase 10-02]: useSDK defaults to true via !== false check — undefined and true both select ClaudeCodeSession path; safe default-on pattern
+- [Phase 10-02]: Commander.js --no-use-sdk sets options.useSdk = false; wired as options.useSdk !== false in runAgent to preserve undefined-as-true semantics
 
 ### Pending Todos
 
@@ -71,7 +78,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-16
-Stopped at: Roadmap creation complete
+Last session: 2026-03-17T13:00:12.942Z
+Stopped at: Completed 10-02-PLAN.md
 Resume file: None
-Next action: `/gsd:plan-phase 10`
+Next action: Execute Plan 10-02 (RetryOrchestrator wiring with --use-sdk flag)
