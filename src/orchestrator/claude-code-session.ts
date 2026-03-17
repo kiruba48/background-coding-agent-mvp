@@ -208,6 +208,15 @@ export class ClaudeCodeSession {
 
     this.abortController = new AbortController();
 
+    // Timeout guard — mirrors AgentSession's timeoutMs behavior
+    const timeoutMs = this.config.timeoutMs ?? 300_000;
+    let timedOut = false;
+    const timeoutHandle = setTimeout(() => {
+      timedOut = true;
+      log.warn({ sessionId, toolCallCount: toolCallCounter.count }, 'Session timeout reached');
+      this.abortController?.abort();
+    }, timeoutMs);
+
     const preHook = buildPreToolUseHook(workspaceDir, log);
     const postHook = buildPostToolUseHook(log, toolCallCounter);
 
@@ -243,6 +252,16 @@ export class ClaudeCodeSession {
       return mapSDKResult(finalResult, sessionId, toolCallCounter.count, Date.now() - startTime, log);
 
     } catch (err) {
+      if (timedOut) {
+        return {
+          sessionId,
+          status: 'timeout',
+          toolCallCount: toolCallCounter.count,
+          duration: Date.now() - startTime,
+          finalResponse: '',
+          error: 'Session timeout reached',
+        };
+      }
       const errMsg = err instanceof Error ? err.message : String(err);
       log.error({ sessionId, err }, 'ClaudeCodeSession failed');
       return {
@@ -254,6 +273,7 @@ export class ClaudeCodeSession {
         error: errMsg,
       };
     } finally {
+      clearTimeout(timeoutHandle);
       // Close generator to prevent subprocess leaks (Pitfall 3)
       if (queryGen) {
         try { await queryGen.return(undefined); } catch {}

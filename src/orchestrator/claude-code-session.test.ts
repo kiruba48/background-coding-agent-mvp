@@ -325,4 +325,21 @@ describe('ClaudeCodeSession', () => {
     await session.run('task');
     expect(trackedGen.wasReturnCalled()).toBe(true);
   });
+
+  // Test 16: timeout aborts session and returns timeout status
+  it('returns timeout status when session exceeds timeoutMs', async () => {
+    // Create a generator that hangs until aborted
+    mockQuery.mockImplementation((args: any) => {
+      const abortController: AbortController = args.options.abortController;
+      return (async function* () {
+        await new Promise<void>((_, reject) => {
+          abortController.signal.addEventListener('abort', () => reject(new Error('aborted')));
+        });
+      })();
+    });
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace', timeoutMs: 50 });
+    const result = await session.run('task');
+    expect(result.status).toBe('timeout');
+    expect(result.error).toBe('Session timeout reached');
+  });
 });
