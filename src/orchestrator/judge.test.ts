@@ -30,6 +30,12 @@ vi.mock('./session.js', () => {
   return { AgentSession: MockAgentSession };
 });
 
+// Mock ClaudeCodeSession — it is the default session type (useSDK !== false)
+vi.mock('./claude-code-session.js', () => {
+  const MockClaudeCodeSession = vi.fn();
+  return { ClaudeCodeSession: MockClaudeCodeSession };
+});
+
 import { execFile } from 'node:child_process';
 import {
   llmJudge,
@@ -41,8 +47,10 @@ import {
 } from './judge.js';
 import { RetryOrchestrator } from './retry.js';
 import { AgentSession } from './session.js';
+import { ClaudeCodeSession } from './claude-code-session.js';
 
 const MockAgentSession = AgentSession as ReturnType<typeof vi.fn>;
+const MockClaudeCodeSession = ClaudeCodeSession as ReturnType<typeof vi.fn>;
 
 // Cast mocks for typed access
 const mockExecFile = execFile as unknown as ReturnType<typeof vi.fn>;
@@ -476,7 +484,7 @@ describe('RetryOrchestrator with judge', () => {
     const verifier = vi.fn().mockResolvedValue(makePassedVerification());
     const judge = makeJudgeFn(makeApproveResult());
     const session = createMockSession(makeSessionResult());
-    MockAgentSession.mockImplementationOnce(function() { return session; });
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
 
     const orchestrator = new RetryOrchestrator(
       { workspaceDir: '/tmp/workspace' },
@@ -500,7 +508,7 @@ describe('RetryOrchestrator with judge', () => {
     // We need 2 sessions: attempt 1 (veto → retry) + attempt 2 (veto budget exhausted → vetoed)
     const session1 = createMockSession(makeSessionResult());
     const session2 = createMockSession(makeSessionResult());
-    MockAgentSession
+    MockClaudeCodeSession
       .mockImplementationOnce(function() { return session1; })
       .mockImplementationOnce(function() { return session2; });
 
@@ -526,7 +534,7 @@ describe('RetryOrchestrator with judge', () => {
 
     const session1 = createMockSession(makeSessionResult());
     const session2 = createMockSession(makeSessionResult());
-    MockAgentSession
+    MockClaudeCodeSession
       .mockImplementationOnce(function() { return session1; })
       .mockImplementationOnce(function() { return session2; });
 
@@ -549,7 +557,7 @@ describe('RetryOrchestrator with judge', () => {
   it('skips judge when not configured (backward compatibility)', async () => {
     const verifier = vi.fn().mockResolvedValue(makePassedVerification());
     const session = createMockSession(makeSessionResult());
-    MockAgentSession.mockImplementationOnce(function() { return session; });
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
 
     // No judge in config
     const orchestrator = new RetryOrchestrator(
@@ -587,7 +595,7 @@ describe('RetryOrchestrator with judge', () => {
         return makeSessionResult();
       }),
     };
-    MockAgentSession
+    MockClaudeCodeSession
       .mockImplementationOnce(function() { return session1; })
       .mockImplementationOnce(function() { return session2; });
 
@@ -611,7 +619,7 @@ describe('RetryOrchestrator with judge', () => {
     const judge = vi.fn().mockRejectedValue(new Error('Judge API unavailable'));
 
     const session = createMockSession(makeSessionResult());
-    MockAgentSession.mockImplementationOnce(function() { return session; });
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
 
     const orchestrator = new RetryOrchestrator(
       { workspaceDir: '/tmp/workspace' },

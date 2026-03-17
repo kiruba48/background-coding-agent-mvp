@@ -1,5 +1,6 @@
 import pino from 'pino';
 import { AgentSession, SessionConfig } from './session.js';
+import { ClaudeCodeSession } from './claude-code-session.js';
 import { SessionResult, RetryConfig, RetryResult, VerificationResult, JudgeResult } from '../types.js';
 import { ErrorSummarizer } from './summarizer.js';
 
@@ -24,7 +25,7 @@ import { ErrorSummarizer } from './summarizer.js';
 export class RetryOrchestrator {
   private config: SessionConfig;
   private retryConfig: RetryConfig;
-  private activeSession: AgentSession | null = null;
+  private activeSession: AgentSession | ClaudeCodeSession | null = null;
 
   constructor(sessionConfig: SessionConfig, retryConfig: RetryConfig = { maxRetries: 3 }) {
     this.config = sessionConfig;
@@ -64,10 +65,12 @@ export class RetryOrchestrator {
         ? originalTask
         : this.buildRetryMessage(originalTask, attempt, verificationResults);
 
-      // CRITICAL: Create a fresh AgentSession for each attempt.
+      // CRITICAL: Create a fresh session for each attempt.
       // Never reuse sessions — prior conversation history accumulates and
       // fills the context window, causing the model to forget the original task.
-      const session = new AgentSession(this.config);
+      const session = this.config.useSDK !== false
+        ? new ClaudeCodeSession(this.config)
+        : new AgentSession(this.config);
       this.activeSession = session;
 
       let sessionResult: SessionResult;
