@@ -37,7 +37,7 @@ Full details: See archived phase details below.
 
 **Milestone Goal:** Replace ~1,200 lines of custom agent infrastructure with the Claude Agent SDK `query()` call. Delete AgentSession, AgentClient, and ContainerManager. Gain built-in tools, auto context compression, native hooks, and an optional MCP verifier server.
 
-- [ ] **Phase 10: Agent SDK Integration** - Replace AgentSession with AgentSdkSession wrapping `query()`; all security defaults established
+- [x] **Phase 10: Agent SDK Integration** - Replace AgentSession with AgentSdkSession wrapping `query()`; all security defaults established (completed 2026-03-17)
 - [ ] **Phase 11: Legacy Deletion** - Delete agent.ts, session.ts, container.ts and their ~650 lines of tests
 - [ ] **Phase 12: MCP Verifier Server** - Expose compositeVerifier as `mcp__verifier__verify` tool for mid-session self-correction
 - [ ] **Phase 13: Container Strategy** - Run Agent SDK inside Docker with network isolation equivalent to v1.1
@@ -148,7 +148,7 @@ Plans:
 | 7. GitHub PR Creation | v1.1 | 2/2 | Complete | 2026-03-02 |
 | 8. Maven Dependency Update | v1.1 | 3/3 | Complete | 2026-03-05 |
 | 9. npm Dependency Update | v1.1 | 3/3 | Complete | 2026-03-11 |
-| 10. Agent SDK Integration | 1/2 | In Progress|  | - |
+| 10. Agent SDK Integration | 2/2 | Complete   | 2026-03-17 | - |
 | 11. Legacy Deletion | v2.0 | 0/TBD | Not started | - |
 | 12. MCP Verifier Server | v2.0 | 0/TBD | Not started | - |
 | 13. Container Strategy | v2.0 | 0/TBD | Not started | - |

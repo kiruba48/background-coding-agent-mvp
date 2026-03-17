@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Claude Agent SDK Migration
-status: in_progress
-stopped_at: Completed 10-01-PLAN.md
-last_updated: "2026-03-17T13:07:20Z"
+status: executing
+stopped_at: Completed 10-02-PLAN.md
+last_updated: "2026-03-17T13:00:12.944Z"
 last_activity: 2026-03-17 — Plan 10-01 complete, ClaudeCodeSession implemented
 progress:
   total_phases: 7
-  completed_phases: 3
-  total_plans: 9
-  completed_plans: 9
+  completed_phases: 4
+  total_plans: 10
+  completed_plans: 10
   percent: 14
 ---
 
@@ -49,6 +49,7 @@ Progress: [█░░░░░░░░░] 14% (v2.0 phases)
 | 13. Container Strategy | TBD | - | - |
 
 *Updated after each plan completion*
+| Phase 10 P02 | 15m | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -62,6 +63,8 @@ Progress: [█░░░░░░░░░] 14% (v2.0 phases)
 - [10-01]: toolCallCount counted via PostToolUse hook counter ref, not num_turns (which counts API round-trips).
 - [10-01]: error_max_budget_usd maps to turn_limit status (same as error_max_turns) — prevents RetryOrchestrator from retrying expensive failed sessions.
 - [10-01]: settingSources: [] — no filesystem config imported into agent sessions; isolation guaranteed.
+- [Phase 10-02]: useSDK defaults to true via !== false check — undefined and true both select ClaudeCodeSession path; safe default-on pattern
+- [Phase 10-02]: Commander.js --no-use-sdk sets options.useSdk = false; wired as options.useSdk !== false in runAgent to preserve undefined-as-true semantics
 
 ### Pending Todos
 
@@ -75,7 +78,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-17T13:07:20Z
-Stopped at: Completed 10-01-PLAN.md
-Resume file: .planning/phases/10-agent-sdk-integration/10-01-SUMMARY.md
+Last session: 2026-03-17T13:00:12.942Z
+Stopped at: Completed 10-02-PLAN.md
+Resume file: None
 Next action: Execute Plan 10-02 (RetryOrchestrator wiring with --use-sdk flag)
