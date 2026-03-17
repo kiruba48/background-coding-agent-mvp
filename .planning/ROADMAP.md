@@ -98,7 +98,10 @@ Plans:
   3. Every file change (Edit/Write tool calls) appears in the session audit log with path, tool name, and timestamp — via PostToolUse hook
   4. `WebSearch` and `WebFetch` tool calls are refused by the SDK without prompting — `disallowedTools` enforced at session start
   5. When the agent exhausts `maxTurns: 10`, `SessionResult.status` is `"turn_limit"` — not `"failed"` — so RetryOrchestrator does not retry an exhausted session
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 10-01-PLAN.md — Install SDK, implement ClaudeCodeSession with security hooks and TDD test suite
+- [ ] 10-02-PLAN.md — Wire ClaudeCodeSession into RetryOrchestrator and CLI (--use-sdk flag)
 
 ### Phase 11: Legacy Deletion
 **Goal**: All custom agent infrastructure code is deleted and the codebase contains no references to AgentSession, AgentClient, or ContainerManager — the only agent runtime is the SDK
@@ -145,7 +148,7 @@ Plans:
 | 7. GitHub PR Creation | v1.1 | 2/2 | Complete | 2026-03-02 |
 | 8. Maven Dependency Update | v1.1 | 3/3 | Complete | 2026-03-05 |
 | 9. npm Dependency Update | v1.1 | 3/3 | Complete | 2026-03-11 |
-| 10. Agent SDK Integration | v2.0 | 0/TBD | Not started | - |
+| 10. Agent SDK Integration | v2.0 | 0/2 | Planning | - |
 | 11. Legacy Deletion | v2.0 | 0/TBD | Not started | - |
 | 12. MCP Verifier Server | v2.0 | 0/TBD | Not started | - |
 | 13. Container Strategy | v2.0 | 0/TBD | Not started | - |
