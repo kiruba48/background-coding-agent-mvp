@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Claude Agent SDK Migration
-status: planning
-stopped_at: Phase 10 context gathered
-last_updated: "2026-03-16T20:32:38.779Z"
-last_activity: 2026-03-16 — Roadmap created, v2.0 phases 10-13 defined
+status: in_progress
+stopped_at: Completed 10-01-PLAN.md
+last_updated: "2026-03-17T13:07:20Z"
+last_activity: 2026-03-17 — Plan 10-01 complete, ClaudeCodeSession implemented
 progress:
   total_phases: 7
   completed_phases: 3
-  total_plans: 8
-  completed_plans: 8
-  percent: 0
+  total_plans: 9
+  completed_plans: 9
+  percent: 14
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-16)
 ## Current Position
 
 Phase: 10 of 13 (Agent SDK Integration)
-Plan: — (not yet planned)
-Status: Ready to plan
-Last activity: 2026-03-16 — Roadmap created, v2.0 phases 10-13 defined
+Plan: 1 of 2 (ClaudeCodeSession complete)
+Status: In progress
+Last activity: 2026-03-17 — Plan 10-01 complete, ClaudeCodeSession implemented
 
-Progress: [░░░░░░░░░░] 0% (v2.0 phases)
+Progress: [█░░░░░░░░░] 14% (v2.0 phases)
 
 ## Performance Metrics
 
@@ -58,6 +58,10 @@ Progress: [░░░░░░░░░░] 0% (v2.0 phases)
 - [v2.0 planning]: Stop hooks do not fire on maxTurns — do not rely on them for verification triggers. RetryOrchestrator remains the authoritative quality gate.
 - [v2.0 planning]: Full `@anthropic-ai/sdk` removal is out of scope — LLM Judge keeps it for structured output. Phase 11 must decide: migrate Judge to `query()`, keep as peer dep, or constrained JSON prompt.
 - [v2.0 planning]: Phase 13 MVP uses `--network bridge` + firewall rules. Full Unix proxy socket pattern deferred to v2.1.
+- [10-01]: maxBudgetUsd = 2.00 USD per session — 6-40x safety margin above typical task cost ($0.05-0.30); exhaustion maps to turn_limit (terminal).
+- [10-01]: toolCallCount counted via PostToolUse hook counter ref, not num_turns (which counts API round-trips).
+- [10-01]: error_max_budget_usd maps to turn_limit status (same as error_max_turns) — prevents RetryOrchestrator from retrying expensive failed sessions.
+- [10-01]: settingSources: [] — no filesystem config imported into agent sessions; isolation guaranteed.
 
 ### Pending Todos
 
@@ -71,7 +75,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-16T20:32:38.776Z
-Stopped at: Phase 10 context gathered
-Resume file: .planning/phases/10-agent-sdk-integration/10-CONTEXT.md
-Next action: `/gsd:plan-phase 10`
+Last session: 2026-03-17T13:07:20Z
+Stopped at: Completed 10-01-PLAN.md
+Resume file: .planning/phases/10-agent-sdk-integration/10-01-SUMMARY.md
+Next action: Execute Plan 10-02 (RetryOrchestrator wiring with --use-sdk flag)

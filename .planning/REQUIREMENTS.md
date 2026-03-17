@@ -9,16 +9,16 @@ Requirements for Claude Agent SDK migration. Each maps to roadmap phases.
 
 ### SDK Integration
 
-- [ ] **SDK-01**: Agent sessions use Claude Agent SDK `query()` instead of custom AgentSession/AgentClient
-- [ ] **SDK-02**: Built-in tools (Read, Write, Edit, Bash, Glob, Grep) replace all 6 hand-built tools
-- [ ] **SDK-03**: Permission mode `acceptEdits` auto-approves file operations without manual interception
-- [ ] **SDK-04**: `disallowedTools` blocks WebSearch/WebFetch in sandbox runs
-- [ ] **SDK-05**: `maxTurns` option replaces manual turn counter
-- [ ] **SDK-06**: `systemPrompt` option replaces custom prompt construction
-- [ ] **SDK-07**: PostToolUse hook logs every file change (Edit/Write) to audit trail
-- [ ] **SDK-08**: PreToolUse hook blocks writes outside repo path and to sensitive files (.env, .git)
-- [ ] **SDK-09**: `maxBudgetUsd` caps session cost as a hard USD limit
-- [ ] **SDK-10**: `ClaudeCodeSession` wrapper returns `SessionResult` compatible with RetryOrchestrator interface
+- [x] **SDK-01**: Agent sessions use Claude Agent SDK `query()` instead of custom AgentSession/AgentClient
+- [x] **SDK-02**: Built-in tools (Read, Write, Edit, Bash, Glob, Grep) replace all 6 hand-built tools
+- [x] **SDK-03**: Permission mode `acceptEdits` auto-approves file operations without manual interception
+- [x] **SDK-04**: `disallowedTools` blocks WebSearch/WebFetch in sandbox runs
+- [x] **SDK-05**: `maxTurns` option replaces manual turn counter
+- [x] **SDK-06**: `systemPrompt` option replaces custom prompt construction
+- [x] **SDK-07**: PostToolUse hook logs every file change (Edit/Write) to audit trail
+- [x] **SDK-08**: PreToolUse hook blocks writes outside repo path and to sensitive files (.env, .git)
+- [x] **SDK-09**: `maxBudgetUsd` caps session cost as a hard USD limit
+- [x] **SDK-10**: `ClaudeCodeSession` wrapper returns `SessionResult` compatible with RetryOrchestrator interface
 
 ### Legacy Deletion
 
@@ -74,16 +74,16 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SDK-01 | Phase 10 | Pending |
-| SDK-02 | Phase 10 | Pending |
-| SDK-03 | Phase 10 | Pending |
-| SDK-04 | Phase 10 | Pending |
-| SDK-05 | Phase 10 | Pending |
-| SDK-06 | Phase 10 | Pending |
-| SDK-07 | Phase 10 | Pending |
-| SDK-08 | Phase 10 | Pending |
-| SDK-09 | Phase 10 | Pending |
-| SDK-10 | Phase 10 | Pending |
+| SDK-01 | Phase 10 | Complete |
+| SDK-02 | Phase 10 | Complete |
+| SDK-03 | Phase 10 | Complete |
+| SDK-04 | Phase 10 | Complete |
+| SDK-05 | Phase 10 | Complete |
+| SDK-06 | Phase 10 | Complete |
+| SDK-07 | Phase 10 | Complete |
+| SDK-08 | Phase 10 | Complete |
+| SDK-09 | Phase 10 | Complete |
+| SDK-10 | Phase 10 | Complete |
 | DEL-01 | Phase 11 | Pending |
 | DEL-02 | Phase 11 | Pending |
 | DEL-03 | Phase 11 | Pending |
