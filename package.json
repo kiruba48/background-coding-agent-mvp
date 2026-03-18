@@ -2,7 +2,7 @@
   "name": "background-coding-agent",
   "version": "0.1.0",
   "type": "module",
-  "description": "AI coding agent that creates pull requests by autonomously coding in isolated Docker containers",
+  "description": "AI coding agent that creates pull requests using the Claude Agent SDK",
   "main": "dist/index.js",
   "bin": {
     "background-agent": "./bin/cli.js"
@@ -17,7 +17,7 @@
   "keywords": [
     "ai",
     "claude",
-    "docker",
+    "sdk",
     "automation",
     "coding-agent"
   ],

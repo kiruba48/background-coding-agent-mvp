@@ -1,4 +1,5 @@
 import * as crypto from 'crypto';
+import * as fs from 'fs';
 import * as nodePath from 'path';
 import {
   query,
@@ -8,15 +9,14 @@ import {
   type SDKResultMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import pino from 'pino';
-import { type SessionConfig } from '../types.js';
-import { type SessionResult } from '../types.js';
+import { type SessionConfig, type SessionResult } from '../types.js';
 
-// Patterns for sensitive files that must never be written by the agent
+// Patterns for sensitive files that must never be written by the agent.
+// Patterns use (?:^|\/) to match at any directory depth (V-2).
 const SENSITIVE_PATTERNS = [
-  /^\.env$/,
-  /^\.env\./,
-  /^\.git\//,
-  /\/\.git\//,
+  /(?:^|\/)\.env$/,
+  /(?:^|\/)\.env\./,
+  /(?:^|\/)\.git\//,
   /private_key/i,
   /\.pem$/,
   /\.key$/,
@@ -27,7 +27,15 @@ const SENSITIVE_PATTERNS = [
  * and to sensitive file patterns (SDK-08).
  */
 function buildPreToolUseHook(workspaceDir: string, logger: pino.Logger): HookCallback {
-  const resolvedRepo = nodePath.resolve(workspaceDir);
+  // Resolve symlinks on the repo root so symlink-based escapes are caught (V-1).
+  // Fall back to path.resolve if the directory doesn't exist yet (e.g. in tests).
+  const rawRepo = nodePath.resolve(workspaceDir);
+  let resolvedRepo: string;
+  try {
+    resolvedRepo = fs.realpathSync(rawRepo);
+  } catch {
+    resolvedRepo = rawRepo;
+  }
 
   return async (input, toolUseId) => {
     const preInput = input as PreToolUseHookInput;
@@ -37,9 +45,26 @@ function buildPreToolUseHook(workspaceDir: string, logger: pino.Logger): HookCal
     // No path to check (e.g. Bash tool) — allow
     if (!rawPath) return {};
 
-    const resolvedPath = nodePath.resolve(resolvedRepo, rawPath);
+    // Resolve the candidate path, then follow symlinks to get the real target.
+    // If the file doesn't exist yet (new file write), realpathSync throws —
+    // fall back to resolving the parent directory which must exist.
+    const candidatePath = nodePath.resolve(resolvedRepo, rawPath);
+    let resolvedPath: string;
+    try {
+      resolvedPath = fs.realpathSync(candidatePath);
+    } catch {
+      // File doesn't exist yet — resolve parent dir + filename
+      const parentDir = nodePath.dirname(candidatePath);
+      try {
+        resolvedPath = nodePath.join(fs.realpathSync(parentDir), nodePath.basename(candidatePath));
+      } catch {
+        // Parent also doesn't exist — use candidate as-is (will fail the prefix check
+        // if it's outside the repo, which is the safe default)
+        resolvedPath = candidatePath;
+      }
+    }
 
-    // Check 1: path traversal / outside repo
+    // Check 1: path traversal / outside repo (using real paths to defeat symlink bypass)
     if (!resolvedPath.startsWith(resolvedRepo + nodePath.sep) && resolvedPath !== resolvedRepo) {
       const reason = `Security: write outside repo path blocked (${rawPath})`;
       logger.warn({ type: 'audit', tool: preInput.tool_name, path: rawPath, reason, toolUseId }, 'tool_blocked');
@@ -99,6 +124,15 @@ function buildPostToolUseHook(logger: pino.Logger, counterRef: { count: number }
 }
 
 /**
+ * Extended SDK result fields not yet in the published type definitions.
+ * Remove once @anthropic-ai/claude-agent-sdk exports these (P-2).
+ */
+type SDKResultFields = SDKResultMessage & {
+  result?: string;
+  errors?: string[];
+};
+
+/**
  * Map an SDKResultMessage to the SessionResult interface (SDK-10).
  */
 function mapSDKResult(
@@ -133,7 +167,7 @@ function mapSDKResult(
         status: 'success',
         toolCallCount,
         duration,
-        finalResponse: (finalResult as any).result ?? '',
+        finalResponse: (finalResult as SDKResultFields).result ?? '',
       };
 
     case 'error_max_turns':
@@ -165,7 +199,7 @@ function mapSDKResult(
         toolCallCount,
         duration,
         finalResponse: '',
-        error: (finalResult as any).errors?.join('; ') ?? 'Session failed',
+        error: (finalResult as SDKResultFields).errors?.join('; ') ?? 'Session failed',
       };
   }
 }

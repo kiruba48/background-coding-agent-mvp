@@ -52,8 +52,8 @@ export async function runAgent(options: RunOptions): Promise<number> {
     childLogger.info('LLM Judge disabled via --no-judge or JUDGE_ENABLED=false');
   }
 
-  // Host-side npm install: regenerate lockfile after agent edits package.json in Docker.
-  // Agent has no network access in Docker; npm install must run on host.
+  // Host-side npm install: regenerate lockfile after agent edits package.json.
+  // Agent SDK session has no network access; npm install must run on host.
   const preVerify = options.taskType === 'npm-dependency-update'
     ? async (workspaceDir: string): Promise<void> => {
         childLogger.info('Running host-side npm install to regenerate lockfile...');
@@ -94,7 +94,7 @@ export async function runAgent(options: RunOptions): Promise<number> {
   const metrics = new MetricsCollector();
 
   // Register signal handlers for graceful cleanup.
-  // Must await orchestrator.stop() to tear down the active Docker container
+  // Must await orchestrator.stop() to abort the active SDK session
   // before exiting — process.exit() alone skips async cleanup.
   process.once('SIGINT', async () => {
     childLogger.info('Received SIGINT, cleaning up...');

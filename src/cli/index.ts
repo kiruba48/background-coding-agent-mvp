@@ -7,7 +7,7 @@ const program = new Command();
 
 program
   .name('background-agent')
-  .description('Run background coding agent in isolated Docker sandbox')
+  .description('Run background coding agent using Claude Agent SDK')
   .version('0.1.0')
   .requiredOption('-t, --task-type <type>', 'Task type (e.g., maven-dependency-update, npm-dependency-update)')
   .requiredOption('-r, --repo <path>', 'Target repository path (absolute or relative)')

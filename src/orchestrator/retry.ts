@@ -1,8 +1,7 @@
 import pino from 'pino';
-import { type SessionConfig } from '../types.js';
+import { type SessionConfig, SessionResult, RetryConfig, RetryResult, VerificationResult, JudgeResult } from '../types.js';
 import { ClaudeCodeSession } from './claude-code-session.js';
 import { captureBaselineSha } from './judge.js';
-import { SessionResult, RetryConfig, RetryResult, VerificationResult, JudgeResult } from '../types.js';
 import { ErrorSummarizer } from './summarizer.js';
 
 /**
@@ -31,7 +30,7 @@ export class RetryOrchestrator {
 
   /**
    * Stop the currently active session, if any.
-   * Called from signal handlers to ensure Docker containers are cleaned up.
+   * Called from signal handlers to ensure the active session is cleaned up.
    */
   async stop(): Promise<void> {
     if (this.activeSession) {
@@ -77,7 +76,7 @@ export class RetryOrchestrator {
         await session.start();
         sessionResult = await session.run(message, logger);
       } finally {
-        // Always clean up container, even on error (including start() failures)
+        // Always clean up session, even on error (including start() failures)
         await session.stop();
         this.activeSession = null;
       }

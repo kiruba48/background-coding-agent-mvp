@@ -180,7 +180,7 @@ describe('RetryOrchestrator', () => {
 
   it('7. session failed stops retrying immediately', async () => {
     const verifier = vi.fn();
-    const session = createMockSession(makeSessionResult({ status: 'failed', error: 'Docker crashed' }));
+    const session = createMockSession(makeSessionResult({ status: 'failed', error: 'Session crashed' }));
     MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
 
     const orchestrator = new RetryOrchestrator(
@@ -192,7 +192,7 @@ describe('RetryOrchestrator', () => {
 
     expect(result.finalStatus).toBe('failed');
     expect(result.attempts).toBe(1);
-    expect(result.error).toBe('Docker crashed');
+    expect(result.error).toBe('Session crashed');
     expect(verifier).not.toHaveBeenCalled();
   });
 
@@ -306,7 +306,7 @@ describe('RetryOrchestrator', () => {
 
   it('12. session.start() failure cleans up via finally block', async () => {
     const session = createMockSession(makeSessionResult());
-    session.start.mockRejectedValue(new Error('Docker daemon not running'));
+    session.start.mockRejectedValue(new Error('Session init failed'));
     MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
 
     const orchestrator = new RetryOrchestrator(
@@ -314,7 +314,7 @@ describe('RetryOrchestrator', () => {
       { maxRetries: 3 }
     );
 
-    await expect(orchestrator.run('Fix the bug')).rejects.toThrow('Docker daemon not running');
+    await expect(orchestrator.run('Fix the bug')).rejects.toThrow('Session init failed');
     // stop() must have been called even though start() threw
     expect(session.stop).toHaveBeenCalled();
   });
@@ -374,7 +374,7 @@ describe('RetryOrchestrator', () => {
   it('16. preVerify is not called when session fails', async () => {
     const preVerify = vi.fn().mockResolvedValue(undefined);
     const verifier = vi.fn().mockResolvedValue(makePassedVerification());
-    const session = createMockSession(makeSessionResult({ status: 'failed', error: 'Docker crashed' }));
+    const session = createMockSession(makeSessionResult({ status: 'failed', error: 'Session crashed' }));
     MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
 
     const orchestrator = new RetryOrchestrator(
