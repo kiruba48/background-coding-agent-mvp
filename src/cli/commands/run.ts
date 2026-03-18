@@ -22,7 +22,6 @@ export interface RunOptions {
   branchOverride?: string;  // --branch value, if provided
   dep?: string;              // groupId:artifactId for dependency update tasks
   targetVersion?: string;    // target version for dependency update tasks
-  useSDK?: boolean;          // default: true — use ClaudeCodeSession; --no-use-sdk falls back to legacy AgentSession
 }
 
 /**
@@ -81,7 +80,6 @@ export async function runAgent(options: RunOptions): Promise<number> {
       turnLimit: options.turnLimit,
       timeoutMs: options.timeout * 1000,  // convert seconds to ms
       logger: childLogger,
-      useSDK: options.useSDK,
     },
     {
       maxRetries: options.maxRetries,

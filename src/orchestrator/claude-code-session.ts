@@ -8,7 +8,7 @@ import {
   type SDKResultMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import pino from 'pino';
-import { type SessionConfig } from './session.js';
+import { type SessionConfig } from '../types.js';
 import { type SessionResult } from '../types.js';
 
 // Patterns for sensitive files that must never be written by the agent
@@ -175,9 +175,6 @@ function mapSDKResult(
  * - Security hooks (PreToolUse: path blocking, PostToolUse: audit logging)
  * - Correct SDK options (permissionMode, disallowedTools, maxTurns, maxBudgetUsd)
  * - SessionResult interface compatible with RetryOrchestrator
- *
- * This class is a drop-in replacement for AgentSession in RetryOrchestrator.
- * start() and stop() match the AgentSession interface (Pitfall 7).
  */
 export class ClaudeCodeSession {
   private config: SessionConfig;
@@ -189,7 +186,6 @@ export class ClaudeCodeSession {
 
   /**
    * No-op: SDK needs no container startup.
-   * Matches AgentSession.start() signature for RetryOrchestrator compatibility.
    */
   async start(): Promise<void> {}
 
@@ -208,7 +204,7 @@ export class ClaudeCodeSession {
 
     this.abortController = new AbortController();
 
-    // Timeout guard — mirrors AgentSession's timeoutMs behavior
+    // Timeout guard — aborts SDK query when timeoutMs elapses
     const timeoutMs = this.config.timeoutMs ?? 300_000;
     let timedOut = false;
     const timeoutHandle = setTimeout(() => {

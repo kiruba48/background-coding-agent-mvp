@@ -1,14 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { SessionResult, VerificationResult } from '../types.js';
 
-// Mock AgentSession before importing RetryOrchestrator.
-// Must use vi.mock with a factory. The factory runs in hoisted context.
-vi.mock('./session.js', () => {
-  const MockAgentSession = vi.fn();
-  return { AgentSession: MockAgentSession };
-});
-
-// Mock ClaudeCodeSession — it is the default session type (useSDK !== false).
+// Mock ClaudeCodeSession — the only session type after legacy deletion.
 // Without this mock, tests would attempt real SDK calls.
 vi.mock('./claude-code-session.js', () => {
   const MockClaudeCodeSession = vi.fn();
@@ -17,10 +10,8 @@ vi.mock('./claude-code-session.js', () => {
 
 // Import AFTER mocks are set up
 import { RetryOrchestrator } from './retry.js';
-import { AgentSession } from './session.js';
 import { ClaudeCodeSession } from './claude-code-session.js';
 
-const MockAgentSession = AgentSession as ReturnType<typeof vi.fn>;
 const MockClaudeCodeSession = ClaudeCodeSession as ReturnType<typeof vi.fn>;
 
 // Helper to create a mock session object with configurable run result
@@ -268,7 +259,7 @@ describe('RetryOrchestrator', () => {
 
     await orchestrator.run('Fix the bug');
 
-    // ClaudeCodeSession constructor should have been called once per attempt (default useSDK)
+    // ClaudeCodeSession constructor should have been called once per attempt
     expect(MockClaudeCodeSession.mock.calls).toHaveLength(3);
   });
 

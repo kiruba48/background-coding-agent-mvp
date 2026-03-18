@@ -24,13 +24,7 @@ vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
 }));
 
-// Mock AgentSession before importing RetryOrchestrator
-vi.mock('./session.js', () => {
-  const MockAgentSession = vi.fn();
-  return { AgentSession: MockAgentSession };
-});
-
-// Mock ClaudeCodeSession — it is the default session type (useSDK !== false)
+// Mock ClaudeCodeSession — the only session type after legacy deletion
 vi.mock('./claude-code-session.js', () => {
   const MockClaudeCodeSession = vi.fn();
   return { ClaudeCodeSession: MockClaudeCodeSession };
@@ -46,10 +40,8 @@ import {
   MIN_DIFF_CHARS,
 } from './judge.js';
 import { RetryOrchestrator } from './retry.js';
-import { AgentSession } from './session.js';
 import { ClaudeCodeSession } from './claude-code-session.js';
 
-const MockAgentSession = AgentSession as ReturnType<typeof vi.fn>;
 const MockClaudeCodeSession = ClaudeCodeSession as ReturnType<typeof vi.fn>;
 
 // Cast mocks for typed access
