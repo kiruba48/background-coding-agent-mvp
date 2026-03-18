@@ -428,7 +428,7 @@ describe('llmJudge', () => {
 // RetryOrchestrator with judge integration
 // ============================================================
 
-/** Helper to create a mock AgentSession with configurable run result */
+/** Helper to create a mock session with configurable run result */
 function createMockSession(result: SessionResult): object {
   return {
     start: vi.fn().mockResolvedValue(undefined),
