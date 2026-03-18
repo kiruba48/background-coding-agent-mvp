@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Claude Agent SDK Migration
 status: executing
-stopped_at: Completed 11-01-PLAN.md
-last_updated: "2026-03-18T08:54:51.888Z"
+stopped_at: Completed 11-02-PLAN.md
+last_updated: "2026-03-18T08:58:26.645Z"
 last_activity: 2026-03-17 — Plan 10-01 complete, ClaudeCodeSession implemented
 progress:
   total_phases: 7
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 12
-  completed_plans: 11
+  completed_plans: 12
   percent: 14
 ---
 
@@ -51,6 +51,7 @@ Progress: [█░░░░░░░░░] 14% (v2.0 phases)
 *Updated after each plan completion*
 | Phase 10 P02 | 15m | 2 tasks | 7 files |
 | Phase 11 P01 | 3m 12s | 2 tasks | 15 files |
+| Phase 11 P02 | 3m | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -69,6 +70,7 @@ Progress: [█░░░░░░░░░] 14% (v2.0 phases)
 - [Phase 11-01]: SessionConfig migrated to src/types.ts without useSDK or image fields — single source of truth for session configuration
 - [Phase 11-01]: ContainerConfig and ToolResult removed from types.ts — exclusively used by deleted legacy files
 - [Phase 11-01]: RetryOrchestrator simplified to unconditional new ClaudeCodeSession(this.config) — no conditional branch
+- [Phase Phase 11-02]: vitest.config.ts at project root excludes dist/ and node_modules/ — prevents compiled JS files from being picked up as test suites
 
 ### Pending Todos
 
@@ -82,7 +84,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-18T08:54:51.886Z
-Stopped at: Completed 11-01-PLAN.md
+Last session: 2026-03-18T08:58:26.642Z
+Stopped at: Completed 11-02-PLAN.md
 Resume file: None
 Next action: Execute Plan 10-02 (RetryOrchestrator wiring with --use-sdk flag)
