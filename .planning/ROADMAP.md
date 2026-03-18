@@ -39,7 +39,7 @@ Full details: See archived phase details below.
 
 - [x] **Phase 10: Agent SDK Integration** - Replace AgentSession with AgentSdkSession wrapping `query()`; all security defaults established (completed 2026-03-17)
 - [x] **Phase 11: Legacy Deletion** - Delete agent.ts, session.ts, container.ts and their ~650 lines of tests (completed 2026-03-18)
-- [ ] **Phase 12: MCP Verifier Server** - Expose compositeVerifier as `mcp__verifier__verify` tool for mid-session self-correction
+- [x] **Phase 12: MCP Verifier Server** - Expose compositeVerifier as `mcp__verifier__verify` tool for mid-session self-correction (completed 2026-03-18)
 - [ ] **Phase 13: Container Strategy** - Run Agent SDK inside Docker with network isolation equivalent to v1.1
 
 ## Phase Details
@@ -156,5 +156,5 @@ Plans:
 | 9. npm Dependency Update | v1.1 | 3/3 | Complete | 2026-03-11 |
 | 10. Agent SDK Integration | v2.0 | 2/2 | Complete | 2026-03-17 |
 | 11. Legacy Deletion | 2/2 | Complete    | 2026-03-18 | - |
-| 12. MCP Verifier Server | 1/2 | In Progress|  | - |
+| 12. MCP Verifier Server | 2/2 | Complete   | 2026-03-18 | - |
 | 13. Container Strategy | v2.0 | 0/TBD | Not started | - |
