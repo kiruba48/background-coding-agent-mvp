@@ -22,11 +22,11 @@ Requirements for Claude Agent SDK migration. Each maps to roadmap phases.
 
 ### Legacy Deletion
 
-- [ ] **DEL-01**: `agent.ts` (AgentClient) deleted — replaced by Agent SDK built-in agentic loop
-- [ ] **DEL-02**: `session.ts` (AgentSession) deleted — replaced by ClaudeCodeSession wrapper
-- [ ] **DEL-03**: `container.ts` (ContainerManager) deleted — replaced by spawnClaudeCodeProcess
-- [ ] **DEL-04**: `dockerode` dependency removed from package.json
-- [ ] **DEL-05**: All tests for deleted files replaced with ClaudeCodeSession integration tests
+- [x] **DEL-01**: `agent.ts` (AgentClient) deleted — replaced by Agent SDK built-in agentic loop
+- [x] **DEL-02**: `session.ts` (AgentSession) deleted — replaced by ClaudeCodeSession wrapper
+- [x] **DEL-03**: `container.ts` (ContainerManager) deleted — replaced by spawnClaudeCodeProcess
+- [x] **DEL-04**: `dockerode` dependency removed from package.json
+- [x] **DEL-05**: All tests for deleted files replaced with ClaudeCodeSession integration tests
 
 ### MCP Verifier
 
@@ -84,11 +84,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SDK-08 | Phase 10 | Complete |
 | SDK-09 | Phase 10 | Complete |
 | SDK-10 | Phase 10 | Complete |
-| DEL-01 | Phase 11 | Pending |
-| DEL-02 | Phase 11 | Pending |
-| DEL-03 | Phase 11 | Pending |
-| DEL-04 | Phase 11 | Pending |
-| DEL-05 | Phase 11 | Pending |
+| DEL-01 | Phase 11 | Complete |
+| DEL-02 | Phase 11 | Complete |
+| DEL-03 | Phase 11 | Complete |
+| DEL-04 | Phase 11 | Complete |
+| DEL-05 | Phase 11 | Complete |
 | MCP-01 | Phase 12 | Pending |
 | MCP-02 | Phase 12 | Pending |
 | MCP-03 | Phase 12 | Pending |

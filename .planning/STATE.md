@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Claude Agent SDK Migration
 status: executing
-stopped_at: Completed 10-02-PLAN.md
-last_updated: "2026-03-17T13:03:26.572Z"
+stopped_at: Completed 11-02-PLAN.md
+last_updated: "2026-03-18T09:01:31.942Z"
 last_activity: 2026-03-17 — Plan 10-01 complete, ClaudeCodeSession implemented
 progress:
   total_phases: 7
-  completed_phases: 4
-  total_plans: 10
-  completed_plans: 10
+  completed_phases: 5
+  total_plans: 12
+  completed_plans: 12
   percent: 14
 ---
 
@@ -50,6 +50,8 @@ Progress: [█░░░░░░░░░] 14% (v2.0 phases)
 
 *Updated after each plan completion*
 | Phase 10 P02 | 15m | 2 tasks | 7 files |
+| Phase 11 P01 | 3m 12s | 2 tasks | 15 files |
+| Phase 11 P02 | 3m | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -65,6 +67,10 @@ Progress: [█░░░░░░░░░] 14% (v2.0 phases)
 - [10-01]: settingSources: [] — no filesystem config imported into agent sessions; isolation guaranteed.
 - [Phase 10-02]: useSDK defaults to true via !== false check — undefined and true both select ClaudeCodeSession path; safe default-on pattern
 - [Phase 10-02]: Commander.js --no-use-sdk sets options.useSdk = false; wired as options.useSdk !== false in runAgent to preserve undefined-as-true semantics
+- [Phase 11-01]: SessionConfig migrated to src/types.ts without useSDK or image fields — single source of truth for session configuration
+- [Phase 11-01]: ContainerConfig and ToolResult removed from types.ts — exclusively used by deleted legacy files
+- [Phase 11-01]: RetryOrchestrator simplified to unconditional new ClaudeCodeSession(this.config) — no conditional branch
+- [Phase Phase 11-02]: vitest.config.ts at project root excludes dist/ and node_modules/ — prevents compiled JS files from being picked up as test suites
 
 ### Pending Todos
 
@@ -78,7 +84,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-17T13:00:12.942Z
-Stopped at: Completed 10-02-PLAN.md
+Last session: 2026-03-18T08:58:26.642Z
+Stopped at: Completed 11-02-PLAN.md
 Resume file: None
 Next action: Execute Plan 10-02 (RetryOrchestrator wiring with --use-sdk flag)

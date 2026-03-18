@@ -1,15 +1,11 @@
-export interface ContainerConfig {
-  image: string;
-  workspaceDir: string;
-  memoryMB?: number;
-  cpuCount?: number;
-  timeoutSeconds?: number;
-}
+import type pino from 'pino';
 
-export interface ToolResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
+export interface SessionConfig {
+  workspaceDir: string;
+  model?: string;
+  turnLimit?: number;    // default: 10
+  timeoutMs?: number;    // default: 300000 (5 minutes)
+  logger?: pino.Logger;
 }
 
 /**

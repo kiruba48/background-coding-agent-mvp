@@ -1,32 +1,27 @@
 import pino from 'pino';
-import { AgentSession, SessionConfig } from './session.js';
+import { type SessionConfig, SessionResult, RetryConfig, RetryResult, VerificationResult, JudgeResult } from '../types.js';
 import { ClaudeCodeSession } from './claude-code-session.js';
 import { captureBaselineSha } from './judge.js';
-import { SessionResult, RetryConfig, RetryResult, VerificationResult, JudgeResult } from '../types.js';
 import { ErrorSummarizer } from './summarizer.js';
 
 /**
- * RetryOrchestrator wraps ClaudeCodeSession (or legacy AgentSession) in an outer retry loop.
+ * RetryOrchestrator wraps ClaudeCodeSession in an outer retry loop.
  *
- * Distinct from the API-level retry in agent.ts (which handles transient
- * 429/529 errors). This orchestrator handles session-level retries: when a
- * session succeeds but verification fails, start a FRESH session with error
- * context injected into the initial message.
+ * Handles session-level retries: when a session succeeds but verification
+ * fails, start a FRESH session with error context injected into the initial message.
  *
  * Key design decisions:
- * - New AgentSession per attempt (CRITICAL: never reuse — prevents context accumulation)
+ * - New ClaudeCodeSession per attempt (CRITICAL: never reuse — prevents context accumulation)
  * - Session-level failures (timeout, turn_limit, failed) are terminal — do NOT retry
  * - Only retry when session succeeds but verification fails
  * - Original task ALWAYS first in the retry message (primary directive)
  * - Error digest is secondary information after separator
  * - No backoff delay between retries (verification failures are not transient)
- *
- * Source: Spotify Engineering Part 2/3 + Anthropic harness pattern
  */
 export class RetryOrchestrator {
   private config: SessionConfig;
   private retryConfig: RetryConfig;
-  private activeSession: AgentSession | ClaudeCodeSession | null = null;
+  private activeSession: ClaudeCodeSession | null = null;
 
   constructor(sessionConfig: SessionConfig, retryConfig: RetryConfig = { maxRetries: 3 }) {
     this.config = sessionConfig;
@@ -35,7 +30,7 @@ export class RetryOrchestrator {
 
   /**
    * Stop the currently active session, if any.
-   * Called from signal handlers to ensure Docker containers are cleaned up.
+   * Called from signal handlers to ensure the active session is cleaned up.
    */
   async stop(): Promise<void> {
     if (this.activeSession) {
@@ -73,9 +68,7 @@ export class RetryOrchestrator {
       // CRITICAL: Create a fresh session for each attempt.
       // Never reuse sessions — prior conversation history accumulates and
       // fills the context window, causing the model to forget the original task.
-      const session = this.config.useSDK !== false
-        ? new ClaudeCodeSession(this.config)
-        : new AgentSession(this.config);
+      const session = new ClaudeCodeSession(this.config);
       this.activeSession = session;
 
       let sessionResult: SessionResult;
@@ -83,7 +76,7 @@ export class RetryOrchestrator {
         await session.start();
         sessionResult = await session.run(message, logger);
       } finally {
-        // Always clean up container, even on error (including start() failures)
+        // Always clean up session, even on error (including start() failures)
         await session.stop();
         this.activeSession = null;
       }
