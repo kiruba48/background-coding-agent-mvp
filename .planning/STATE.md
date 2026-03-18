@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Claude Agent SDK Migration
 status: executing
-stopped_at: Phase 11 context gathered
-last_updated: "2026-03-17T19:35:44.278Z"
+stopped_at: Completed 11-01-PLAN.md
+last_updated: "2026-03-18T08:54:51.888Z"
 last_activity: 2026-03-17 — Plan 10-01 complete, ClaudeCodeSession implemented
 progress:
   total_phases: 7
   completed_phases: 4
-  total_plans: 10
-  completed_plans: 10
+  total_plans: 12
+  completed_plans: 11
   percent: 14
 ---
 
@@ -50,6 +50,7 @@ Progress: [█░░░░░░░░░] 14% (v2.0 phases)
 
 *Updated after each plan completion*
 | Phase 10 P02 | 15m | 2 tasks | 7 files |
+| Phase 11 P01 | 3m 12s | 2 tasks | 15 files |
 
 ## Accumulated Context
 
@@ -65,6 +66,9 @@ Progress: [█░░░░░░░░░] 14% (v2.0 phases)
 - [10-01]: settingSources: [] — no filesystem config imported into agent sessions; isolation guaranteed.
 - [Phase 10-02]: useSDK defaults to true via !== false check — undefined and true both select ClaudeCodeSession path; safe default-on pattern
 - [Phase 10-02]: Commander.js --no-use-sdk sets options.useSdk = false; wired as options.useSdk !== false in runAgent to preserve undefined-as-true semantics
+- [Phase 11-01]: SessionConfig migrated to src/types.ts without useSDK or image fields — single source of truth for session configuration
+- [Phase 11-01]: ContainerConfig and ToolResult removed from types.ts — exclusively used by deleted legacy files
+- [Phase 11-01]: RetryOrchestrator simplified to unconditional new ClaudeCodeSession(this.config) — no conditional branch
 
 ### Pending Todos
 
@@ -78,7 +82,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-17T19:35:44.276Z
-Stopped at: Phase 11 context gathered
-Resume file: .planning/phases/11-legacy-deletion/11-CONTEXT.md
+Last session: 2026-03-18T08:54:51.886Z
+Stopped at: Completed 11-01-PLAN.md
+Resume file: None
 Next action: Execute Plan 10-02 (RetryOrchestrator wiring with --use-sdk flag)
