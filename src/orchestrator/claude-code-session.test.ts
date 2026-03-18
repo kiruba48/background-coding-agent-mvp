@@ -6,6 +6,11 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   query: vi.fn(),
 }));
 
+// Mock the MCP verifier server to prevent importing compositeVerifier etc.
+vi.mock('../mcp/verifier-server.js', () => ({
+  createVerifierMcpServer: vi.fn().mockReturnValue({ type: 'sdk', name: 'verifier', instance: {} }),
+}));
+
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { ClaudeCodeSession } from './claude-code-session.js';
 
@@ -341,5 +346,52 @@ describe('ClaudeCodeSession', () => {
     const result = await session.run('task');
     expect(result.status).toBe('timeout');
     expect(result.error).toBe('Session timeout reached');
+  });
+
+  // Test 17: mcpServers wired in query() options
+  it('passes mcpServers with verifier server to query()', async () => {
+    mockQuery.mockReturnValue(makeQueryGen([makeSuccessResult()]));
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace' });
+    await session.run('task');
+    const callArg = mockQuery.mock.calls[0][0];
+    expect(callArg.options.mcpServers).toBeDefined();
+    expect(callArg.options.mcpServers).toHaveProperty('verifier');
+  });
+
+  // Test 18: systemPrompt includes verify instruction
+  it('systemPrompt includes verify instruction', async () => {
+    mockQuery.mockReturnValue(makeQueryGen([makeSuccessResult()]));
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace' });
+    await session.run('task');
+    const callArg = mockQuery.mock.calls[0][0];
+    const sp = callArg.options.systemPrompt;
+    expect(sp).toEqual(expect.objectContaining({
+      type: 'preset',
+      preset: 'claude_code',
+    }));
+    expect(sp.append).toContain('mcp__verifier__verify');
+    expect(sp.append).toContain('before declaring done');
+  });
+
+  // Test 19: MCP server registration logged
+  it('logs MCP server registration', async () => {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as any;
+    mockQuery.mockReturnValue(makeQueryGen([makeSuccessResult()]));
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace' });
+    await session.run('task', logger);
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'mcp', server: 'verifier', tools: ['verify'] }),
+      'mcp_server_registered'
+    );
+  });
+
+  // Test 20: PostToolUse matcher includes mcp__verifier__verify
+  it('PostToolUse matcher includes mcp__verifier__verify', async () => {
+    mockQuery.mockReturnValue(makeQueryGen([makeSuccessResult()]));
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace' });
+    await session.run('task');
+    const callArg = mockQuery.mock.calls[0][0];
+    const postMatcher = callArg.options.hooks.PostToolUse[0].matcher;
+    expect(postMatcher).toContain('mcp__verifier__verify');
   });
 });
