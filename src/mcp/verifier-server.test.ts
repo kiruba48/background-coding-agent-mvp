@@ -105,7 +105,7 @@ describe('formatVerifyDigest', () => {
 });
 
 describe('verify tool handler', () => {
-  it('calls compositeVerifier with the workspaceDir passed at construction', async () => {
+  it('calls compositeVerifier with workspaceDir and skipLint: true', async () => {
     const passedResult: VerificationResult = {
       passed: true,
       errors: [],
@@ -113,12 +113,11 @@ describe('verify tool handler', () => {
     };
     mockCompositeVerifier.mockResolvedValue(passedResult);
 
-    // We need to access the tool handler — export _createVerifyHandler for testing
     const { _createVerifyHandler } = await import('./verifier-server.js');
     const handler = _createVerifyHandler('/tmp/workspace');
     await handler({}, undefined);
 
-    expect(mockCompositeVerifier).toHaveBeenCalledWith('/tmp/workspace');
+    expect(mockCompositeVerifier).toHaveBeenCalledWith('/tmp/workspace', { skipLint: true });
     expect(mockCompositeVerifier).toHaveBeenCalledTimes(1);
   });
 
@@ -141,7 +140,7 @@ describe('verify tool handler', () => {
     });
   });
 
-  it('returns tool result with FAILED text when verification fails', async () => {
+  it('returns tool result with FAILED text and isError: true when verification fails', async () => {
     const failedResult: VerificationResult = {
       passed: false,
       errors: [{ type: 'build', summary: 'Build error', rawOutput: 'raw' }],
@@ -155,5 +154,43 @@ describe('verify tool handler', () => {
 
     expect(result.content[0]).toMatchObject({ type: 'text' });
     expect((result.content[0] as { type: 'text'; text: string }).text).toContain('Verification FAILED:');
+    expect(result.isError).toBe(true);
+  });
+
+  it('returns isError: false when verification passes', async () => {
+    const passedResult: VerificationResult = {
+      passed: true,
+      errors: [],
+      durationMs: 100,
+    };
+    mockCompositeVerifier.mockResolvedValue(passedResult);
+
+    const { _createVerifyHandler } = await import('./verifier-server.js');
+    const handler = _createVerifyHandler('/tmp/workspace');
+    const result = await handler({}, undefined);
+
+    expect(result.isError).toBe(false);
+  });
+
+  it('returns isError: true with error message when compositeVerifier throws', async () => {
+    mockCompositeVerifier.mockRejectedValue(new Error('workspace not found'));
+
+    const { _createVerifyHandler } = await import('./verifier-server.js');
+    const handler = _createVerifyHandler('/tmp/workspace');
+    const result = await handler({}, undefined);
+
+    expect(result.isError).toBe(true);
+    expect((result.content[0] as { type: 'text'; text: string }).text).toBe('Verification error: workspace not found');
+  });
+
+  it('handles non-Error thrown values gracefully', async () => {
+    mockCompositeVerifier.mockRejectedValue('string error');
+
+    const { _createVerifyHandler } = await import('./verifier-server.js');
+    const handler = _createVerifyHandler('/tmp/workspace');
+    const result = await handler({}, undefined);
+
+    expect(result.isError).toBe(true);
+    expect((result.content[0] as { type: 'text'; text: string }).text).toBe('Verification error: string error');
   });
 });

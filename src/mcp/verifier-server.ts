@@ -39,9 +39,15 @@ export function formatVerifyDigest(result: VerificationResult): string {
  */
 export function _createVerifyHandler(workspaceDir: string) {
   return async (_args: Record<string, never>, _extra: unknown): Promise<CallToolResult> => {
-    const result = await compositeVerifier(workspaceDir);
-    const text = formatVerifyDigest(result);
-    return { content: [{ type: 'text', text }] };
+    try {
+      // skipLint: true — mid-session call, git stash in lint verifier would corrupt uncommitted agent work
+      const result = await compositeVerifier(workspaceDir, { skipLint: true });
+      const text = formatVerifyDigest(result);
+      return { content: [{ type: 'text', text }], isError: !result.passed };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { content: [{ type: 'text', text: `Verification error: ${msg}` }], isError: true };
+    }
   };
 }
 
@@ -57,7 +63,7 @@ export function _createVerifyHandler(workspaceDir: string) {
 export function createVerifierMcpServer(workspaceDir: string) {
   const verifyTool = tool(
     'verify',
-    'Run composite verifier (build, test, lint) on the current workspace. Call before stopping to self-check your changes. Verification may take 1-3 minutes.',
+    'Run composite verifier (build, test) on the current workspace. Lint is skipped mid-session. Call before stopping to self-check your changes. Verification may take 1-3 minutes.',
     {},
     _createVerifyHandler(workspaceDir)
   );
