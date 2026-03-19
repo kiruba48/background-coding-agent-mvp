@@ -1,0 +1,206 @@
+/**
+ * Public library API for running the background coding agent.
+ *
+ * This module exposes runAgent() as a clean importable function that:
+ * - Internalizes Docker lifecycle management
+ * - Accepts AbortSignal for cancellation
+ * - Returns RetryResult (never terminates the process)
+ * - Has no process signal handlers (SIGINT/SIGTERM belong to the CLI entry point)
+ *
+ * Usage:
+ *   const result = await runAgent(options, { signal: abortController.signal });
+ */
+
+import pino from 'pino';
+import { promisify } from 'node:util';
+import { execFile } from 'node:child_process';
+import { RetryOrchestrator } from '../orchestrator/retry.js';
+import { MetricsCollector } from '../orchestrator/metrics.js';
+import { compositeVerifier } from '../orchestrator/verifier.js';
+import { llmJudge } from '../orchestrator/judge.js';
+import { GitHubPRCreator } from '../orchestrator/pr-creator.js';
+import { buildPrompt } from '../prompts/index.js';
+import { assertDockerRunning, ensureNetworkExists, buildImageIfNeeded } from '../cli/docker/index.js';
+import type { RetryResult } from '../types.js';
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * Options for running an agent session.
+ * Similar to CLI RunOptions but with timeoutMs (not seconds) for library callers.
+ */
+export interface AgentOptions {
+  taskType: string;
+  repo: string;
+  turnLimit: number;
+  timeoutMs: number;       // milliseconds (NOT seconds like CLI)
+  maxRetries: number;
+  noJudge?: boolean;
+  createPr?: boolean;
+  branchOverride?: string;
+  dep?: string;
+  targetVersion?: string;
+}
+
+/**
+ * Execution context for the agent run.
+ * Separates infrastructure concerns (logger, signal) from task options.
+ */
+export interface AgentContext {
+  logger?: pino.Logger;    // falls back to pino({ level: 'silent' }) if omitted
+  signal?: AbortSignal;    // graceful cancellation via AbortSignal
+}
+
+/**
+ * Run an agent session with the given options.
+ *
+ * Handles Docker lifecycle internally. Accepts AbortSignal for cancellation.
+ * Returns RetryResult directly — no terminating calls, no process signal handlers.
+ *
+ * @param options - Task configuration (repo, taskType, limits, etc.)
+ * @param context - Execution context (optional logger, optional AbortSignal)
+ * @returns RetryResult with finalStatus, attempts, session/verification results
+ */
+export async function runAgent(
+  options: AgentOptions,
+  context: AgentContext = {}
+): Promise<RetryResult> {
+  // Use caller's logger or fall back to a silent no-op logger
+  const logger = context.logger ?? pino({ level: 'silent' });
+  const childLogger = logger.child({
+    taskType: options.taskType,
+    repo: options.repo,
+  });
+
+  // Fast-path: if the signal is already aborted, return immediately
+  if (context.signal?.aborted) {
+    return {
+      finalStatus: 'cancelled',
+      attempts: 0,
+      sessionResults: [],
+      verificationResults: [],
+    };
+  }
+
+  // Determine if judge is disabled
+  const judgeDisabled = options.noJudge === true || process.env.JUDGE_ENABLED === 'false';
+  if (judgeDisabled) {
+    childLogger.info('LLM Judge disabled via noJudge option or JUDGE_ENABLED=false');
+  }
+
+  // Host-side npm install: regenerate lockfile after agent edits package.json.
+  // Agent SDK session has no network access; npm install must run on host.
+  const preVerify = options.taskType === 'npm-dependency-update'
+    ? async (workspaceDir: string): Promise<void> => {
+        childLogger.info('Running host-side npm install to regenerate lockfile...');
+        try {
+          await execFileAsync('npm', ['install', '--ignore-scripts'], {
+            cwd: workspaceDir,
+            timeout: 120_000,
+            maxBuffer: 10 * 1024 * 1024,
+            killSignal: 'SIGKILL',
+          });
+          childLogger.info('npm install completed successfully');
+        } catch (err: unknown) {
+          const error = err as { stdout?: string; stderr?: string };
+          const output = [error.stderr ?? '', error.stdout ?? ''].join('\n').trim();
+          throw new Error(`npm install failed (agent cannot fix registry/network issues):\n${output.slice(0, 500)}`);
+        }
+      }
+    : undefined;
+
+  // Docker lifecycle — every agent run goes through Docker
+  await assertDockerRunning();
+  await ensureNetworkExists();
+  await buildImageIfNeeded();
+
+  // Create RetryOrchestrator — signal is threaded through SessionConfig
+  const orchestrator = new RetryOrchestrator(
+    {
+      workspaceDir: options.repo,
+      turnLimit: options.turnLimit,
+      timeoutMs: options.timeoutMs,
+      logger: childLogger,
+      signal: context.signal,  // Thread AbortSignal through the full chain
+    },
+    {
+      maxRetries: options.maxRetries,
+      verifier: compositeVerifier,
+      judge: judgeDisabled ? undefined : llmJudge,
+      maxJudgeVetoes: 1,
+      preVerify,
+    }
+  );
+
+  // Create metrics collector
+  const metrics = new MetricsCollector();
+
+  // Construct prompt from task type
+  const prompt = buildPrompt({
+    taskType: options.taskType,
+    dep: options.dep,
+    targetVersion: options.targetVersion,
+  });
+
+  // Run the retry orchestration loop
+  const retryResult = await orchestrator.run(prompt, childLogger);
+
+  // If cancelled, return immediately without PR creation or metrics
+  if (retryResult.finalStatus === 'cancelled' || context.signal?.aborted) {
+    return {
+      ...retryResult,
+      finalStatus: 'cancelled',
+    };
+  }
+
+  // Create GitHub PR if requested and run was successful
+  if (options.createPr && retryResult.finalStatus === 'success') {
+    childLogger.info('Creating GitHub PR...');
+    const creator = new GitHubPRCreator(options.repo);
+    try {
+      const prResult = await creator.create({
+        taskType: options.taskType,
+        originalTask: prompt,
+        retryResult,
+        branchOverride: options.branchOverride,
+      });
+
+      if (prResult.error) {
+        childLogger.warn({ error: prResult.error, branch: prResult.branch }, 'PR creation failed');
+      } else if (prResult.created) {
+        childLogger.info({ prUrl: prResult.url, branch: prResult.branch }, 'GitHub PR created');
+      } else {
+        childLogger.info({ prUrl: prResult.url, branch: prResult.branch }, 'PR already exists');
+      }
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      childLogger.warn({ error: errMsg }, 'PR creation threw unexpectedly');
+    }
+  }
+
+  // Record metrics
+  if (retryResult.sessionResults.length > 0) {
+    const lastSession = retryResult.sessionResults[retryResult.sessionResults.length - 1];
+    const status = retryResult.finalStatus === 'max_retries_exhausted' ? 'failed' : retryResult.finalStatus;
+    metrics.recordSession(status as Parameters<typeof metrics.recordSession>[0], lastSession.toolCallCount, lastSession.duration);
+  }
+
+  // Log retry result
+  childLogger.info(
+    {
+      retryResult: {
+        finalStatus: retryResult.finalStatus,
+        attempts: retryResult.attempts,
+        sessionCount: retryResult.sessionResults.length,
+        verificationCount: retryResult.verificationResults.length,
+        judgeCount: retryResult.judgeResults?.length ?? 0,
+        error: retryResult.error,
+      },
+      metrics: metrics.getMetrics(),
+    },
+    'Agent run completed'
+  );
+
+  // Return result directly — no exit codes, no process termination
+  return retryResult;
+}
