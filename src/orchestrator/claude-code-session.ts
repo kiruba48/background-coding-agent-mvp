@@ -254,7 +254,9 @@ export class ClaudeCodeSession {
       this.abortController?.abort();
     }, timeoutMs);
 
-    const preHook = buildPreToolUseHook(workspaceDir, log);
+    // Inside Docker, the workspace is mounted at /workspace
+    const containerWorkspaceDir = '/workspace';
+    const preHook = buildPreToolUseHook(containerWorkspaceDir, log);
     const postHook = buildPostToolUseHook(log, toolCallCounter);
 
     const verifierServer = createVerifierMcpServer(workspaceDir);
@@ -269,7 +271,9 @@ export class ClaudeCodeSession {
         throw new Error('ANTHROPIC_API_KEY environment variable is required');
       }
 
-      // Build spawnClaudeCodeProcess: wraps SDK command in docker run
+      // Build spawnClaudeCodeProcess: wraps SDK command in docker run.
+      // The SDK passes a host-local path (e.g. /Users/.../cli.js) as command,
+      // but inside the container we use the globally installed `claude` CLI.
       const spawnClaudeCodeProcess = (sdkOptions: { command: string; args: string[]; signal: AbortSignal }) => {
         const dockerArgs = buildDockerRunArgs(
           {
@@ -278,7 +282,7 @@ export class ClaudeCodeSession {
             sessionId,
             // networkName and imageTag use defaults from docker module
           },
-          sdkOptions.command,
+          'claude',  // use container's globally installed CLI, not host path
           sdkOptions.args,
         );
 
@@ -297,7 +301,7 @@ export class ClaudeCodeSession {
       queryGen = query({
         prompt: userMessage,
         options: {
-          cwd: workspaceDir,
+          cwd: containerWorkspaceDir,
           maxTurns: this.config.turnLimit ?? 10,         // SDK-05
           maxBudgetUsd: 2.00,                             // SDK-09
           permissionMode: 'acceptEdits',                  // SDK-03

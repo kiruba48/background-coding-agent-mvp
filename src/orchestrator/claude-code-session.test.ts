@@ -193,7 +193,7 @@ describe('ClaudeCodeSession', () => {
     const input = {
       hook_event_name: 'PreToolUse',
       tool_name: 'Write',
-      tool_input: { file_path: '/tmp/workspace/.env' },
+      tool_input: { file_path: '/workspace/.env' },
       tool_use_id: 'id-2',
       session_id: 's', transcript_path: 't', cwd: '/tmp/workspace',
     };
@@ -211,7 +211,7 @@ describe('ClaudeCodeSession', () => {
     const input = {
       hook_event_name: 'PreToolUse',
       tool_name: 'Edit',
-      tool_input: { file_path: '/tmp/workspace/.git/config' },
+      tool_input: { file_path: '/workspace/.git/config' },
       tool_use_id: 'id-3',
       session_id: 's', transcript_path: 't', cwd: '/tmp/workspace',
     };
@@ -229,7 +229,7 @@ describe('ClaudeCodeSession', () => {
     const input = {
       hook_event_name: 'PreToolUse',
       tool_name: 'Write',
-      tool_input: { file_path: '/tmp/workspace/src/index.ts' },
+      tool_input: { file_path: '/workspace/src/index.ts' },
       tool_use_id: 'id-4',
       session_id: 's', transcript_path: 't', cwd: '/tmp/workspace',
     };
@@ -255,7 +255,7 @@ describe('ClaudeCodeSession', () => {
     const postInput = {
       hook_event_name: 'PostToolUse',
       tool_name: 'Write',
-      tool_input: { file_path: '/tmp/workspace/src/index.ts' },
+      tool_input: { file_path: '/workspace/src/index.ts' },
       tool_response: { outcome: 'success' },
       tool_use_id: 'id-5',
       session_id: 's', transcript_path: 't', cwd: '/tmp/workspace',
@@ -273,10 +273,10 @@ describe('ClaudeCodeSession', () => {
       // Fire the hook twice before yielding result
       const gen = (async function* () {
         await postHook({ hook_event_name: 'PostToolUse', tool_name: 'Write',
-          tool_input: { file_path: '/tmp/workspace/a.ts' }, tool_response: {},
+          tool_input: { file_path: '/workspace/a.ts' }, tool_response: {},
           tool_use_id: 'p1', session_id: 's', transcript_path: 't', cwd: '/tmp' }, 'p1', { signal: new AbortController().signal });
         await postHook({ hook_event_name: 'PostToolUse', tool_name: 'Edit',
-          tool_input: { file_path: '/tmp/workspace/b.ts' }, tool_response: {},
+          tool_input: { file_path: '/workspace/b.ts' }, tool_response: {},
           tool_use_id: 'p2', session_id: 's', transcript_path: 't', cwd: '/tmp' }, 'p2', { signal: new AbortController().signal });
         yield makeSuccessResult();
       })();
@@ -303,7 +303,7 @@ describe('ClaudeCodeSession', () => {
     const postInput = {
       hook_event_name: 'PostToolUse',
       tool_name: 'Write',
-      tool_input: { file_path: '/tmp/workspace/src/index.ts' },
+      tool_input: { file_path: '/workspace/src/index.ts' },
       tool_response: { outcome: 'success' },
       tool_use_id: 'id-log',
       session_id: 's', transcript_path: 't', cwd: '/tmp/workspace',
