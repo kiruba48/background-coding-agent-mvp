@@ -160,4 +160,4 @@ Plans:
 | 10. Agent SDK Integration | v2.0 | 2/2 | Complete | 2026-03-17 |
 | 11. Legacy Deletion | 2/2 | Complete    | 2026-03-18 | - |
 | 12. MCP Verifier Server | 2/2 | Complete    | 2026-03-18 | - |
-| 13. Container Strategy | v2.0 | 0/2 | Not started | - |
+| 13. Container Strategy | 1/2 | In Progress|  | - |

@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Claude Agent SDK Migration
 status: executing
-stopped_at: Phase 13 context gathered
-last_updated: "2026-03-19T11:46:19.829Z"
+stopped_at: Completed 13-01-PLAN.md
+last_updated: "2026-03-19T12:27:46.360Z"
 last_activity: 2026-03-17 — Plan 10-01 complete, ClaudeCodeSession implemented
 progress:
   total_phases: 7
   completed_phases: 6
-  total_plans: 14
-  completed_plans: 14
+  total_plans: 16
+  completed_plans: 15
   percent: 14
 ---
 
@@ -54,6 +54,7 @@ Progress: [█░░░░░░░░░] 14% (v2.0 phases)
 | Phase 11 P02 | 3m | 2 tasks | 2 files |
 | Phase 12 P01 | 100s | 1 tasks | 2 files |
 | Phase 12 P02 | 86s | 1 tasks | 2 files |
+| Phase 13 P01 | 17m 29s | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -78,6 +79,8 @@ Progress: [█░░░░░░░░░] 14% (v2.0 phases)
 - [Phase 12-01]: _createVerifyHandler exported for direct testing without MCP server introspection
 - [Phase Phase 12-02]: createVerifierMcpServer called inside run() (not constructor) — bound to workspaceDir at session time
 - [Phase Phase 12-02]: PostToolUse matcher extended to Write|Edit|mcp__verifier__verify — MCP verify calls audited same as file writes
+- [Phase 13-01]: Mock callback extraction must handle both 3-arg and 4-arg execFile forms — promisify drops opts when not provided
+- [Phase 13-01]: buildDockerRunArgs passes full security hardening flags: --cap-drop ALL, --cap-add NET_ADMIN, --security-opt no-new-privileges, --pids-limit 200
 
 ### Pending Todos
 
@@ -91,7 +94,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-19T11:46:19.826Z
-Stopped at: Phase 13 context gathered
-Resume file: .planning/phases/13-container-strategy/13-CONTEXT.md
+Last session: 2026-03-19T12:27:46.358Z
+Stopped at: Completed 13-01-PLAN.md
+Resume file: None
 Next action: Execute Plan 10-02 (RetryOrchestrator wiring with --use-sdk flag)

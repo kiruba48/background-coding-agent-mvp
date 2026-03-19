@@ -36,10 +36,10 @@ Requirements for Claude Agent SDK migration. Each maps to roadmap phases.
 
 ### Container Strategy
 
-- [ ] **CTR-01**: Dockerfile runs Claude Agent SDK (Claude Code) inside Docker container
+- [x] **CTR-01**: Dockerfile runs Claude Agent SDK (Claude Code) inside Docker container
 - [ ] **CTR-02**: `spawnClaudeCodeProcess` pipes stdio between host orchestrator and container
-- [ ] **CTR-03**: Container maintains network isolation equivalent to v1.x `NetworkMode: none`
-- [ ] **CTR-04**: Container runs as non-root user with minimal capabilities
+- [x] **CTR-03**: Container maintains network isolation equivalent to v1.x `NetworkMode: none`
+- [x] **CTR-04**: Container runs as non-root user with minimal capabilities
 
 ## Future Requirements
 
@@ -92,10 +92,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | MCP-01 | Phase 12 | Complete |
 | MCP-02 | Phase 12 | Complete |
 | MCP-03 | Phase 12 | Complete |
-| CTR-01 | Phase 13 | Pending |
+| CTR-01 | Phase 13 | Complete |
 | CTR-02 | Phase 13 | Pending |
-| CTR-03 | Phase 13 | Pending |
-| CTR-04 | Phase 13 | Pending |
+| CTR-03 | Phase 13 | Complete |
+| CTR-04 | Phase 13 | Complete |
 
 **Coverage:**
 - v2.0 requirements: 22 total
