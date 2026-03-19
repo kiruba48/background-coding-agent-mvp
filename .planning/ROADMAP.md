@@ -138,7 +138,7 @@ Plans:
   1. The orchestrator process runs inside Docker; `docker run` starts the full pipeline and stdio connects host to container via `spawnClaudeCodeProcess`
   2. Agent API calls to `api.anthropic.com` succeed from within the container; all other outbound connections are blocked
   3. The container process runs as non-root user (UID 1001) — `whoami` inside the container does not return `root`
-  4. `ANTHROPIC_API_KEY` is not present in the container environment — the proxy pattern routes the key outside the container
+  4. `ANTHROPIC_API_KEY` is injected at runtime via `-e` flag (not baked into image); host-side proxy pattern deferred to v2.1
 **Plans**: 2 plans
 Plans:
 - [ ] 13-01-PLAN.md — Dockerfile + entrypoint.sh + Docker helper module with unit tests
