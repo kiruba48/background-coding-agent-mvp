@@ -67,23 +67,23 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INFRA-01 | — | Pending |
-| INFRA-02 | — | Pending |
-| INTENT-01 | — | Pending |
-| INTENT-02 | — | Pending |
-| INTENT-03 | — | Pending |
-| CLI-01 | — | Pending |
-| CLI-02 | — | Pending |
-| CLI-03 | — | Pending |
-| REG-01 | — | Pending |
-| REG-02 | — | Pending |
-| SESS-01 | — | Pending |
+| INFRA-01 | Phase 14 | Pending |
+| INFRA-02 | Phase 14 | Pending |
+| REG-01 | Phase 14 | Pending |
+| REG-02 | Phase 14 | Pending |
+| INTENT-01 | Phase 15 | Pending |
+| INTENT-02 | Phase 15 | Pending |
+| INTENT-03 | Phase 15 | Pending |
+| CLI-01 | Phase 15 | Pending |
+| CLI-03 | Phase 15 | Pending |
+| CLI-02 | Phase 16 | Pending |
+| SESS-01 | Phase 17 | Pending |
 
 **Coverage:**
 - v2.1 requirements: 11 total
-- Mapped to phases: 0
-- Unmapped: 11
+- Mapped to phases: 11
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-19*
-*Last updated: 2026-03-19 after initial definition*
+*Last updated: 2026-03-19 after roadmap creation*

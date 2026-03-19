@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v2.1
 milestone_name: Conversational Mode
-status: defining_requirements
-stopped_at: Defining requirements
-last_updated: "2026-03-19T18:00:00.000Z"
-last_activity: 2026-03-19 — Milestone v2.1 started
+status: ready_to_plan
+stopped_at: Roadmap created — ready to plan Phase 14
+last_updated: "2026-03-19T18:30:00.000Z"
+last_activity: 2026-03-19 — v2.1 roadmap created (phases 14-17)
 progress:
-  total_phases: 0
+  total_phases: 4
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -21,31 +21,35 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-19)
 
 **Core value:** The full verification loop must work: agent changes code, deterministic verifiers catch failures, LLM Judge catches scope creep, and only verified changes proceed.
-**Current focus:** v2.1 Conversational Mode
+**Current focus:** Phase 14 — Infrastructure Foundation
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-03-19 — Milestone v2.1 started
+Phase: 14 of 17 (Infrastructure Foundation)
+Plan: 0 of ? in current phase
+Status: Ready to plan
+Last activity: 2026-03-19 — v2.1 roadmap created; phases 14-17 defined
+
+Progress: [░░░░░░░░░░] 0% (v2.1)
 
 ## Performance Metrics
 
 **Velocity (cumulative):**
 - Total plans completed: 31 (v1.0: 15, v1.1: 8, v2.0: 8)
-- v1.0 average: ~2.3 days/plan across 6 phases
-- v1.1 average: ~1.1 days/plan across 3 phases
 - v2.0 average: ~0.4 days/plan across 4 phases
+- Trend: Accelerating (v1.0 → v1.1 → v2.0 each faster)
+
+*Updated after each plan completion*
 
 ## Accumulated Context
 
 ### Decisions
 
-- Conversational REPL + one-shot as dual entry modes
-- Context-first clarification (scan repo → propose plan → confirm) over upfront interrogation
-- Project registry as universal repo resolver (cwd auto-registers for terminal, Slack/future use same registry)
-- Multi-turn sessions within REPL
+- [v2.0]: API key via `-e` flag (not proxy) — simpler MVP; Unix socket proxy deferred to v2.1+
+- [v2.1 research]: AbortSignal refactor must happen in Phase 14 before any REPL code — SIGINT conflict pitfall
+- [v2.1 research]: Intent parser uses `messages.create()` structured output (Haiku 4.5), NOT `query()`
+- [v2.1 research]: Version numbers must never come from LLM — Zod schema enforces sentinel (`"latest"` or `null`)
+- [v2.1 research]: `conf@^15` for project registry — atomic writes, ESM-native
 
 ### Pending Todos
 
@@ -53,11 +57,12 @@ None.
 
 ### Blockers/Concerns
 
-None.
+- [Phase 17]: Token budget sizing for multi-turn history is unvalidated — recommend `/gsd:research-phase` before planning
+- [Phase 15]: `"latest"` sentinel resolution integration point (ContextScanner vs IntentParser vs InputRouter) — resolve during Phase 15 planning
 
 ## Session Continuity
 
 Last session: 2026-03-19
-Stopped at: Defining requirements for v2.1
+Stopped at: Roadmap created for v2.1 milestone (phases 14-17)
 Resume file: None
-Next action: Complete requirements definition
+Next action: `/gsd:plan-phase 14`
