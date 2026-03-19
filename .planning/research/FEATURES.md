@@ -1,235 +1,208 @@
-# Feature Landscape: Claude Agent SDK Migration
+# Feature Research
 
-**Domain:** Claude Agent SDK migration for background coding agent (v2.0)
-**Researched:** 2026-03-16
-**Confidence:** HIGH (all features verified against official Agent SDK documentation)
+**Domain:** Conversational agent interface — REPL, intent parsing, one-shot CLI, project registry, multi-turn sessions
+**Researched:** 2026-03-19
+**Confidence:** HIGH (table stakes verified against established CLI tool patterns, REPL conventions, and Claude Agent SDK docs)
+
+---
 
 ## Context
 
-This replaces the v1.0/v1.1 platform feature landscape. This file focuses exclusively
-on what the Claude Agent SDK provides — what we gain in the migration, what maps to
-existing infrastructure, what is new capability, and what to explicitly not adopt.
+This replaces the v2.0 migration feature landscape. v2.0 is shipped.
 
-Existing shipped features (unchanged): Docker sandbox, retry orchestrator, composite
-verifier, LLM Judge, PR creator, Maven/npm prompts, structured logging. This research
-covers what the Agent SDK adds on top of that foundation.
+**Existing foundation (do not re-research):**
+- CLI with Commander.js, `--task-type`, `--dep`, `--target-version`, `--repo` flags
+- Agent executes in Docker container with iptables network isolation
+- Verification pipeline (build/test/lint + MCP mid-session + LLM Judge)
+- GitHub PR creation with rich context
+- Maven and npm dependency update task types
+- Retry loop with error summarization
+- Claude Agent SDK `query()` with PreToolUse/PostToolUse hooks
 
----
-
-## Table Stakes
-
-Features users expect from any production Agent SDK integration. Missing these means
-the migration is worse than the current custom loop.
-
-| Feature | Why Expected | Complexity | Status | Notes |
-|---------|--------------|------------|--------|-------|
-| **query() replaces AgentSession** | Same interface, less code | Low | New | Drop-in replacement for the custom agentic loop |
-| **Built-in tool: Read** | File reading without custom implementation | Low | Replace | Replaces hand-built `read_file` tool |
-| **Built-in tool: Write** | File creation without custom implementation | Low | Replace | Replaces hand-built `edit_file` for new files |
-| **Built-in tool: Edit** | Precise file patching without uniqueness checks | Low | Replace | Replaces `str_replace` + custom uniqueness logic |
-| **Built-in tool: Bash** | Shell execution without allowlist reimplementation | Medium | Replace | Replaces `bash_command` with allowlist; SDK provides `disallowedTools` for blocking |
-| **Built-in tool: Glob** | File pattern matching without custom implementation | Low | Replace | Replaces `list_files` tool |
-| **Built-in tool: Grep** | Regex search without custom implementation | Low | Replace | Replaces `grep` tool |
-| **maxTurns option** | Turn limit to cap cost | Low | Replace | Replaces manual turn counter in `AgentSession` |
-| **permissionMode: acceptEdits** | Auto-approve file changes for background agent | Low | New config | Removes need to intercept every file write permission |
-| **allowedTools / disallowedTools** | Declarative tool surface control | Low | New config | Replaces runtime allowlist checking in bash_command |
-| **cwd option** | Set working directory for the session | Low | New config | Replaces container working directory setup |
-| **systemPrompt option** | Inject system-level instructions | Low | Replace | Replaces system prompt construction in `AgentSession` |
-| **Auto context compression** | Prevent context window overflow | Low | New (free) | Handled automatically; replaces PreCompact planning |
-| **Structured output via result messages** | Capture final result text | Low | New | `message.type === "result"` provides final answer |
-
-### Rationale
-
-These are table stakes because the migration's primary value is deleting code, not
-gaining capability. If the SDK cannot replicate what `AgentSession` already does,
-the migration adds risk without payoff. Everything in this table has been verified
-in official Agent SDK docs (HIGH confidence).
+**What this research covers:**
+Interactive REPL, one-shot CLI mode, LLM intent parser, context-first clarification (scan repo → propose plan → confirm), project registry, multi-turn session context.
 
 ---
 
-## Differentiators
+## Feature Landscape
 
-Features the Agent SDK provides that we do not have today and that increase
-capability, safety, or observability.
+### Table Stakes (Users Expect These)
 
-| Feature | Value Proposition | Complexity | Dependencies | Notes |
-|---------|-------------------|------------|--------------|-------|
-| **PostToolUse audit hook** | Log every file change to audit trail without custom tool interception | Low | None | `PostToolUse` with `Edit|Write` matcher; replaces brittle custom logging in tool handlers |
-| **PreToolUse safety hook** | Block dangerous operations (writes outside repo, .env files) | Low | None | `permissionDecision: "deny"` replaces Docker volume mount restrictions as primary safety layer |
-| **Stop hook for verification** | Trigger composite verifier at end of agent session without separate orchestration call | Medium | Composite verifier | Spotify's pattern: agent finishes, Stop hook runs verification, result injected back via `systemMessage` or signals retry |
-| **MCP verifier server (in-process)** | Expose composite verifier as `mcp__verifier__verify` tool so agent self-verifies mid-session | High | createSdkMcpServer + compositeVerifier | Spotify's exact pattern; agent calls verify tool, gets error feedback, corrects before Stop |
-| **WebSearch built-in tool** | Agent can look up changelog/release notes during dependency update | Medium | Network access (disable in Docker) | Available in non-sandboxed runs; disable via `disallowedTools: ["WebSearch"]` in isolation mode |
-| **AskUserQuestion tool** | Agent pauses and asks human for clarification on ambiguous choices | Medium | CLI streaming mode | Enables human-in-the-loop without webhook infrastructure; breaks background model, use carefully |
-| **Session resume** | Continue a session after interruption or across retry attempts | Medium | session_id tracking | `options.resume = sessionId`; potential for richer retry context than fresh-session-per-retry |
-| **Subagents (Agent tool)** | Spawn specialized sub-agents for subtasks | High | Agent tool in allowedTools | Parallel subtask execution; defer until core migration complete |
-| **File checkpointing + rewind** | Restore files to state at specific turn | High | enableFileCheckpointing | `rewindFiles(messageId)`; alternative to git-based rollback in retry loop |
-| **spawnClaudeCodeProcess hook** | Custom process spawning — point at Docker container | Medium | Docker | `spawnClaudeCodeProcess: (opts) => spawnInDocker(opts)` is the isolation strategy for production |
-| **Budget cap: maxBudgetUsd** | Hard USD cap per session | Low | None | Complements maxTurns; prevents runaway cost |
-| **Effort control** | `effort: 'low' | 'medium' | 'high' | 'max'` adjusts thinking depth | Low | None | Use 'high' for dependency updates; 'low' for exploration/planning turns |
+Features a conversational developer agent must have. Missing these makes the interface feel worse than the flags-based CLI it replaces.
 
-### Differentiator Deep Dive
+| Feature | Why Expected | Complexity | Notes |
+|---------|--------------|------------|-------|
+| **One-shot natural language mode** | `bg-agent 'update recharts to 2.15'` must work without flags | LOW | Positional argument detected → route to intent parser; no REPL loop opened. Deep Agents CLI, pipe-agent: both auto-detect stdin/arg and run non-interactively. |
+| **Interactive REPL with prompt** | All conversational agents (Claude Code, aider, open-interpreter) provide a `>` prompt loop | LOW | Node.js `readline` / `node:readline/promises` handles line editing, history, Ctrl+C exit natively. No third-party dep needed. |
+| **REPL command history (persistent)** | Up-arrow to recall previous tasks is table stakes for any terminal REPL | LOW | Node.js `repl.REPLServer` built-in: persists to `~/.node_repl_history`. With `readline`, persist manually to `~/.bg-agent-history`. |
+| **Clear exit semantics** | `exit`, `quit`, Ctrl+C, Ctrl+D must all work predictably | LOW | Standard readline events: `SIGINT`, `close`. Must flush any in-progress state before exit. |
+| **Echo confirmed plan before executing** | Users expect the agent to confirm what it's about to do before running a 5-min task | LOW | Print structured summary: task type, dep, version, repo. Prompt `Proceed? [Y/n]`. Claude Code and Conductor both do this. |
+| **Graceful handling of ambiguous input** | "update recharts" without a version should ask, not fail silently or guess wrong | MEDIUM | Ask exactly one targeted question. Research: adding clarifying questions reduced error rates 27% and ambiguity retries from 4.1 to 1.3 per session. |
+| **Status feedback during execution** | User must know the agent is running, not hung | LOW | Print "Running agent... (turn N/10)" lines to stderr. Same pattern as CLI `--verbose` mode already. |
+| **Error messages in plain English** | Verification failure must surface as human-readable output, not raw JSON | LOW | Already done in CLI; REPL must preserve same behavior. |
 
-**PostToolUse audit hook** — replaces the brittle approach of logging inside each
-custom tool handler. One hook with matcher `"Edit|Write"` captures all file changes
-with file path, session ID, and timestamp. Add to `./audit.log` or feed into Pino.
-Complexity: ~15 lines of TypeScript. HIGH value, LOW effort.
+### Differentiators (Competitive Advantage)
 
-**Stop hook for verification** — the Spotify pattern. When the agent stops, the Stop
-hook fires. The hook can: (1) run `compositeVerifier` synchronously, (2) if it fails,
-return `systemMessage` with error digest and `continue: true` to restart the agent, or
-(3) if it passes, return `{}` to let the session complete. This merges the Stop hook
-with the existing `RetryOrchestrator` logic. Requires care: `continue: true` from a
-Stop hook restarts execution, meaning the retry counter must be managed externally to
-prevent infinite loops. The current `RetryOrchestrator` wrapping `query()` is simpler
-and safer than this pattern for our use case.
+Features that make this conversational interface meaningfully better than just wrapping the existing flags CLI.
 
-**MCP verifier server** — `createSdkMcpServer` runs in-process with no separate
-server process. Tool definition: `verify(args: {repoPath: string})` calls
-`compositeVerifier(repoPath)` and returns `{success, errors}` as text. The agent
-calls `mcp__verifier__verify` mid-session to check progress before final Stop.
-This is Spotify's exact architecture. Complexity: Medium (MCP server wrapping
-existing verifier, plus streaming input requirement for custom tools).
+| Feature | Value Proposition | Complexity | Notes |
+|---------|-------------------|------------|-------|
+| **LLM intent parser** | Natural language → structured `{taskType, dep, targetVersion, repo}` without users memorizing flag syntax | MEDIUM | Single Anthropic SDK call with structured output (tool_use). Use Claude Haiku 3.5 (same as Judge) for cost efficiency. Schema: `{taskType, dep, targetVersion, repo, confidence, clarification_needed}`. |
+| **Context-first repo scan** | Agent scans `package.json` / `pom.xml` before asking questions — surfaces current version, suggests target version | MEDIUM | Before intent parsing, read manifest file. Inject into intent parser prompt: "Current recharts: 2.12.7, latest: 2.15.0". Reduces clarification turns. |
+| **Project registry** | `bg-agent` in any registered project just works — no `--repo /long/path/to/project` | MEDIUM | JSON file at `~/.bg-agent/projects.json`. `{name: string, path: string, registeredAt: string}[]`. Auto-register cwd on first use (or explicit `bg-agent register`). |
+| **Multi-turn session context** | Follow-up in REPL: "now do lodash too" understands context from previous task | HIGH | Maintain conversation window: last N parsed intents + outcomes. Inject as context into intent parser. Scope: last 5 tasks, same session. Do NOT persist across REPL restarts (scope creep risk). |
+| **`--print` / non-interactive one-shot** | `bg-agent --print 'update recharts' | jq` for scripting and CI pipelines | LOW | Flag that suppresses REPL, disables confirm prompt, outputs structured JSON result to stdout. Deep Agents and pipe-agent both implement this. |
+| **Registry short-name routing** | `bg-agent 'update recharts' --project myapp` instead of full path | LOW | Resolves `myapp` → path from `~/.bg-agent/projects.json`. Fallback: cwd if no `--project` given. |
+| **Confidence threshold for auto-proceed** | High-confidence parses (`confidence >= 0.9`) skip manual confirmation in `--yes` mode | MEDIUM | `--yes` flag: if `confidence >= 0.9`, skip confirm prompt and run. If lower, always confirm regardless of flag. Prevents silent misparses. |
 
-**spawnClaudeCodeProcess** — the production isolation strategy. Instead of running
-the Agent SDK in the host process, pass a custom spawn function that starts a Docker
-container and pipes stdio. The SDK communicates with Claude Code running inside the
-container. This replaces the current `ContainerManager` with a much simpler stdio
-bridge. Complexity: Medium (Docker stdio bridge, replacing ~200 lines in container.ts).
+### Anti-Features (Commonly Requested, Often Problematic)
 
----
-
-## Anti-Features
-
-Features the Agent SDK provides that we must explicitly avoid in this migration.
-
-| Anti-Feature | Why Avoid | What to Do Instead |
-|--------------|-----------|-------------------|
-| **bypassPermissions mode** | Grants full system access; subagents inherit it | Use `acceptEdits` + `disallowedTools` for targeted bypass |
-| **WebSearch/WebFetch in Docker** | Network-isolated containers break these tools; agent wastes turns trying | Set `disallowedTools: ["WebSearch", "WebFetch"]` in sandbox runs |
-| **AskUserQuestion in batch mode** | Blocks background execution waiting for human input | Omit from `allowedTools`; agent must work autonomously |
-| **Session resume for retry** | Context accumulation across retries causes scope drift | Keep fresh session per retry (existing pattern); do not use `resume` in retry loop |
-| **settingSources: ["user"]** | Loads ~/.claude/settings.json from host — imports operator's personal config into agent | Keep `settingSources: []` (default) for isolation |
-| **Multi-agent subagents for v2.0** | Adds complexity to the core migration; current tasks don't need parallelism | Defer Agent tool to v2.1+; single-agent loop sufficient |
-| **plan mode** | Prevents execution; agent cannot make changes | Never use in production runs; only for testing/dry-runs |
-| **enableFileCheckpointing** | Adds overhead; we already have git-based rollback | Keep git as the source of truth for rollback |
-| **promptSuggestions** | Emits predicted next prompts; irrelevant for background agent | Leave disabled (default false) |
-| **continue: true in Stop hook** | Restarts agent execution from Stop hook — can create infinite loops if retry counter not managed | Use `RetryOrchestrator` wrapping `query()` instead; cleaner boundary |
-
-### Anti-Feature Rationale
-
-**WebSearch/WebFetch in Docker**: These tools make outbound HTTP calls. Docker with
-`NetworkMode: none` will cause them to fail silently or throw errors, wasting agent
-turns. Explicit `disallowedTools` prevents the agent from attempting them. For
-future non-sandboxed runs, WebSearch can be enabled to look up changelogs.
-
-**Session resume for retry**: The existing RetryOrchestrator creates a fresh session
-per retry with a summarized error digest injected into the prompt. This prevents
-context accumulation where previous failed attempts pollute the current attempt's
-context. The Agent SDK's `resume` feature is the opposite pattern — explicitly do
-not use it in the retry loop.
-
-**continue: true in Stop hook**: Tempting pattern for self-retry, but the boundary
-between "agent loop" and "retry orchestration" must stay clean. The Stop hook is for
-side effects (logging, verification reporting). Retry logic belongs in
-`RetryOrchestrator`. Mixing them creates race conditions with the max-retry counter.
+| Feature | Why Requested | Why Problematic | Alternative |
+|---------|---------------|-----------------|-------------|
+| **Persistent multi-turn context across REPL sessions** | "It should remember I worked on myapp last week" | Context from old sessions becomes stale, incorrect, and misleading. A dep updated last week may be different from today's state. | Project registry records session outcomes. Fresh context scan at start of each task. |
+| **Auto-execute without confirmation** | "It's annoying to type Y every time" | Removes human-in-the-loop for a destructive operation (modifying code, creating PRs). Verification does not catch all unintended changes. | `--yes` flag as opt-in. Default always confirms. |
+| **Free-form follow-up that modifies previous agent output** | "Actually, also update the peer dep" after a PR is already created | Re-running an agent against already-modified code creates merge conflicts and overlapping PRs. | Start a new REPL task on the already-changed branch. Warn user if git status shows uncommitted changes. |
+| **LLM parsing of flags** | "Could the intent parser understand `--dep lodash --target 4.18`?" | This is just the existing CLI. Adding LLM parsing to flag input adds latency and failure modes for zero benefit. | Keep Commander.js for flag mode. Intent parser only runs on positional/freeform text. |
+| **Slack bot / webhook trigger in v2.1** | "I want to trigger from Slack" | Adds authentication, event subscription, workspace management scope. Completely separate problem from conversational REPL. | Project.md explicitly defers Slack to a later milestone. Architecture should not block this, but do not implement in v2.1. |
+| **"Update all outdated deps"** | Convenient sounding | Single-turn agent with focus constraint is the trust model. Bulk updates destroy focus, cause scope creep, and make LLM Judge evaluation meaningless. | Iterate: one dep per REPL task. Multi-dep support can be a later research milestone. |
+| **Intent parser that silently falls back to best guess** | Reduce friction | Silent wrong parses cause real damage (wrong dep updated, wrong version). | Always surface parse result to user. If `confidence < 0.7`, explain what was inferred and ask to confirm or correct. |
 
 ---
 
 ## Feature Dependencies
 
-Agent SDK feature dependency graph for the v2.0 implementation:
-
 ```
-query() + allowedTools + permissionMode: acceptEdits
-    ↓
-Replace AgentSession + AgentClient (delete ~940 lines)
-    ↓
-disallowedTools: ["WebSearch", "WebFetch"] + maxTurns
-    ↓
-PostToolUse audit hook (15 lines)
-    ↓
-[PHASE 10: CORE MIGRATION COMPLETE]
-    ↓
-├─→ spawnClaudeCodeProcess → Docker stdio bridge
-│       Replaces ContainerManager (delete ~200 lines)
-│       [PHASE 13: CONTAINER STRATEGY]
-│
-├─→ createSdkMcpServer → MCP verifier server
-│       Exposes compositeVerifier as mcp__verifier__verify
-│       Requires streaming input mode for query()
-│       [PHASE 12: MCP VERIFIERS — optional]
-│
-└─→ PreToolUse safety hook (optional enhancement)
-        Block writes outside repo path
-        Complements permission mode
-        [PHASE 10 or 12, low effort]
+[Project Registry]
+    └──required by──> [Registry short-name routing]
+    └──required by──> [cwd auto-register]
+
+[LLM Intent Parser]
+    └──required by──> [One-shot natural language mode]
+    └──required by──> [Interactive REPL]
+    └──enhances──>    [Context-first repo scan]  (scan feeds parser context)
+
+[Interactive REPL]
+    └──requires──>    [LLM Intent Parser]
+    └──requires──>    [Echo confirmed plan]
+    └──enhances──>    [Multi-turn session context]
+
+[Context-first repo scan]
+    └──enhances──>    [LLM Intent Parser]         (reduces clarification turns)
+    └──enhances──>    [Graceful ambiguity handling]
+
+[Multi-turn session context]
+    └──requires──>    [Interactive REPL]           (no context across one-shot runs)
+    └──conflicts──>   [Persistent cross-session context]  (see anti-features)
+
+[One-shot mode]
+    └──requires──>    [LLM Intent Parser]
+    └──conflicts──>   [Multi-turn session context]  (no session in one-shot)
+
+[--print / non-interactive flag]
+    └──requires──>    [One-shot mode]
+    └──conflicts──>   [Interactive REPL]
 ```
 
-### Critical Path for v2.0
+### Dependency Notes
 
-Phase 10 (core migration) is the blocking path. Everything else is additive. The
-MCP verifier server (Phase 12) is optional — the existing outer verification loop
-in `RetryOrchestrator` already works. MCP verifier enables in-session self-correction,
-which increases success rate but is not required for correctness.
-
----
-
-## MVP Recommendation
-
-For Phase 10 (Agent SDK Integration), prioritize:
-
-1. **query() with allowedTools + permissionMode + maxTurns** — core replacement
-2. **disallowedTools: ["WebSearch", "WebFetch"]** — sandbox safety
-3. **PostToolUse audit hook** — replaces existing tool-level logging, low effort
-4. **PreToolUse safety hook** — block writes to .env/git internals, ~20 lines
-
-Defer to Phase 12 (optional):
-- MCP verifier server — increases mid-session self-correction
-- Stop hook integration — exploratory; keep RetryOrchestrator as primary retry mechanism
-
-Defer to Phase 13:
-- spawnClaudeCodeProcess with Docker bridge — production isolation strategy
-
-Never adopt:
-- bypassPermissions mode
-- Session resume in retry loop
-- AskUserQuestion in batch mode
+- **LLM Intent Parser is the critical path**: REPL, one-shot mode, and context-first scan all depend on it. Build and test intent parser first (Phase 1).
+- **Project registry is independent**: Can be built in parallel with intent parser. No LLM dependency — pure JSON file + CLI commands.
+- **Multi-turn context requires REPL**: Only meaningful in an interactive loop. Do not implement for one-shot mode.
+- **Context-first scan enhances intent parser**: Read manifest before parsing to inject current version data. Reduces from "what version?" clarification to auto-proposing the right version.
+- **One-shot and REPL conflict**: Same binary entry point must detect which mode to enter. Detection logic: positional arg present → one-shot; no arg → REPL.
 
 ---
 
-## SDK Features Summary by Migration Phase
+## MVP Definition
 
-| Phase | Agent SDK Features Used | Lines Deleted | Lines Added |
-|-------|------------------------|---------------|-------------|
-| Phase 10: Core | `query()`, `allowedTools`, `permissionMode`, `maxTurns`, `disallowedTools`, `PostToolUse hook` | ~940 (agent.ts + session.ts) | ~50 (ClaudeCodeSession wrapper) |
-| Phase 11: Delete | Remove `container.ts`, Docker image, stale tests | ~200 + ~650 tests | New integration tests |
-| Phase 12: MCP | `createSdkMcpServer`, `tool()`, streaming prompt | 0 (additive) | ~100 (verifier MCP server) |
-| Phase 13: Container | `spawnClaudeCodeProcess` with Docker stdio | ~200 (container.ts already deleted in Phase 11) | ~50 (Docker spawn bridge) |
+### Launch With (v2.1)
 
-**Net result:** ~1,800 lines deleted, ~200 lines added. 90% reduction in agent infrastructure code.
+Minimum viable conversational interface — what's needed to replace the flags CLI for the primary use case (dependency updates).
+
+- [ ] **LLM intent parser** — extracts `{taskType, dep, targetVersion, repo}` from freeform text. Structured output with `confidence` field. Claude Haiku 3.5 call. Core of everything else.
+- [ ] **One-shot natural language mode** — `bg-agent 'update recharts to 2.15'` runs the full existing pipeline. Single positional arg detected, parsed, confirm prompt, execute.
+- [ ] **Interactive REPL** — `bg-agent` with no args opens `>` prompt. Each task parses, confirms, executes. Ctrl+C aborts current task. Ctrl+D / `exit` quits.
+- [ ] **Echo confirmed plan** — before any agent run, print: `Task: npm-dependency-update | Dep: recharts | Version: 2.15.0 | Repo: /path/to/project. Proceed? [Y/n]`
+- [ ] **Project registry** — `~/.bg-agent/projects.json`. Auto-register cwd on first use. `bg-agent register [name]` for explicit registration. `--project name` flag to select.
+- [ ] **Graceful ambiguity handling** — if intent parser sets `clarification_needed: true`, ask the minimum clarifying question before proceeding.
+
+### Add After Validation (v1.x)
+
+Features to add once core REPL loop is used and validated.
+
+- [ ] **Context-first repo scan** — trigger: intent parser confidence is <0.85 for version selection. Scan manifest to auto-propose version, reducing clarification loops.
+- [ ] **Persistent REPL history** — trigger: users report re-typing same commands. `~/.bg-agent-history` file, 1000 entry cap.
+- [ ] **Multi-turn session context** — trigger: users use follow-up commands ("now do lodash too") and hit confusion. Last 5 parsed intents injected into intent parser prompt.
+- [ ] **`--print` / non-interactive flag** — trigger: CI integration requests. Outputs structured JSON, suppresses confirm prompt.
+
+### Future Consideration (v2+)
+
+Features to defer until product-market fit is established.
+
+- [ ] **Confidence threshold auto-proceed** (`--yes`) — defer until user behavior shows confirm step is the main friction.
+- [ ] **Slack / webhook trigger** — separate problem domain; architecture must not block it, but do not implement now.
+- [ ] **Multi-dep batch mode** — defer until focus model is proven insufficient.
+- [ ] **Cross-session persistent context** — defer; likely never needed given staleness risk.
 
 ---
 
-## Confidence Assessment
+## Feature Prioritization Matrix
 
-| Area | Confidence | Source | Notes |
-|------|------------|--------|-------|
-| Built-in tools (Read, Write, Edit, Bash, Glob, Grep) | HIGH | Official Agent SDK docs (verified) | Exact tool names confirmed |
-| Hooks (PreToolUse, PostToolUse, Stop) | HIGH | Official Agent SDK hooks docs (verified) | Input/output types confirmed |
-| Permission modes (acceptEdits, dontAsk, bypassPermissions) | HIGH | Official Agent SDK permissions docs (verified) | Mode semantics confirmed |
-| MCP verifier pattern (createSdkMcpServer) | HIGH | Official Agent SDK custom tools docs (verified) | Streaming input requirement confirmed |
-| spawnClaudeCodeProcess for Docker | MEDIUM | Official docs (option exists, confirmed); Docker stdio bridge implementation detail | Implementation pattern inferred from docs, not shown in examples |
-| Stop hook for verification (Spotify pattern) | MEDIUM | Spotify blog + SDK docs combined | continue: true behavior in Stop hook not tested against our retry loop |
-| Session resume anti-pattern rationale | MEDIUM | Architectural inference from existing RetryOrchestrator design | Not a documented anti-pattern; reasoned from context accumulation risk |
+| Feature | User Value | Implementation Cost | Priority |
+|---------|------------|---------------------|----------|
+| LLM intent parser | HIGH | MEDIUM | P1 |
+| One-shot natural language mode | HIGH | LOW (builds on parser) | P1 |
+| Interactive REPL | HIGH | LOW | P1 |
+| Echo confirmed plan | HIGH | LOW | P1 |
+| Project registry | HIGH | LOW | P1 |
+| Graceful ambiguity handling | HIGH | MEDIUM | P1 |
+| Context-first repo scan | MEDIUM | MEDIUM | P2 |
+| Persistent REPL history | LOW | LOW | P2 |
+| Multi-turn session context | MEDIUM | HIGH | P2 |
+| `--print` non-interactive flag | MEDIUM | LOW | P2 |
+| Confidence auto-proceed (`--yes`) | LOW | LOW | P3 |
+| Slack / webhook | LOW (now) | HIGH | P3 |
+
+**Priority key:**
+- P1: Must have for v2.1 launch
+- P2: Should have, add after P1 validated
+- P3: Nice to have, future milestone
+
+---
+
+## Existing System Integration Points
+
+Where new features must wire into the existing pipeline without breaking it.
+
+| New Feature | Integration Point | Risk |
+|-------------|-------------------|------|
+| LLM intent parser | Produces `{taskType, dep, targetVersion, repo}` — same shape as existing `runAgent()` options | LOW — parser output maps 1:1 to existing flags |
+| One-shot mode | New entry path in `src/cli/index.ts` — detect positional arg, call parser, call `runAgent()` | LOW — `runAgent()` already takes structured options |
+| Interactive REPL | New `src/cli/repl.ts` module — loop wrapping parser + `runAgent()` | LOW — additive, doesn't touch existing `program.parse()` path |
+| Project registry | New `src/registry/` module — read/write `~/.bg-agent/projects.json` | LOW — no coupling to agent pipeline |
+| Confirm prompt | Inject between parser output and `runAgent()` call | LOW — can be a thin `src/cli/confirm.ts` utility |
+| Context-first scan | Read `package.json` or `pom.xml` in resolved repo path before intent parsing | LOW — file read only, no agent involvement |
+| Multi-turn context | Pass last N intents array into intent parser system prompt | MEDIUM — parser prompt contract changes; must not affect one-shot path |
+
+**No existing CLI flag path should be broken.** `background-agent --task-type maven-dependency-update --repo /path ...` must continue to work unchanged. The new interface is additive.
 
 ---
 
 ## Sources
 
-- [Claude Agent SDK Overview](https://platform.claude.com/docs/en/agent-sdk/overview) — HIGH confidence, official docs
-- [Hooks Reference](https://platform.claude.com/docs/en/agent-sdk/hooks) — HIGH confidence, official docs
-- [Permissions Reference](https://platform.claude.com/docs/en/agent-sdk/permissions) — HIGH confidence, official docs
-- [MCP Integration](https://platform.claude.com/docs/en/agent-sdk/mcp) — HIGH confidence, official docs
-- [Custom Tools (createSdkMcpServer)](https://platform.claude.com/docs/en/agent-sdk/custom-tools) — HIGH confidence, official docs
-- [TypeScript SDK Reference](https://platform.claude.com/docs/en/agent-sdk/typescript) — HIGH confidence, official docs
-- [Spotify Honk Architecture Blog](https://engineering.atspotify.com/2025/11/spotifys-background-coding-agent-part-1) — MEDIUM confidence, third-party but architectural reference
+- [Node.js readline documentation](https://nodejs.org/api/readline.html) — HIGH confidence, official Node.js v25 docs
+- [Node.js REPL documentation](https://nodejs.org/api/repl.html) — HIGH confidence, official Node.js v25 docs
+- [Intent-Driven Natural Language Interface: Hybrid LLM + Intent Classification Approach](https://medium.com/data-science-collective/intent-driven-natural-language-interface-a-hybrid-llm-intent-classification-approach-e1d96ad6f35d) — MEDIUM confidence, practitioner writeup
+- [Ambig-SWE: Interactive Agents to Overcome Underspecificity in Software Engineering](https://arxiv.org/html/2502.13069v3) — MEDIUM confidence, 2025 research paper; clarification reduces errors 27%
+- [When agents learn to ask: Active questioning in agentic AI](https://medium.com/@milesk_33/when-agents-learn-to-ask-active-questioning-in-agentic-ai-f9088e249cf7) — MEDIUM confidence, practitioner writeup
+- [Deep Agents CLI — stdin pipe and non-interactive mode](https://docs.langchain.com/oss/python/deepagents/cli/overview) — MEDIUM confidence, LangChain official docs; confirms auto-detect stdin pattern
+- [Google Conductor: context-driven development for Gemini CLI](https://developers.googleblog.com/conductor-introducing-context-driven-development-for-gemini-cli/) — MEDIUM confidence, official Google blog; validates plan-before-execute pattern
+- [Anthropic: Effective Harnesses for Long-Running Agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents) — HIGH confidence, Anthropic engineering blog
+- [Anthropic: Context Management](https://www.anthropic.com/news/context-management) — HIGH confidence, official Anthropic docs
+- [Claude Code Interactive REPL and Workflow Modes](https://oboe.com/learn/mastering-claude-code-for-agentic-development-ivtygx/interactive-repl-and-workflow-modes-1) — MEDIUM confidence, third-party Claude Code guide; confirms REPL design patterns
+- [OpenAI Codex Prompting Guide](https://developers.openai.com/cookbook/examples/gpt-5/codex_prompting_guide) — MEDIUM confidence, OpenAI official; confirms plan-confirm pattern
+
+---
+
+*Feature research for: conversational agent interface (v2.1)*
+*Researched: 2026-03-19*

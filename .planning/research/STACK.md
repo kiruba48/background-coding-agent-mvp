@@ -1,273 +1,187 @@
 # Stack Research
 
-**Domain:** Claude Agent SDK migration — background-coding-agent v2.0
-**Researched:** 2026-03-16
-**Confidence:** HIGH — primary sources are official Anthropic docs and live npm registry data
+**Domain:** Conversational agent interface — background-coding-agent v2.1
+**Researched:** 2026-03-19
+**Confidence:** HIGH — primary sources are official Anthropic Agent SDK docs, Node.js docs, and live npm registry data
 
 ---
 
 ## Scope
 
-This file covers ONLY new stack additions and removals required for the v2.0 Claude Agent SDK migration.
-Validated existing dependencies (Node.js 20, TypeScript ESM/NodeNext, Commander.js, Pino, Vitest, ESLint v10,
-Octokit, simple-git, write-file-atomic) are not re-researched here.
+This file covers ONLY new stack additions required for the v2.1 Conversational Mode milestone.
 
----
-
-## Existing Dependencies: What Changes
-
-| Dependency | Current Version | v2.0 Action | Reason |
-|------------|-----------------|-------------|--------|
-| `@anthropic-ai/sdk` | ^0.71.2 | **Remove** | Replaced entirely by Agent SDK |
-| `dockerode` | ^4.0.2 | **Remove** | Host no longer manages Docker programmatically |
-| `@types/dockerode` | ^3.3.36 | **Remove** | Removed with dockerode |
-
-All other existing dependencies are unchanged.
+Validated existing dependencies (Node.js 20, TypeScript ESM/NodeNext, Commander.js, Pino, Vitest, ESLint v10, Octokit, simple-git, write-file-atomic, picocolors, `@anthropic-ai/claude-agent-sdk@^0.2.77`, `@anthropic-ai/sdk@^0.71.2`) are not re-researched here.
 
 ---
 
 ## New Stack Additions
 
-### Core: Claude Agent SDK
+### Core Technologies
 
 | Technology | Version | Purpose | Why Recommended |
 |------------|---------|---------|-----------------|
-| `@anthropic-ai/claude-agent-sdk` | `^0.2.76` | Replaces `AgentSession` + `AgentClient` — provides `query()` agentic loop, 9 built-in tools, auto context compression, hooks API, native MCP server creation | Official Anthropic SDK. Validated by Spotify ("Honk" agent) as their top-performing engine across ~50 migrations. Eliminates ~1,200 lines of hand-built infrastructure. Bundles Claude Code CLI as part of its runtime — no separate install in source code. |
+| `node:readline` (built-in) | Node.js 20 built-in | Interactive REPL — prompt loop, history, tab completion | Zero dependency. Node.js 20 readline is stable and feature-complete for this use case. Supports `history` array injection on startup, `'history'` event for persistence, `removeHistoryDuplicates`, and `completer` for tab completion. The `readline/promises` subpath provides async/await variants. No library can beat "no install required." |
+| `conf` | `^15.1.0` | Project registry — persist project name→path mappings to OS config dir | ESM-native (`type: module`), Node.js 20+ required, ships TypeScript declarations, atomic writes, correct platform-specific config paths (`~/Library/Preferences/` on macOS, `~/.config/` on Linux via XDG). Direct successor to configstore (Sindre Sorhus recommends conf over configstore for new projects). v15 is the latest stable release as of 2026-03-19. |
+| `zod` | `^4.3.6` | Intent parser schema — extract structured `{ taskType, dep, targetVersion, repo }` from natural language via Agent SDK `outputFormat` | Already a transitive dep via Agent SDK (which accepts Zod 3 or 4). Zod 4 adds native `z.toJSONSchema()` (no external converter needed), ships ESM + CJS in one package, and has full TypeScript inference. Used to define the intent schema and convert it to JSON Schema for `query({ options: { outputFormat: { type: 'json_schema', schema: z.toJSONSchema(IntentSchema) } } })`. |
 
-**Version rationale:** 0.2.76 is the latest as of 2026-03-14 (npm). The SDK is in rapid development at 0.x. Pin to `^0.2.76` to receive patch fixes while controlling minor version upgrades manually.
+### Supporting Libraries
 
-**What it replaces in this codebase:**
-
-| Deleted file | Lines | Agent SDK equivalent |
-|---|---|---|
-| `orchestrator/agent.ts` | 273 | Built-in agentic loop (automatic tool use iterations) |
-| `orchestrator/session.ts` | 667 | `query()` function handles session lifecycle, turn limits, abort |
-| `orchestrator/container.ts` | ~200 | Container strategy moves to Dockerfile (see Docker section) |
-| `@anthropic-ai/sdk` import | n/a | All LLM calls route through Agent SDK |
-| `dockerode` import | n/a | No programmatic container management on host |
-
-**Built-in capabilities (zero additional packages):**
-
-- Tools: Read, Write, Edit, Bash, Glob, Grep, WebSearch, WebFetch, AskUserQuestion
-- `createSdkMcpServer()` — creates in-process MCP servers (Phase 12 verifier server)
-- `tool()` — type-safe MCP tool definitions with Zod schema input validation
-- Hooks: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Stop`, `SessionStart`, `SessionEnd`, `SubagentStart`, `SubagentStop`, `PreCompact`, `PermissionRequest`, and more
-- Auto context compression at window boundary
-- `maxTurns`, `maxBudgetUsd` — native turn/cost limits (replace manual turn counter)
-- `SDKResultMessage` with `total_cost_usd`, `num_turns`, `stop_reason`, `usage` — native metrics
-
-### Zod (Phase 12 only — MCP verifier server)
-
-| Technology | Version | Purpose | Why |
-|------------|---------|---------|-----|
-| `zod` | `^3.24.x` | Schema validation for `tool()` input parameters | Required by Agent SDK's `tool()` function, which takes `AnyZodRawShape` as its schema parameter. Only needed if implementing the MCP verifier server in Phase 12. |
-
-**Note:** Zod may already be a transitive dependency. Check `node_modules/zod/package.json` before adding explicitly. If implementing Phase 12, add it explicitly to lock the version and prevent relying on transitive resolution.
-
-**Version choice:** Agent SDK docs state "supports both Zod 3 and Zod 4." Use Zod 3 (`^3.24.x`) — broader ecosystem compatibility and avoids migration risk.
+| Library | Version | Purpose | When to Use |
+|---------|---------|---------|-------------|
+| `@anthropic-ai/sdk` | `^0.71.2` (already installed) | Intent parser LLM calls — `messages.create()` with structured output via `output_config.format` | Intent parsing is a single-turn LLM call (natural language in, structured JSON out). Using `@anthropic-ai/sdk` directly (rather than the Agent SDK's multi-turn `query()`) is correct here — it's cheaper, faster, and does not start a Claude Code subprocess. The SDK is already installed as a prod dep. |
 
 ---
 
-## MCP Server Strategy
+## How Each Feature Uses This Stack
 
-The Agent SDK ships `createSdkMcpServer()` and `tool()` built-in for creating in-process MCP servers. This means `@modelcontextprotocol/sdk` (current version: 1.27.1 on npm) is NOT needed as a separate dependency.
+### REPL Interface
 
-**The in-process MCP pattern (Phase 12):**
+Built entirely on `node:readline` (zero new dependencies).
 
 ```typescript
-import { query, tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
-import { z } from "zod";
+import { createInterface } from 'node:readline';
+import { readFileSync, writeFileSync } from 'node:fs';
 
-const verifyTool = tool(
-  "verify",
-  "Run composite verifier (build, test, lint) on the current working directory",
-  { cwd: z.string() },
-  async ({ cwd }) => {
-    const result = await compositeVerifier(cwd);
-    return { content: [{ type: "text", text: JSON.stringify(result) }] };
-  }
-);
+// Load saved history on startup
+let history: string[] = [];
+try {
+  history = readFileSync(historyFilePath, 'utf-8').split('\n').filter(Boolean);
+} catch { /* file doesn't exist yet */ }
 
-const verifierServer = createSdkMcpServer({
-  name: "verifier",
-  version: "1.0.0",
-  tools: [verifyTool]
+const rl = createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  prompt: 'agent> ',
+  historySize: 200,
+  removeHistoryDuplicates: true,
+  history,
 });
 
-for await (const msg of query({
-  prompt: "...",
-  options: {
-    cwd: repoPath,
-    mcpServers: {
-      verifier: { type: "sdk", name: "verifier", instance: verifierServer.instance }
-    }
-  }
-})) { ... }
+// Persist history on every change
+rl.on('history', (h: string[]) => {
+  writeFileSync(historyFilePath, h.join('\n'));
+});
+
+rl.prompt();
+rl.on('line', async (input) => {
+  await handleInput(input.trim());
+  rl.prompt();
+});
 ```
 
-The `type: "sdk"` transport is in-process — no subprocess, no stdio, no HTTP server. The verifier's TypeScript code runs directly in the same Node.js process as the orchestrator.
+History file path: use `conf` to resolve the config directory, then store `repl_history` alongside the project registry JSON.
 
----
+### LLM Intent Parser
 
-## Docker Strategy Changes
-
-### What Changes
-
-**Before (v1.1):** Host Node.js process manages Docker via `dockerode`. Container runs custom Alpine 3.18 image with agent tools baked in. Host orchestrates exec calls into container.
-
-**After (v2.0):** Host Node.js process calls `query()`. Agent SDK spawns Claude Code as a subprocess on the host. For production isolation, the entire orchestrator runs inside a Docker container — managed by `docker run`, not by `dockerode`.
-
-### Two Deployment Modes
-
-**Mode A: Host-process (development, CI)**
-
-Run `query()` directly on the host. No Docker required. Use `disallowedTools` for safety:
+Uses `@anthropic-ai/sdk` structured output (single-turn, not Agent SDK multi-turn):
 
 ```typescript
-for await (const msg of query({
-  prompt: taskPrompt,
-  options: {
-    cwd: repoPath,
-    permissionMode: "acceptEdits",
-    disallowedTools: ["WebSearch", "WebFetch"],
-    maxTurns: 10
-  }
-})) { ... }
+import Anthropic from '@anthropic-ai/sdk';
+import { z } from 'zod';
+
+const IntentSchema = z.object({
+  taskType: z.enum(['maven-dependency-update', 'npm-dependency-update', 'unknown']),
+  dep: z.string().optional(),
+  targetVersion: z.string().optional(),
+  repo: z.string().optional(),   // project short name or absolute path
+  confidence: z.enum(['high', 'low']),
+});
+
+type Intent = z.infer<typeof IntentSchema>;
+
+const client = new Anthropic();
+const response = await client.messages.create({
+  model: 'claude-haiku-4-5',   // same model as LLM Judge — cheap, fast
+  max_tokens: 256,
+  messages: [{ role: 'user', content: userInput }],
+  system: INTENT_SYSTEM_PROMPT,
+  output_config: {
+    format: {
+      type: 'json_schema',
+      schema: z.toJSONSchema(IntentSchema),
+    },
+  },
+});
+
+const intent = IntentSchema.parse(JSON.parse(response.content[0].text));
 ```
 
-**Mode B: Container isolation (production)**
+**Why `@anthropic-ai/sdk` and not `query()`:** Intent parsing is a single-turn LLM call with no tool use. `query()` spawns a Claude Code subprocess and starts a full agent loop — it costs more and takes longer. The existing `@anthropic-ai/sdk` dep is exactly right for this; the LLM Judge already uses the same pattern.
 
-Run the Node.js orchestrator process itself inside a Docker container. The orchestrator calls `query()`, which spawns Claude Code as a subprocess within that same container. Network isolation is enforced at the container level.
+### Project Registry
 
-```dockerfile
-# New Dockerfile for v2.0 — replaces Alpine 3.18 agent image
-FROM node:20-alpine
-
-# Claude Code CLI is required by the Agent SDK at runtime
-RUN npm install -g @anthropic-ai/claude-code
-
-# Install orchestrator
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --production
-COPY dist/ ./dist/
-
-# Repo is mounted at runtime via -v
-WORKDIR /workspace
-
-ENTRYPOINT ["node", "/app/dist/cli/index.js"]
-```
-
-```bash
-docker run \
-  --cap-drop ALL \
-  --security-opt no-new-privileges \
-  --network none \
-  --memory 2g \
-  --cpus 2 \
-  --pids-limit 200 \
-  --user 1000:1000 \
-  -v /path/to/repo:/workspace:rw \
-  -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
-  background-agent-v2
-```
-
-**Key difference from v1.1:** `dockerode` is no longer needed. The container lifecycle is managed externally (by CI/CD scripts or the CLI's caller) — not by the orchestrator code itself.
-
-**Network constraint:** With `--network none`, the Agent SDK subprocess cannot reach `api.anthropic.com`. Two approaches:
-1. **(v2.0 MVP)** Use `--network bridge` + outbound firewall rules restricted to `api.anthropic.com:443`
-2. **(v2.1 hardening)** Mount a Unix proxy socket, set `ANTHROPIC_BASE_URL` to proxy — allows `--network none` while API calls route through an allowlisted proxy outside the container
-
-**Claude Code CLI requirement:** The Agent SDK requires the Claude Code CLI installed in the runtime environment. Official docs state: `npm install -g @anthropic-ai/claude-code`. Validate during Phase 13 whether the Agent SDK bundles the binary or requires a separate global install.
-
----
-
-## Core API Surface Reference
-
-The `query()` function is the only integration point from `RetryOrchestrator`:
+Uses `conf` to persist a JSON map of `{ [name: string]: string }` (short name → absolute repo path):
 
 ```typescript
-function query({
-  prompt: string | AsyncIterable<SDKUserMessage>;
-  options?: Options;
-}): Query; // AsyncGenerator<SDKMessage, void> + control methods
-```
+import Conf from 'conf';
 
-**Key `Options` fields for this project:**
+const registry = new Conf<{ projects: Record<string, string> }>({
+  projectName: 'background-coding-agent',
+  defaults: { projects: {} },
+});
 
-| Option | Type | Use |
-|--------|------|-----|
-| `cwd` | `string` | Set to target repo path (replaces container volume mount) |
-| `permissionMode` | `"acceptEdits" \| "bypassPermissions" \| "default"` | Use `"acceptEdits"` to auto-approve file edits without prompting |
-| `maxTurns` | `number` | Replaces manual turn counter — set to 10 |
-| `maxBudgetUsd` | `number` | Optional cost cap per session |
-| `allowedTools` | `string[]` | Auto-approve these tools (subset of built-in tools) |
-| `disallowedTools` | `string[]` | Block these tools — use to restrict network access on host-mode |
-| `hooks` | `Partial<Record<HookEvent, HookCallbackMatcher[]>>` | Attach `Stop` hook for post-agent verification; `PostToolUse` for audit logging |
-| `mcpServers` | `Record<string, McpServerConfig>` | Wire in-process verifier server (Phase 12) |
-| `settingSources` | `SettingSource[]` | Default `[]` = no filesystem settings loaded. Set `["project"]` to load CLAUDE.md |
-| `abortController` | `AbortController` | Timeout signal (replaces 5-minute session timeout) |
+// Register cwd on REPL startup
+registry.set(`projects.${basename(cwd())}`, cwd());
 
-**Result message** (the terminal event to collect from `query()`):
-
-```typescript
-type SDKResultMessage =
-  | { type: "result"; subtype: "success"; total_cost_usd: number; num_turns: number; result: string; ... }
-  | { type: "result"; subtype: "error_max_turns" | "error_during_execution" | ...; errors: string[]; ... };
-```
-
-`subtype: "error_max_turns"` replaces the current `TurnLimitError`. `total_cost_usd` and `num_turns` feed `SessionMetrics` natively.
-
-**Hook types used in this project:**
-
-| Hook | Use Case |
-|------|----------|
-| `PostToolUse` with matcher `"Edit\|Write"` | Audit logging — log every file modified |
-| `Stop` | Trigger verification before session completes (Spotify pattern — optional for v2.0) |
-
----
-
-## Integration Points with Existing Code
-
-**`orchestrator/retry.ts` (Modify — Phase 10)**
-
-Replace `new AgentSession(prompt, options).run()` with:
-
-```typescript
-import { query, type SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
-
-let resultMsg: SDKResultMessage | undefined;
-for await (const msg of query({ prompt, options: { cwd, maxTurns: 10, permissionMode: "acceptEdits" } })) {
-  if (msg.type === "result") resultMsg = msg;
+// Resolve "my-app" → "/Users/alice/code/my-app"
+function resolveRepo(nameOrPath: string): string | undefined {
+  if (isAbsolute(nameOrPath)) return nameOrPath;
+  return registry.get('projects')[nameOrPath];
 }
-// resultMsg.total_cost_usd, resultMsg.num_turns, resultMsg.subtype feed SessionResult
 ```
 
-**`orchestrator/judge.ts` (Flag for Phase 11)**
+Config stored at:
+- macOS: `~/Library/Preferences/background-coding-agent-nodejs/config.json`
+- Linux: `~/.config/background-coding-agent-nodejs/config.json`
 
-The Judge currently imports `@anthropic-ai/sdk` directly for structured output LLM calls. After removing `@anthropic-ai/sdk`, the Judge needs assessment:
-- Option A: Rewrite Judge to use `query()` with `outputFormat` structured output option
-- Option B: Keep `@anthropic-ai/sdk` as a dev/peer dependency solely for Judge LLM calls
-- Option C: Use Agent SDK's `query()` with a constrained prompt that returns JSON
+### Multi-Turn Session Management
 
-This is a Phase 11 implementation decision. Flag it early to avoid a late-phase blocker.
+**No new dependencies.** The Agent SDK (`@anthropic-ai/claude-agent-sdk`) already handles all session state natively.
 
-**All other orchestrator files:** No changes required (`verifier.ts`, `summarizer.ts`, `pr-creator.ts`, `metrics.ts`, `prompts/`).
+Pattern for REPL follow-up tasks within the same project:
+
+```typescript
+import { query, listSessions } from '@anthropic-ai/claude-agent-sdk';
+
+// First task: creates a session, capture session_id
+let sessionId: string | undefined;
+for await (const msg of query({ prompt, options: { cwd: repoPath, maxTurns: 10 } })) {
+  if (msg.type === 'result') {
+    sessionId = msg.session_id;   // persist to registry for this project
+  }
+}
+
+// Follow-up task: resume with full prior context
+for await (const msg of query({
+  prompt: followUpPrompt,
+  options: { resume: sessionId, cwd: repoPath, maxTurns: 10 },
+})) { ... }
+```
+
+For "continue most recent session" (simpler REPL flow):
+```typescript
+options: { continue: true, cwd: repoPath }
+```
+
+Session files are written automatically by the SDK to `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`. The REPL stores the `session_id` per project in the `conf` registry so users can resume after process restarts.
 
 ---
 
 ## Installation
 
 ```bash
-# Add Agent SDK
-npm install @anthropic-ai/claude-agent-sdk
+# New dependency: project registry
+npm install conf
 
-# Add Zod only if implementing Phase 12 MCP verifier server
+# New dependency: structured schemas for intent parser
+# Check if zod is already present as a direct dep first:
+# cat package.json | grep '"zod"'
+# If not listed, add it:
 npm install zod
 
-# Remove replaced dependencies
-npm uninstall @anthropic-ai/sdk dockerode
-npm uninstall -D @types/dockerode
+# node:readline is built-in — no install needed
+# @anthropic-ai/sdk is already installed — no change needed
+# @anthropic-ai/claude-agent-sdk is already installed — no change needed
 ```
 
 ---
@@ -276,11 +190,12 @@ npm uninstall -D @types/dockerode
 
 | Recommended | Alternative | When to Use Alternative |
 |-------------|-------------|-------------------------|
-| `@anthropic-ai/claude-agent-sdk` `query()` | Keep custom `AgentSession` + `@anthropic-ai/sdk` | Never for this migration — the goal is to delete infrastructure, not maintain two systems in parallel |
-| `createSdkMcpServer()` built into Agent SDK | `@modelcontextprotocol/sdk` as separate dependency | Only if verifier MCP server must run as a separate process (stdio transport) or be shared across multiple projects. Unnecessary for in-process pattern. |
-| Container wraps orchestrator (Mode B) | `spawnClaudeCodeProcess` custom function | `spawnClaudeCodeProcess` is designed for advanced cases: VMs, remote environments, custom runtimes. Container wrapping achieves the same isolation with less code. |
-| `--network bridge` + firewall (v2.0 MVP) | `--network none` + proxy socket | Proxy pattern is more secure but adds operational complexity. Fine for v2.1 hardening, too much for v2.0. |
-| `@anthropic-ai/sandbox-runtime` | Docker + `--network none` | sandbox-runtime is lighter and simpler (uses OS-level bubblewrap/sandbox-exec). Docker gives stronger isolation matching the existing v1.1 model. Consider sandbox-runtime if Docker overhead is a concern in v2.1+. |
+| `node:readline` (built-in) | `inquirer` / `enquirer` / `prompts` | Only if you need complex interactive forms (multi-select, confirm dialogs, validation UX). For a freeform text REPL, readline is sufficient and avoids a dependency. |
+| `node:readline` (built-in) | `readline-sync` | Never — synchronous I/O blocks the event loop, incompatible with async agent calls. |
+| `conf@^15` | `configstore@^8` | Never for new projects — configstore's own README recommends conf as its replacement. conf uses correct OS-native config dirs, not `~/.config` on all platforms. |
+| `conf@^15` | Raw `fs` + `write-file-atomic` | If the registry is extremely simple and you want zero new deps. Acceptable — write-file-atomic is already installed. Requires hand-rolling atomic writes, path resolution, and directory creation. conf is ~20 lines saved. |
+| `@anthropic-ai/sdk` for intent parsing | `query()` (Agent SDK) | If intent parsing needed multiple turns or tool use (it doesn't). For single-turn structured extraction, the base SDK is cheaper and faster. |
+| `zod@^4` | `zod@^3` | If Agent SDK `tool()` usage requires Zod 3 (it doesn't — SDK accepts both since v0.1.71). Zod 4 has `z.toJSONSchema()` built-in, eliminating the need for `zod-to-json-schema` as a separate converter. |
 
 ---
 
@@ -288,11 +203,13 @@ npm uninstall -D @types/dockerode
 
 | Avoid | Why | Use Instead |
 |-------|-----|-------------|
-| `@modelcontextprotocol/sdk` | Built into Agent SDK as `createSdkMcpServer()` | Agent SDK's `tool()` + `createSdkMcpServer()` |
-| Keep `@anthropic-ai/sdk` alongside Agent SDK | Two packages owning LLM calls causes confusion and version drift | Migrate Judge to Agent SDK in Phase 11 (see integration points above) |
-| Keep `dockerode` | Container management moves from code to Dockerfile + docker CLI. Programmatic container management no longer needed on the host. | Dockerfile + `docker run` in CI/CD |
-| LangChain / LangGraph | Unnecessary abstraction — Agent SDK provides the complete agent loop | `query()` + hooks |
-| Custom tool implementations | Agent SDK built-in tools (Read, Write, Edit, Bash, Glob, Grep) replace all 6 hand-built tools | `allowedTools` / `disallowedTools` options |
+| `inquirer` / `enquirer` | Heavy interactive form libraries designed for wizard-style CLIs, not freeform text REPLs. 4–15 dependencies each. | `node:readline` built-in |
+| `readline-sync` | Synchronous — blocks Node.js event loop. Agent calls are async; mixing sync I/O with async agents causes deadlocks. | `node:readline` built-in (async) |
+| `@modelcontextprotocol/sdk` | Not needed — MCP verifier server already uses `createSdkMcpServer()` built into Agent SDK. No new MCP servers needed for conversational features. | Agent SDK's built-in MCP support |
+| LangChain / LangGraph | Unnecessary abstraction over a use case that is two LLM calls (intent parse + agent run). Adds 50+ transitive deps and API churn. | `@anthropic-ai/sdk` (single-turn) + `query()` (agent) |
+| Custom session store (SQLite, Redis) | The Agent SDK writes session state to `~/.claude/projects/` automatically as JSONL. Zero code needed for persistence. | `resume: sessionId` option on `query()` |
+| `node-persist` / `lowdb` | Over-engineered for a small project registry (tens of entries). conf is purpose-built for exactly this use case. | `conf@^15` |
+| `vorpal` / `ink` | Full CLI framework / React terminal UI. No UI complexity needed — plain readline prompt suffices. | `node:readline` + `picocolors` (already installed) |
 
 ---
 
@@ -300,22 +217,26 @@ npm uninstall -D @types/dockerode
 
 | Package | Compatible With | Notes |
 |---------|-----------------|-------|
-| `@anthropic-ai/claude-agent-sdk@^0.2.76` | Node.js 18+ | Node.js 20 (project standard) fully supported |
-| `@anthropic-ai/claude-agent-sdk@^0.2.76` | TypeScript ^5.7.2 | SDK ships its own type declarations — no `@types/` package needed |
-| `zod@^3.24.x` | Agent SDK `tool()` | SDK docs: "supports both Zod 3 and Zod 4"; Zod 3 has broader ecosystem compatibility |
-| Agent SDK | `@anthropic-ai/sdk` | Do NOT run both simultaneously — they conflict on LLM call ownership |
+| `conf@^15.1.0` | Node.js 20+ | `engines: { node: '>=20' }` — matches project baseline exactly |
+| `conf@^15.1.0` | TypeScript `NodeNext` | ESM-native (`type: module`). Imports as `import Conf from 'conf'`. Ships its own `.d.ts`. |
+| `zod@^4.3.6` | `@anthropic-ai/claude-agent-sdk@^0.2.77` | SDK accepts Zod 3 or 4 as peer dep since v0.1.71. `z.toJSONSchema()` is Zod 4 only. |
+| `zod@^4.3.6` | `@anthropic-ai/sdk@^0.71.2` | `messages.create()` with `output_config.format` accepts plain JSON Schema (not Zod object). Use `z.toJSONSchema(schema)` to convert. |
+| `node:readline` | Node.js 20 | Built-in. `readline/promises` subpath available since Node.js 17. |
+| `@anthropic-ai/sdk@^0.71.2` | `output_config.format` structured output | `output_config.format` API (no beta headers required since 2025-11-13 migration). `messages.create()` returns structured JSON matching schema. |
 
 ---
 
 ## Sources
 
-- [Agent SDK TypeScript Reference](https://platform.claude.com/docs/en/agent-sdk/typescript) — `query()` signature, `Options` type, `HookEvent` types, `McpServerConfig`, `PermissionMode`, `SDKResultMessage` (HIGH confidence — official Anthropic docs, verified 2026-03-16)
-- [Agent SDK Overview](https://platform.claude.com/docs/en/agent-sdk/overview) — Built-in tools list, SDK vs Client SDK comparison, Zod version compatibility (HIGH confidence — official Anthropic docs, verified 2026-03-16)
-- [Hosting the Agent SDK](https://platform.claude.com/docs/en/agent-sdk/hosting) — Container deployment patterns, system requirements, Claude Code CLI runtime dependency (HIGH confidence — official Anthropic docs, verified 2026-03-16)
-- [Securely Deploying AI Agents](https://platform.claude.com/docs/en/agent-sdk/secure-deployment) — Docker hardening flags, `--network none` with Unix socket proxy pattern, gVisor option (HIGH confidence — official Anthropic docs, verified 2026-03-16)
-- [GitHub anthropics/claude-agent-sdk-typescript](https://github.com/anthropics/claude-agent-sdk-typescript) — Package name `@anthropic-ai/claude-agent-sdk`, version 0.2.76 (HIGH confidence — official Anthropic GitHub, verified 2026-03-16)
-- npm registry (via WebSearch) — `@anthropic-ai/claude-agent-sdk` version 0.2.76 as of 2026-03-14; `@modelcontextprotocol/sdk` version 1.27.1 as of late February 2026 (MEDIUM confidence — reported by search results, npm pages returned 403)
+- [Agent SDK TypeScript Reference — `Options` type](https://platform.claude.com/docs/en/agent-sdk/typescript) — `continue`, `resume`, `forkSession`, `persistSession`, `outputFormat`, `session_id` on `SDKResultMessage` (HIGH confidence — official Anthropic docs, verified 2026-03-19)
+- [Agent SDK — Work with Sessions](https://platform.claude.com/docs/en/agent-sdk/sessions) — `continue: true`, `resume: sessionId`, `forkSession`, `listSessions()`, `getSessionMessages()`, session file location at `~/.claude/projects/<encoded-cwd>/` (HIGH confidence — official Anthropic docs, verified 2026-03-19)
+- [Agent SDK — Structured Outputs](https://platform.claude.com/docs/en/agent-sdk/structured-outputs) — `outputFormat: { type: 'json_schema', schema: z.toJSONSchema(Schema) }`, `message.structured_output` on result, `error_max_structured_output_retries` subtype (HIGH confidence — official Anthropic docs, verified 2026-03-19)
+- [Claude API — Structured Outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs) — `output_config.format` in `@anthropic-ai/sdk`, no beta header required, `messages.parse()` helper, Zod integration via `zodOutputFormat()` (HIGH confidence — official Anthropic docs, verified 2026-03-19)
+- [Node.js v20 Readline API](https://nodejs.org/api/readline.html) — `createInterface` options: `history`, `historySize`, `removeHistoryDuplicates`, `completer`; `'history'` event for persistence (HIGH confidence — official Node.js docs, verified 2026-03-19)
+- [conf GitHub README](https://github.com/sindresorhus/conf) — API (`new Conf`, `.get()`, `.set()`), TypeScript generics, atomic writes, platform paths (HIGH confidence — official repo, verified 2026-03-19)
+- npm registry (live) — `conf@15.1.0`, `zod@4.3.6`, `@anthropic-ai/sdk@0.80.0`, `configstore@8.0.0`, `env-paths@4.0.0` as of 2026-03-19 (HIGH confidence — `npm show` command executed in project, verified 2026-03-19)
+- Agent SDK Zod compatibility — "supports both Zod 3 and Zod 4" (HIGH confidence — official Anthropic docs + WebSearch confirming since v0.1.71, verified 2026-03-19)
 
 ---
-*Stack research for: Claude Agent SDK migration (background-coding-agent v2.0)*
-*Researched: 2026-03-16*
+*Stack research for: Conversational REPL + intent parser + project registry + multi-turn sessions (background-coding-agent v2.1)*
+*Researched: 2026-03-19*

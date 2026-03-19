@@ -1,17 +1,17 @@
 # Project Research Summary
 
-**Project:** background-coding-agent v2.0 — Claude Agent SDK migration
-**Domain:** Background coding agent infrastructure migration
-**Researched:** 2026-03-16
+**Project:** background-coding-agent v2.1 — Conversational Mode
+**Domain:** Conversational agent interface (REPL + intent parser + project registry + multi-turn sessions) layered onto an existing CLI-based coding agent platform
+**Researched:** 2026-03-19
 **Confidence:** HIGH
 
 ## Executive Summary
 
-This project is a surgical migration of an existing, production-grade background coding agent (v1.1) from a custom hand-built agentic loop to the official Claude Agent SDK. The system already works — the RetryOrchestrator, compositeVerifier, LLM Judge, and PR creator are all proven and unchanged. The migration's sole goal is deleting ~1,200 lines of home-grown agent infrastructure (AgentSession, AgentClient, ContainerManager) and replacing them with ~50 lines that call the SDK's `query()` function. The net result is a 90% reduction in agent infrastructure code while gaining battle-tested capabilities: built-in tool loop, auto context compression, native hooks API, and MCP server support.
+The v2.1 milestone adds a conversational input layer to a fully-functioning v2.0 system. The correct framing is an **input normalization gateway**: natural language and explicit flags both converge on the same `RunOptions` struct before reaching `runAgent()`. Everything from `RetryOrchestrator` down — Docker isolation, verification pipeline, LLM Judge, PR creation — is untouched. The risk surface is entirely in the new input layer, and the key architectural constraint is that these components must never reach into the execution layer.
 
-The recommended approach is a four-phase incremental migration modeled directly on Spotify's "Honk" architecture — the top-performing agent in Spotify's 50-agent benchmark. Phase 10 creates a thin `AgentSdkSession` wrapper that satisfies the existing `SessionResult` interface so no other code changes. Phase 11 deletes the legacy files only after Phase 10 is green. Phase 12 optionally adds an in-process MCP verifier server that lets the agent self-correct mid-session. Phase 13 updates the container strategy to run the SDK process inside Docker with proper network isolation.
+The recommended approach is four sequential components built in dependency order: (1) project registry and `runAgent()` extraction (pure infrastructure, no LLM), (2) intent parser using `@anthropic-ai/sdk` structured output with a Haiku model for single-turn JSON extraction, (3) REPL loop with `node:readline` and clarification flow, and (4) multi-turn session context propagation. New dependencies are minimal: `conf` for the project registry and `zod` for the intent schema; the REPL uses the built-in `node:readline`. One new binary (`bg-agent`) coexists alongside the existing `background-agent` binary — no existing CLI consumers are broken.
 
-The primary risk is not the migration itself — the interface swap is a single line change in `retry.ts` — but the security guarantees that must be preserved. Network isolation, which today is enforced by Docker's `NetworkMode: none`, requires a proxy architecture in the new model because the Agent SDK must reach `api.anthropic.com`. Developers commonly drop `--network none` to "make the SDK work," silently eliminating the isolation guarantee. Every security constraint from v1.1 must be explicitly re-established in the new stack, not assumed to carry over.
+The dominant risks are security (prompt injection via repo files into the planning context) and correctness (version hallucination by the intent parser). Both must be prevented at the point of initial implementation, not retrofitted. Secondary risks are operational: SIGINT handler conflicts between the REPL and `runAgent()`, registry file corruption from concurrent writes, and backward compatibility breakage for existing CI scripts using explicit flags. All nine identified critical pitfalls have clear prevention strategies documented in PITFALLS.md.
 
 ---
 
@@ -19,117 +19,133 @@ The primary risk is not the migration itself — the interface swap is a single 
 
 ### Recommended Stack
 
-The migration adds exactly one new dependency to the production codebase: `@anthropic-ai/claude-agent-sdk@^0.2.76`. This replaces `@anthropic-ai/sdk` and `dockerode`, which are both removed. Zod (`^3.24.x`) is only added if Phase 12's MCP verifier server is implemented — check whether it is already a transitive dependency before adding explicitly.
-
-The Agent SDK bundles Claude Code CLI as its runtime. No custom tool implementations are needed: the SDK's built-in Read, Write, Edit, Bash, Glob, and Grep tools replace all six hand-built tools in the current codebase. Programmatic Docker management (`dockerode`) is eliminated — container lifecycle moves to a `docker run` call in CI/CD or a `spawnClaudeCodeProcess` hook in the SDK options.
+The v2.1 stack additions are minimal by design. `node:readline` (built-in, zero dependency) handles the interactive REPL loop with history, tab completion, and signal events. `conf@^15.1.0` handles the project registry as an OS-native config file (ESM-native, TypeScript declarations, atomic writes, correct platform paths on macOS and Linux). `zod@^4.3.6` provides the intent schema and native `z.toJSONSchema()` for the structured output call — the Agent SDK already accepts Zod 4 as a peer dep. All agent execution uses the existing `@anthropic-ai/claude-agent-sdk` and `@anthropic-ai/sdk` already installed as production dependencies.
 
 **Core technologies:**
-- `@anthropic-ai/claude-agent-sdk@^0.2.76`: replaces AgentSession + AgentClient + all custom tools — official Anthropic SDK, validated by Spotify as top-performing agent engine across ~50 comparisons
-- `zod@^3.24.x` (Phase 12 only): schema validation for MCP tool definitions — Zod 3 preferred for broader ecosystem compatibility
-- Docker (runtime, not an npm dep): container wraps the orchestrator process in production — `--network none` + proxy socket for API access
+- `node:readline` (built-in): Interactive REPL — zero dependency, stable in Node.js 20, supports persistent history via `'history'` event
+- `conf@^15.1.0`: Project registry persistence — ESM-native, atomic writes, correct OS config dirs, direct successor to configstore
+- `zod@^4.3.6`: Intent parser schema — `z.toJSONSchema()` built-in eliminates need for a separate converter; compatible with Agent SDK
+- `@anthropic-ai/sdk` (already installed): Intent parsing via single-turn structured output — `messages.create()` with `output_config.format`; NOT `query()`, which is for multi-turn agentic loops
+- `@anthropic-ai/claude-agent-sdk` (already installed): Multi-turn session context via `resume: sessionId` option on `query()`
 
-**Removed dependencies:**
-- `@anthropic-ai/sdk` — replaced entirely by Agent SDK
-- `dockerode` + `@types/dockerode` — container management moves outside the codebase
+**Version constraints:** `conf@^15` requires Node.js 20+, which matches the project baseline exactly.
 
 ### Expected Features
 
-The migration's table stakes are pure replacements: `query()` replaces the agentic loop, `maxTurns` replaces the manual turn counter, `permissionMode: "acceptEdits"` replaces per-file write permission interception, and built-in tools replace all six custom tool implementations. If any of these replacements regresses current behavior, the migration is a failure.
+All new features are additive. The explicit-flag CLI (`--task-type`, `--dep`, `--target-version`, `--repo`) must remain fully functional in v2.1 — this is a hard compatibility requirement, not a nice-to-have.
 
-The differentiators that increase capability above v1.1: PostToolUse audit hook (replaces brittle tool-level logging in ~15 lines), PreToolUse safety hook (blocks writes to .env/git internals), MCP verifier server (exposes compositeVerifier as `mcp__verifier__verify` so the agent self-corrects mid-session), and scoped Bash rules (`Bash(git:*)`) that replace the previous hardcoded bash allowlist.
+**Must have (P1 — v2.1 launch):**
+- LLM intent parser — extracts `{taskType, dep, targetVersion, repo}` with `confidence` and `clarification_needed` fields; rejects hallucinated versions by design
+- One-shot natural language mode — positional arg detected → parse → confirm → run existing pipeline
+- Interactive REPL — `node:readline` loop, Ctrl+C cancels current run (not REPL), Ctrl+D/`exit` quits
+- Echo confirmed plan — print parsed intent before any agent run; always prompt `Proceed? [Y/n]`
+- Project registry — auto-register cwd (only if `.git` or build manifest present), `--project name` flag for short-name routing
+- Graceful ambiguity handling — when `clarification_needed: true`, ask exactly one targeted question
 
-**Must have (table stakes):**
-- `query()` replaces `AgentSession.run()` — same contract, SDK manages loop
-- Built-in tools (Read, Write, Edit, Bash, Glob, Grep) — replace all six custom tools
-- `maxTurns: 10` — replaces manual turn counter, maps to `turn_limit` status
-- `permissionMode: "acceptEdits"` — auto-approves file edits, no prompt friction
-- `disallowedTools: ["WebSearch", "WebFetch"]` — enforces network isolation at tool layer
-- Explicit `systemPrompt` configuration — SDK default changed in v0.1.0; must set explicitly
+**Should have (P2 — after P1 validated):**
+- Context-first repo scan — read `package.json`/`pom.xml` before parsing to surface current versions; reduces clarification turns
+- Persistent REPL history — `~/.bg-agent-history`, 1,000-entry cap
+- Multi-turn session context — last 5 parsed intents injected into intent parser; in-memory only, bounded by token cap
+- `--print` non-interactive flag — suppresses confirm prompt, outputs structured JSON for CI scripting
 
-**Should have (differentiators):**
-- PostToolUse audit hook — unified file-change logging, ~15 lines, replaces per-tool logging
-- Scoped Bash rules (`Bash(git:*)`) — replaces hardcoded bash allowlist with declarative surface
-- PreToolUse safety hook — blocks writes outside workspace, ~20 lines
-- MCP verifier server (Phase 12) — in-session self-correction, Spotify's exact pattern
-
-**Defer (v2.1+):**
-- Subagents (Agent tool) — adds complexity; current tasks don't need parallelism
-- Session resume for retries — explicitly an anti-pattern; fresh session per retry is correct
-- `--network none` + Unix proxy socket — Phase 13 MVP uses `--network bridge` + firewall rules; full proxy is v2.1 hardening
-- `@anthropic-ai/sandbox-runtime` — lighter alternative to Docker; evaluate if container overhead is a concern
-
-**Never adopt:**
-- `bypassPermissions` mode — full system access; dangerous without verified container isolation
-- `settingSources: ["project"]` — loads CLAUDE.md from untrusted target repo; prompt injection vector
-- `AskUserQuestion` in batch mode — blocks background execution
+**Defer (P3 — v2+):**
+- Confidence auto-proceed (`--yes`) — defer until confirm step is proven to be main friction
+- Slack/webhook trigger — separate product domain; architecture must not block it
+- Multi-dep batch mode — defer until focus model is proven insufficient
+- Cross-session persistent context — staleness risk outweighs benefit
 
 ### Architecture Approach
 
-The migration is a wrapper-swap, not a rewrite. `AgentSdkSession` (~50 lines) wraps `query()` and returns the same `SessionResult` interface that `AgentSession` returns today. The single change in `retry.ts` is one line: `new AgentSession(config)` becomes `new AgentSdkSession(config)`. All other components — RetryOrchestrator, compositeVerifier, llmJudge, ErrorSummarizer, GitHubPRCreator, and all prompt builders — are untouched. Two architectural patterns govern the design: outer verification in RetryOrchestrator is always the authoritative quality gate (hooks are supplementary, not primary), and fresh session per retry prevents context contamination from failed attempts.
+v2.1 adds a new `src/cli/repl/` module and a new `bin/bg-agent` entry point that produce `RunOptions` objects and call the already-stable `runAgent()` function. The execution layer (`RetryOrchestrator`, `ClaudeCodeSession`, `compositeVerifier`, `llmJudge`, Docker, MCP verifier server) is entirely unchanged. The only modifications to existing files are: extracting `runAgent()` from Commander's action handler so it is importable, adding a `freeform` task type to `prompts/index.ts`, extending `types.ts` with `ParsedIntent`/`RegistryEntry`/`SessionContextState`, and adding an optional `signal?: AbortSignal` to `RunOptions` for REPL-controlled cancellation.
 
-**Major components:**
-1. `AgentSdkSession` (new, ~50 lines) — thin `query()` wrapper; maps `SDKResultMessage` subtypes to `SessionResult`; manages `AbortController` timeout
-2. `RetryOrchestrator` (unchanged) — outer verify/retry loop; remains the authoritative quality gate
-3. `compositeVerifier` (unchanged) — build/test/lint; exposed optionally as MCP server in Phase 12
-4. `llmJudge` (unchanged) — diff scope check; dependency on `@anthropic-ai/sdk` must be resolved in Phase 11
-5. `mcp/verifier-server.ts` (new, Phase 12 only, ~30 lines) — wraps compositeVerifier as `mcp__verifier__verify` tool
+**Major components (all new):**
+1. `InputRouter` (`src/cli/repl/input-router.ts`) — detects one-shot vs. REPL mode from argv; drives REPL read/run/print loop
+2. `IntentParser` (`src/cli/repl/intent-parser.ts`) — single structured-output `messages.create()` call; Haiku 4.5; returns `ParsedIntent`; never outputs specific version numbers
+3. `ProjectRegistry` (`src/cli/registry/project-registry.ts`) — reads/writes `conf`-managed JSON; validates directories before registration; atomic writes via `conf`
+4. `ContextScanner` (`src/cli/repl/context-scanner.ts`) — extracts structured facts from `package.json`/`pom.xml`; feeds intent parser; never dumps raw file content into prompts
+5. `ClarificationLoop` (`src/cli/repl/clarification-loop.ts`) — displays plan, waits for confirmation or targeted clarification question
+6. `SessionContext` (`src/cli/repl/session-context.ts`) — in-memory multi-turn state; bounded history (token cap); cleared on process exit
+
+**Patterns to follow:**
+- Intent parser as thin API wrapper (single call, not `query()`) — same pattern as existing LLM Judge
+- Input normalization gateway — all paths produce `RunOptions` before reaching `runAgent()`
+- REPL owns signal handling — `runAgent()` accepts `AbortSignal`, never registers `process.once('SIGINT')` when called from REPL mode
+- Fresh workspace per task — `SessionContext` persists user-level state; each task still gets a new Docker container and git clone
 
 ### Critical Pitfalls
 
-1. **Network isolation silently removed** — Phase 13 container must implement proxy architecture (`ANTHROPIC_BASE_URL` + Unix socket), not just add `--network bridge`. Warning sign: Dockerfile passes `ANTHROPIC_API_KEY` directly into container env. Prevention: proxy pattern routes API calls through an allowlisted proxy outside the container.
+1. **Intent parser hallucinating version numbers** — The parser must output `"latest"` or `null` for versions, never a specific version string. Version resolution happens downstream via `npm view` or `mvn dependency:get`, not in the LLM call. Enforce this in the Zod schema.
 
-2. **`allowedTools` misunderstood as a blocklist** — `allowedTools` is an auto-approval list, not a restriction. Without `disallowedTools: ["WebSearch", "WebFetch", "Agent"]`, those tools can run. Always pair both lists; use `permissionMode: "dontAsk"` to deny anything not in `allowedTools`.
+2. **Prompt injection via repo file content** — Context-first repo scan must never dump raw file content into the planning prompt. All repo content must be inside XML-delimited quarantine sections with an explicit system instruction to treat it as untrusted data. Extract structured facts (dep names, current versions) rather than raw file text.
 
-3. **`SessionResult` mapping breaks on SDK result types** — `error_max_turns` must map to `status: "turn_limit"` (terminal, no retry), not `"failed"`. Wrong mapping wastes money retrying exhausted-turn sessions. Write explicit unit tests for all four `ResultMessage` subtype to `SessionResult.status` mappings before connecting to `RetryOrchestrator`.
+3. **Multi-turn stale workspace across tasks** — The REPL session context (user conversation history) must not be conflated with the execution workspace. Each REPL task that calls `runAgent()` gets a fresh Docker container and `git clone`. Session context is passed as prompt text, not as shared filesystem state.
 
-4. **Big-bang deletion leaves adapter untested** — Phase 11 deletes ~1,200 lines. Without writing tests for `AgentSdkSession` first, the adapter's mapping behavior goes untested. Write wrapper tests in Phase 10; delete old tests in Phase 11 only after new tests cover the same behaviors.
+4. **SIGINT handler conflict** — `runAgent()` currently uses `process.once('SIGINT')` which is consumed after the first call. In REPL mode `runAgent()` is called multiple times. Fix: add `signal?: AbortSignal` to `RunOptions`; the REPL owns signal handling and calls `abortController.abort()`. Must be resolved in Phase 14 before any agent runs from the REPL.
 
-5. **Unbounded Bash tool capability** — `"Bash"` in `allowedTools` runs any shell command. Use scoped rules: `"Bash(git:*)"`, `"Bash(npm install)"`. The previous system scoped bash at tool-definition time; the SDK requires explicit scoping in `allowedTools`.
+5. **Backward compatibility breakage** — The explicit-flag CLI must work identically in v2.1. A compatibility test using the v2.0 flag syntax must be a required pass criterion for the REPL/one-shot phase.
 
 ---
 
 ## Implications for Roadmap
 
-Based on research, the migration follows a strict dependency chain with two independent parallel tracks after Phase 11.
+Based on the dependency graph in ARCHITECTURE.md and the pitfall-to-phase mapping in PITFALLS.md, four phases are indicated in strict dependency order. Phase numbers continue from v2.0's Phase 13.
 
-### Phase 10: Agent SDK Core Integration
-**Rationale:** This is the blocking path. Everything downstream depends on `AgentSdkSession` existing and working. Must be done first, must be incremental (wrapper-swap, not rewrite), and must establish security defaults correctly from day one.
-**Delivers:** Working `AgentSdkSession` that satisfies `SessionResult` contract; all existing RetryOrchestrator tests still pass; `query()` drives the agent loop.
-**Addresses:** All table-stakes features — `query()`, built-in tools, `maxTurns`, `permissionMode: "acceptEdits"`, `disallowedTools`, `systemPrompt`, PostToolUse audit hook, scoped Bash rules.
-**Avoids:** `bypassPermissions` misuse (use `acceptEdits` from day one), `allowedTools` misconfiguration (pair with `disallowedTools`), wrong `SessionResult` mapping (write explicit mapping tests), `settingSources` loading hostile configs (omit by default and document why), unbounded Bash (use scoped rules), hooks used for critical cleanup (put cleanup in `finally` block).
+### Phase 14: Infrastructure Foundation — Registry + runAgent() Extraction
 
-### Phase 11: Legacy Deletion
-**Rationale:** Cannot delete legacy code until Phase 10 is green and verified. Deleting before the wrapper works leaves the system broken. Deleting after ensures the replacement is confirmed.
-**Delivers:** Removal of `agent.ts` (273 lines), `session.ts` (667 lines), `container.ts` (~200 lines), their tests (~650 lines). Resolution of `@anthropic-ai/sdk` dependency for the LLM Judge (decision: migrate Judge to Agent SDK `query()` with structured output, or keep `@anthropic-ai/sdk` solely for Judge calls). Removal of `dockerode` from package.json.
-**Avoids:** Test coverage gap (wrapper tests from Phase 10 must be green before this phase merges), big-bang deletion risk (gate Phase 11 PRs on Phase 10 test suite passing).
+**Rationale:** `runAgent()` must be importable before any new entry point can call it — this is the hard prerequisite for all subsequent phases. Project registry has no LLM dependency and can be fully tested in isolation. The SIGINT refactor (`AbortSignal`) must happen here before any agent runs from the REPL, because retrofitting it after Phase 16 exists is structurally risky.
 
-### Phase 12: MCP Verifier Server (Optional)
-**Rationale:** In-session self-correction via the MCP verifier pattern increases success rate by giving the agent mid-session feedback before consuming a full outer retry. Independent of Phase 13. Can be skipped if the outer retry loop provides sufficient correction cycles for the target task types.
-**Delivers:** `mcp/verifier-server.ts` (~30 lines) exposing `compositeVerifier` as `mcp__verifier__verify` MCP tool; agent can call the verifier mid-session; optional Stop hook for in-session verification feedback.
-**Uses:** `createSdkMcpServer()` + `tool()` from Agent SDK; Zod for schema validation; streaming prompt input mode.
-**Avoids:** Stop hook as primary verification path (outer RetryOrchestrator remains authoritative), `continue: true` in Stop hook causing infinite loops (managed by external retry counter), Stop hook exceptions swallowing verification results (wrap entire hook body in try/catch).
+**Delivers:** `src/cli/registry/project-registry.ts` (with `conf`, atomic writes, `.git` validation guard); `runAgent()` extracted as importable function; `AbortSignal` wired into `RunOptions`; `bin/bg-agent` stub entry point; updated `types.ts` with `ParsedIntent`, `RegistryEntry`, `SessionContextState`.
 
-### Phase 13: Container Strategy
-**Rationale:** Production isolation. Development and CI run `query()` directly on host with `permissionMode: "dontAsk"` + `disallowedTools`. Production requires container isolation equivalent to v1.1's Docker sandbox. Independent of Phase 12.
-**Delivers:** Updated Dockerfile running the orchestrator (not just the agent subprocess) inside Docker; `spawnClaudeCodeProcess` implementation for Docker stdio bridge; network isolation via `--network bridge` + firewall rules (v2.0 MVP) with Unix proxy socket pattern deferred to v2.1.
-**Avoids:** Silent network isolation removal (implement proxy architecture, not just container wrapping), running as root (preserve `--user 1001:1001` from v1.1), passing API key directly into container (proxy pattern routes key outside container), not pinning Claude Code CLI version (pin in Dockerfile).
+**Addresses:** Project registry (P1); `--project` flag; one-shot mode infrastructure
+
+**Avoids:** Registry file corruption (atomic writes from day one); SIGINT handler conflict (AbortSignal designed in before REPL exists); bad auto-registration of non-project directories (`.git` guard in registry)
+
+### Phase 15: Intent Parser + One-Shot Mode
+
+**Rationale:** Intent parser is the critical path dependency for REPL, one-shot mode, and context scan (FEATURES.md dependency graph). Building and unit-testing the parser before the REPL means confidence in the parsing logic is established first. One-shot mode (`bg-agent 'update recharts to 2.7.0'`) becomes fully functional at the end of this phase.
+
+**Delivers:** `src/cli/repl/intent-parser.ts` (Haiku structured output, version sentinel enforcement, fast-path for explicit flags); `src/cli/repl/context-scanner.ts` (structured fact extraction, quarantine delimiters, `.env` exclusion); `InputRouter` one-shot path; `ClarificationLoop` (plan echo + confirm prompt); end-to-end one-shot workflow working.
+
+**Addresses:** LLM intent parser (P1); one-shot natural language mode (P1); echo confirmed plan (P1); graceful ambiguity handling (P1); context-first repo scan (P2)
+
+**Avoids:** Version hallucination (Zod schema enforces sentinel values — `"latest"` or `null`, never specific versions); prompt injection (quarantine delimiters in initial implementation, not as hardening); token cost inflation (fast-path bypasses LLM for explicit flag input)
+
+### Phase 16: Interactive REPL Loop + Session State
+
+**Rationale:** Requires Phase 15's intent parser and Phase 14's `runAgent()` extraction. REPL loop is straightforward once these exist — it is the read/run/print wrapper around already-working components. Docker image build check should be moved to REPL startup here (not per-task) to avoid a perceptible pause on every command.
+
+**Delivers:** `src/cli/repl/input-router.ts` REPL mode (readline loop, Ctrl+C/Ctrl+D semantics, spinner feedback during Docker and context scan); `src/cli/repl/session-context.ts` (in-memory state, resolved project, task history); `bg-agent` with no args opens interactive prompt; persistent readline history; Docker build check moved to REPL startup.
+
+**Addresses:** Interactive REPL (P1); persistent REPL history (P2); status feedback during execution (table stakes); clear exit semantics (table stakes)
+
+**Avoids:** SIGINT conflict (AbortSignal from Phase 14 consumed here); Docker build check per task (moved to startup); UX freeze with no feedback during long operations
+
+### Phase 17: Multi-Turn Session Context Propagation
+
+**Rationale:** Requires a stable REPL (Phase 16). Multi-turn context is a pure enhancement — it only changes what is passed to the intent parser for disambiguation of follow-up inputs. Bounded history and token cap must be in the initial design to avoid context window overflow in long sessions (Pitfall 8).
+
+**Delivers:** `SessionContext` history accumulation with sliding window (last N tasks as structured facts); hard token budget enforced before each intent parser call; rolling summary for older turns; follow-up inputs like "now do lodash too" correctly inherit project context without sharing execution workspace.
+
+**Addresses:** Multi-turn session context (P2)
+
+**Avoids:** Context window overflow (hard token cap — suggested 2,000 tokens for history, to be validated during planning); stale workspace contamination (fresh container per task confirmed as session invariant)
 
 ### Phase Ordering Rationale
 
-- Phase 10 before Phase 11: replacement must work before legacy is deleted. This is a hard dependency.
-- Phase 12 and Phase 13 are independent of each other after Phase 11 completes. Either can be done first, or Phase 12 can be skipped entirely.
-- All four phases are pure additions or subtractions to the existing codebase. No lateral refactoring required.
-- The existing test suite acts as a regression oracle throughout. If Phase 10 breaks existing tests, it is not ready to merge.
+- Phase 14 before all others: `runAgent()` exportability is a compile-time dependency, and the `AbortSignal` refactor cannot safely be added after REPL code exists.
+- Phase 15 before Phase 16: the REPL loop has no value without an intent parser to dispatch tasks.
+- Phase 16 before Phase 17: multi-turn context requires a running REPL session to accumulate history.
+- `ContextScanner` is bundled into Phase 15 (not a separate phase) because it shares a data contract with `IntentParser` and the injection-quarantine requirement applies to both simultaneously.
 
 ### Research Flags
 
 Phases likely needing deeper research during planning:
-- **Phase 11:** LLM Judge's dependency on `@anthropic-ai/sdk` — three options are documented (migrate to `query()`, keep as dev dep, use constrained JSON prompt) but the choice has quality and performance implications. Needs a decision before Phase 11 planning finalizes.
-- **Phase 13:** Proxy architecture specifics — the "Unix socket proxy" pattern is recommended by Anthropic's secure deployment guide and Spotify, but the implementation details (proxy server choice, socket path, container config) need a concrete plan. Flag for deeper research before planning Phase 13.
+- **Phase 17 (Multi-Turn Sessions):** Context bounding strategies and token budget sizing for bounded history are under-documented in the research. Recommend `/gsd:research-phase` to validate the sliding window approach and the 2,000-token history cap before implementation.
 
 Phases with standard patterns (skip research-phase):
-- **Phase 10:** Agent SDK integration is well-documented with official TypeScript reference, verified option types, and concrete code examples in the research. The `AgentSdkSession` implementation is fully specified (~50 lines in ARCHITECTURE.md).
-- **Phase 12:** MCP verifier server pattern is documented and the implementation is specified (~30 lines in ARCHITECTURE.md). Zod version choice is resolved.
+- **Phase 14 (Infrastructure):** `conf` and `runAgent()` refactoring are well-documented at HIGH confidence. `AbortSignal` is a standard Node.js pattern.
+- **Phase 15 (Intent Parser):** STACK.md fully documents `output_config.format` from official Anthropic docs. The intent parser pattern mirrors the existing LLM Judge (`orchestrator/judge.ts`) — same model, same SDK, same structured-output approach.
+- **Phase 16 (REPL):** `node:readline` is documented at HIGH confidence. REPL loop is a standard read/run/print pattern with no novel integrations.
 
 ---
 
@@ -137,42 +153,43 @@ Phases with standard patterns (skip research-phase):
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | Primary sources are official Anthropic docs (platform.claude.com) and GitHub, verified 2026-03-16. npm registry data is MEDIUM (pages returned 403, confirmed via search results). |
-| Features | HIGH | All feature claims verified against official Agent SDK docs. `spawnClaudeCodeProcess` for Docker is MEDIUM (option confirmed in docs, implementation pattern inferred). Stop hook for verification is MEDIUM (Spotify blog + SDK docs combined). |
-| Architecture | HIGH | Official SDK TypeScript reference confirms `query()` signature, `Options` type, `SDKMessage` types, and `spawnClaudeCodeProcess`. Spotify engineering blog confirms the outer-verification-authoritative pattern and fresh-session-per-retry. Current codebase is first-party source for existing interfaces and contracts. |
-| Pitfalls | HIGH | Derived from official docs (breaking changes, hook behavior, `allowedTools` semantics) and direct code analysis of `src/orchestrator/`. Network isolation pitfall confirmed by Anthropic's secure deployment guide. |
+| Stack | HIGH | All sources are official Anthropic docs, official Node.js docs, and live npm registry data verified 2026-03-19 |
+| Features | HIGH | Table stakes verified against established CLI tools (Claude Code, aider, Deep Agents); differentiators validated by Anthropic engineering blog and research papers (clarification reduces errors 27%) |
+| Architecture | HIGH | Integration analysis based on first-party codebase (`src/`) and official Agent SDK docs; specific file and function names are verified against existing v2.0 code |
+| Pitfalls | HIGH | Critical pitfalls sourced from OWASP 2025, CVE records, quantified hallucination research (arXiv 2406.10279, 5.2% commercial LLM hallucination rate), and first-party code analysis |
 
 **Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **LLM Judge migration path (Phase 11):** Three options exist for handling the Judge's `@anthropic-ai/sdk` dependency after removal. The research flags this as a Phase 11 implementation decision. Decide before Phase 11 planning: Option A (migrate Judge to `query()` with structured output), Option B (keep `@anthropic-ai/sdk` as a peer dep for Judge only), or Option C (`query()` with constrained JSON prompt). Option A is cleanest but requires validating structured output quality matches current Judge behavior.
-
-- **Claude Code CLI bundling (Phase 13):** The stack research notes: "Validate during Phase 13 whether the Agent SDK bundles the binary or requires a separate global install." The Dockerfile template includes `RUN npm install -g @anthropic-ai/claude-code` as a precaution, but this should be validated against the actual SDK package contents before finalizing the Dockerfile.
-
-- **Unix proxy socket implementation (Phase 13 / v2.1):** The v2.0 MVP uses `--network bridge` + outbound firewall rules. The full proxy pattern (`--network none` + Unix socket + `ANTHROPIC_BASE_URL`) is the production-hardened target but its implementation specifics are not detailed in the research. Flag for Phase 13 deep research before planning.
+- **Multi-turn context token budgeting:** The 2,000-token cap for history is a suggested heuristic in PITFALLS.md, not a validated figure. Validate during Phase 17 planning with actual intent parser prompt sizes to set the correct cap.
+- **`npm view` / `mvn dependency:get` version resolution:** PITFALLS.md recommends resolving `"latest"` sentinel to an actual version via registry lookup before passing to the agent. The exact integration point (inside `ContextScanner`, inside `IntentParser`, or a separate resolver step in `InputRouter`) is unspecified in ARCHITECTURE.md and should be resolved during Phase 15 planning.
+- **`--print` JSON output schema:** FEATURES.md lists `--print` as P2 but does not define the exact JSON schema for structured output. Define during Phase 15 or 16 planning to avoid exit-code and output-format drift between one-shot and REPL paths.
+- **`promptOverride` for freeform tasks:** ARCHITECTURE.md introduces `promptOverride?: string` on `RunOptions` for tasks that do not fit existing task types. The prompt builder for freeform tasks is unspecified. Confirm scope during Phase 15 planning — freeform task support may be out of v2.1 scope.
 
 ---
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- [Claude Agent SDK TypeScript Reference](https://platform.claude.com/docs/en/agent-sdk/typescript) — `query()` signature, `Options` type, `HookEvent` types, `McpServerConfig`, `PermissionMode`, `SDKResultMessage`
-- [Claude Agent SDK Overview](https://platform.claude.com/docs/en/agent-sdk/overview) — built-in tools list, SDK vs Client SDK comparison, Zod compatibility
-- [Claude Agent SDK Hooks](https://platform.claude.com/docs/en/agent-sdk/hooks) — PreToolUse, PostToolUse, Stop callback types, hook availability on `maxTurns`
-- [Claude Agent SDK Permissions](https://platform.claude.com/docs/en/agent-sdk/permissions) — `acceptEdits`, `dontAsk`, `bypassPermissions`, `allowedTools` vs `disallowedTools` semantics
-- [Claude Agent SDK MCP](https://platform.claude.com/docs/en/agent-sdk/mcp) — `mcpServers` config, `createSdkMcpServer`, `tool()`
-- [Claude Agent SDK Secure Deployment](https://platform.claude.com/docs/en/agent-sdk/secure-deployment) — Docker hardening, `--network none` + Unix proxy socket pattern
-- [Claude Agent SDK Hosting](https://platform.claude.com/docs/en/agent-sdk/hosting) — container deployment patterns, system requirements, Claude Code CLI runtime dependency
-- [Migrate to Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/migration-guide) — breaking changes including system prompt default change in v0.1.0
-- [GitHub anthropics/claude-agent-sdk-typescript](https://github.com/anthropics/claude-agent-sdk-typescript) — package name, version 0.2.76 confirmed
-- Existing codebase `src/orchestrator/` — first-party source for current interfaces and contracts
+- [Anthropic Agent SDK — TypeScript Reference](https://platform.claude.com/docs/en/agent-sdk/typescript) — `Options` type, `continue`/`resume`/`session_id`
+- [Anthropic Agent SDK — Work with Sessions](https://platform.claude.com/docs/en/agent-sdk/sessions) — session file location, `listSessions()`
+- [Anthropic Agent SDK — Structured Outputs](https://platform.claude.com/docs/en/agent-sdk/structured-outputs) — `outputFormat`, `structured_output` on result
+- [Claude API — Structured Outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs) — `output_config.format`, no beta header required
+- [Node.js v20 Readline API](https://nodejs.org/api/readline.html) — `createInterface` options, `'history'` event, SIGINT handling patterns
+- [conf GitHub README](https://github.com/sindresorhus/conf) — API, TypeScript generics, atomic writes, platform-specific config paths
+- [OWASP Top 10 for LLM Applications 2025 — LLM01 Prompt Injection](https://genai.owasp.org/llmrisk/llm01-prompt-injection/)
+- [Package Hallucinations by Code Generating LLMs (arXiv 2406.10279)](https://arxiv.org/abs/2406.10279) — 5.2% hallucination rate for commercial LLMs; version numbers more hallucinated than names
+- [Indirect Prompt Injection via GitHub README (EMNLP 2025)](https://aclanthology.org/2025.emnlp-demos.55.pdf) — CVE-2025-54135/54136; repo scan injection attack
+- Existing codebase `src/` — first-party analysis of `run.ts`, `types.ts`, `retry.ts`, `judge.ts` (v2.0)
 
 ### Secondary (MEDIUM confidence)
-- [Spotify Engineering: Background Coding Agent Part 1](https://engineering.atspotify.com/2025/11/spotifys-background-coding-agent-part-1) — architecture evolution, top-performing agent claim, surrounding infrastructure pattern
-- [Spotify Engineering: Feedback Loops Part 3](https://engineering.atspotify.com/2025/12/feedback-loops-background-coding-agents-part-3) — container isolation, MCP verifiers, stop hook, LLM Judge 25% veto rate
-- npm registry (via search) — `@anthropic-ai/claude-agent-sdk` version 0.2.76; `@modelcontextprotocol/sdk` version 1.27.1
+- [Ambig-SWE: Active questioning in agentic AI (arXiv 2502.13069)](https://arxiv.org/html/2502.13069v3) — clarification reduces errors 27%, ambiguity retries from 4.1 to 1.3 per session
+- [Intent-Driven NLI: Hybrid LLM + Intent Classification (Medium 2025)](https://medium.com/data-science-collective/intent-driven-natural-language-interface-a-hybrid-llm-intent-classification-approach-e1d96ad6f35d) — fast-path classification pattern
+- [Google Conductor: context-driven development for Gemini CLI](https://developers.googleblog.com/conductor-introducing-context-driven-development-for-gemini-cli/) — plan-before-execute pattern validation
+- [Agent State Management — AgentMemo 2026](https://agentmemo.ai/blog/agent-state-management-guide.html) — multi-turn state management patterns
+- [Containing Agent Chaos: Dagger Container Use](https://dagger.io/blog/agent-container-use) — fresh-container-per-task rationale
 
 ---
-*Research completed: 2026-03-16*
+*Research completed: 2026-03-19*
 *Ready for roadmap: yes*

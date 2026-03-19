@@ -1,672 +1,601 @@
 # Architecture Research
 
-**Domain:** Claude Agent SDK migration — background coding agent
-**Researched:** 2026-03-16
-**Confidence:** HIGH (Claude Agent SDK docs via official platform.claude.com, Spotify pattern via official engineering blog)
+**Domain:** Conversational mode — background coding agent v2.1
+**Researched:** 2026-03-19
+**Confidence:** HIGH (based on first-party codebase analysis + verified Agent SDK docs)
 
 ## Context: What This Research Is
 
-This is not a greenfield architecture doc. It is a migration analysis. The system already exists and works (v1.1). The question is: how does the Claude Agent SDK slot into the existing RetryOrchestrator/Verifier/Judge architecture, what needs to change, and what does the new data flow look like?
+This is an integration analysis for v2.1. The system already exists and works (v2.0). The question is:
+how do four new features — REPL interface, intent parser, project registry, and multi-turn sessions —
+slot into the existing `CLI → RetryOrchestrator → ClaudeCodeSession` architecture without disrupting
+the verification pipeline?
+
+This document focuses on integration points, new vs modified components, and build order. It does not
+re-document the v2.0 architecture.
 
 ---
 
-## Current Architecture (v1.1 — What Exists)
+## Existing Architecture (v2.0 — What Already Works)
 
 ```
-CLI (Commander.js)
-  -> RetryOrchestrator
-       -> AgentSession.start()            creates Docker container
-       -> AgentSession.run(message)       drives custom agentic loop
-            -> AgentClient.runAgenticLoop()
-                 -> Anthropic SDK messages.create() (loop)
-                 -> Tool dispatch (read_file, edit_file, grep, etc.)
-                    -> ContainerManager.exec() for read/grep/bash
-                    -> host execFile() for git_operation, edit_file
-       -> AgentSession.stop()             tears down container
-       -> compositeVerifier(workspaceDir)
-       -> llmJudge(workspaceDir, originalTask)
-  -> GitHubPRCreator (optional)
+CLI (Commander.js, src/cli/index.ts)
+  └─> commands/run.ts          parses flags, validates options, calls runAgent()
+       └─> RetryOrchestrator   outer verify/retry loop (max 3 attempts)
+            └─> ClaudeCodeSession.run(message)
+                 └─> Agent SDK query()    Docker container, iptables isolation
+                      └─> Built-in tools: Read Write Edit Bash Glob Grep
+                 └─> compositeVerifier(workspaceDir)
+                 └─> llmJudge(workspaceDir, originalTask)
+  └─> GitHubPRCreator (optional, --create-pr flag)
 ```
 
-What gets deleted: AgentSession (667 lines), AgentClient (273 lines), ContainerManager (~200 lines), their tests (~650 lines). Total: ~1,190 lines.
+The entry point is rigid: Commander.js parses `--task-type`, `--repo`, `--dep`, `--target-version`.
+These flags feed `buildPrompt()` which constructs a hard-coded task prompt.
+`RetryOrchestrator` then drives the session loop.
 
-What stays: RetryOrchestrator, compositeVerifier, llmJudge, ErrorSummarizer, GitHubPRCreator, prompts/, cli/. Total: ~1,600 lines unchanged.
+Everything from `RetryOrchestrator` down is **untouched by v2.1**. The verification pipeline, Docker
+isolation, hooks, MCP verifier, and Judge are all stable. v2.1 changes only what happens before
+`RetryOrchestrator.run()` is called.
 
 ---
 
-## Target Architecture (v2.0)
+## Target Architecture (v2.1)
+
+v2.1 adds a new input pathway — the REPL/one-shot conversational interface — that coexists alongside
+the existing batch CLI. The fundamental change is: instead of requiring the user to provide structured
+flags (`--task-type`, `--dep`, `--target-version`), v2.1 accepts natural language and resolves it into
+the same `RunOptions` that the existing `runAgent()` function already accepts.
 
 ```
-CLI (Commander.js)
-  -> RetryOrchestrator
-       -> AgentSdkSession.run(message)   thin wrapper around query()
-            -> Claude Agent SDK query()
-                 cwd: workspaceDir
-                 maxTurns: turnLimit
-                 permissionMode: 'acceptEdits'
-                 allowedTools: ['Read','Write','Edit','Bash','Glob','Grep']
-                 model: config.model
-                 hooks: { Stop: [verifyBeforeStop] }  (optional MCP path, Phase 12)
-                 Built-in: auto context compression, agentic loop
-       -> compositeVerifier(workspaceDir)   unchanged
-       -> llmJudge(workspaceDir, task)       unchanged
-  -> GitHubPRCreator                         unchanged
+┌──────────────────────────────────────────────────────────────────────┐
+│                        INPUT LAYER (new)                              │
+│                                                                        │
+│  One-shot mode                  REPL mode                             │
+│  bg-agent 'update recharts'     bg-agent  (interactive)               │
+│         │                              │                              │
+│         └────────────┬─────────────────┘                             │
+│                      │                                                │
+│                 InputRouter                                            │
+│                      │                                                │
+│          ┌───────────┼───────────────┐                               │
+│          │           │               │                               │
+│    ProjectRegistry  IntentParser   SessionContext                     │
+│    (resolve name)   (NL → params)  (multi-turn state)                │
+│          │           │               │                               │
+│          └───────────┴───────────────┘                               │
+│                      │                                                │
+│               RunOptions (resolved)                                   │
+│                      │                                                │
+└──────────────────────┼───────────────────────────────────────────────┘
+                       │
+                       ▼ (same interface as today)
+┌──────────────────────────────────────────────────────────────────────┐
+│                    EXECUTION LAYER (unchanged)                        │
+│                                                                        │
+│            runAgent(options: RunOptions): Promise<number>             │
+│                      │                                                │
+│              RetryOrchestrator                                        │
+│              ClaudeCodeSession (Docker + iptables)                    │
+│              compositeVerifier + llmJudge                             │
+│              GitHubPRCreator (optional)                               │
+│                                                                        │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-The swap is surgical: `new AgentSession(config)` becomes `new AgentSdkSession(config)` in `retry.ts`. The `AgentSdkSession` wrapper satisfies the same `SessionResult`-returning contract so `RetryOrchestrator` is untouched.
+The key insight: `runAgent()` in `src/cli/commands/run.ts` already accepts a well-defined `RunOptions`
+interface. v2.1's new components produce `RunOptions`. The execution layer doesn't change.
 
 ---
 
 ## System Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           HOST PROCESS                                   │
-│                                                                          │
-│  CLI (run.ts)                                                            │
-│     |                                                                    │
-│  RetryOrchestrator.run(task)   [loop: attempt 1..maxRetries]            │
-│     |                                                                    │
-│     ├── AgentSdkSession.run(message)  ←─── NEW (replaces AgentSession)  │
-│     |      |                                                             │
-│     |      | query({ cwd, maxTurns, permissionMode, hooks, ... })       │
-│     |      |                                                             │
-│     |      ▼                                                             │
-│     |   ┌──────────────────────────────────────────────┐                │
-│     |   │  Claude Code Process  (Phase 13: in Docker)  │                │
-│     |   │                                              │                │
-│     |   │  Built-in tools: Read Write Edit Bash        │                │
-│     |   │                  Glob Grep                   │                │
-│     |   │  Auto context compression                    │                │
-│     |   │  Agentic loop (managed by SDK)               │                │
-│     |   │                                              │                │
-│     |   │  hooks: PostToolUse → audit log              │                │
-│     |   │         Stop → optional self-verify (Ph.12)  │                │
-│     |   └──────────────────────────────────────────────┘                │
-│     |                                                                    │
-│     ├── preVerify hook (e.g., npm install)    ←── unchanged             │
-│     ├── compositeVerifier(workspaceDir)        ←── unchanged            │
-│     └── llmJudge(workspaceDir, originalTask)   ←── unchanged            │
-│                                                                          │
-│  GitHubPRCreator (optional)                    ←── unchanged            │
-└─────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                              HOST PROCESS                                 │
+│                                                                            │
+│  Entry points                                                              │
+│  ┌──────────────────┐   ┌──────────────────────────────────────┐          │
+│  │  Existing batch  │   │  NEW: Conversational entry point      │          │
+│  │  CLI (index.ts)  │   │  bin/bg-agent (new binary/command)    │          │
+│  │  --task-type...  │   │  bg-agent 'update recharts to 2.7.0'  │          │
+│  │  --repo...       │   │  OR: bg-agent (REPL loop)             │          │
+│  └─────────┬────────┘   └──────────────┬───────────────────────┘          │
+│            │                           │                                   │
+│            │                  ┌────────┴────────────────────┐             │
+│            │                  │     InputRouter (new)        │             │
+│            │                  │     detects one-shot vs REPL │             │
+│            │                  └──┬──────────┬───────────────┘             │
+│            │                     │          │                              │
+│            │            ┌────────┴──┐  ┌────┴──────────┐                  │
+│            │            │ Project   │  │  IntentParser  │                  │
+│            │            │ Registry  │  │  (Claude API)  │                  │
+│            │            │ (new)     │  │  (new)         │                  │
+│            │            └────┬──────┘  └────┬───────────┘                 │
+│            │                 │              │                              │
+│            │            ┌────┴──────────────┴────────┐                   │
+│            │            │   SessionContext (new)       │                   │
+│            │            │   multi-turn state + history │                   │
+│            │            └────────────┬───────────────┘                    │
+│            │                         │                                     │
+│            └──────────────┬──────────┘                                    │
+│                           │                                                │
+│                     RunOptions                                             │
+│                    (taskType, repo, dep, etc.)                             │
+│                           │                                                │
+│               runAgent(options: RunOptions)                                │
+│                           │                                                │
+│             RetryOrchestrator  (unchanged)                                 │
+│                    │                                                        │
+│             ClaudeCodeSession  (unchanged)                                 │
+│                    │                                                        │
+│          ┌─────────────────────────────────┐                              │
+│          │  Docker container               │                              │
+│          │  Agent SDK query()              │                              │
+│          │  iptables (api.anthropic.com)   │                              │
+│          └─────────────────────────────────┘                              │
+│                    │                                                        │
+│          compositeVerifier + llmJudge  (unchanged)                         │
+│          GitHubPRCreator (unchanged)                                       │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Component Responsibilities (Post-Migration)
+## Component Responsibilities
 
-| Component | Responsibility | Status |
-|-----------|----------------|--------|
-| `CLI (run.ts)` | Parse args, build config, wire orchestrator | Modify: remove Docker refs |
-| `RetryOrchestrator` | Outer verify/retry loop, judge integration | Keep unchanged |
-| `AgentSdkSession` | Thin wrapper: `query()` call, result mapping, turn/timeout tracking | New (~50 lines) |
-| `compositeVerifier` | Build/test/lint — deterministic quality gate | Keep unchanged |
-| `llmJudge` | Diff-vs-prompt scope check | Keep unchanged |
-| `ErrorSummarizer` | Build retry context digest | Keep unchanged |
-| `GitHubPRCreator` | Branch/push/PR via Octokit | Keep unchanged |
-| `prompts/*.ts` | End-state prompt builders | Keep unchanged |
+### New Components
 
----
+| Component | Responsibility | Location |
+|-----------|----------------|----------|
+| `InputRouter` | Entry point for conversational mode. Parses CLI args: if process.argv has a positional string → one-shot; if no args → REPL loop. Drives the REPL read/run/print cycle. | `src/cli/repl/input-router.ts` |
+| `IntentParser` | LLM-powered NL → structured task params. Calls Claude API (not Agent SDK `query()`) with a JSON schema prompt. Returns `ParsedIntent`: taskType, repo, dep, targetVersion, confidence. | `src/cli/repl/intent-parser.ts` |
+| `ProjectRegistry` | Stores name → repo path mappings in `~/.bg-agent/projects.json`. Registers cwd automatically. Resolves short names ("my-app") to absolute paths. | `src/cli/registry/project-registry.ts` |
+| `SessionContext` | Holds multi-turn state for a REPL session: resolved project, prior task results, conversation history for the intent parser. Lives in memory (process lifetime). | `src/cli/repl/session-context.ts` |
+| `ContextScanner` | Reads repo structure to build brief context summary (package.json/pom.xml → dep list, existing versions). Fed to IntentParser to improve disambiguation. | `src/cli/repl/context-scanner.ts` |
+| `ClarificationLoop` | After intent parsing, surfaces the plan to the user and waits for confirmation or correction. Returns confirmed `RunOptions` or prompts for clarification. | `src/cli/repl/clarification-loop.ts` |
+| `bin/bg-agent` | New entry point binary (or `bg-agent` commander subcommand). Bootstraps `InputRouter`. Does NOT replace `background-agent` — they coexist. | `src/cli/bg-agent.ts` |
 
-## Integration Point: RetryOrchestrator to AgentSdkSession
+### Modified Components
 
-The only integration change is in `retry.ts` lines 70-81 (the session creation block):
+| Component | Change | Location |
+|-----------|--------|----------|
+| `cli/index.ts` | Minor: add `--conversational` flag or keep as separate binary. Likely no change — v2.1 adds a second binary. | `src/cli/index.ts` |
+| `cli/commands/run.ts` | Extract `runAgent()` into a shared module so both the batch CLI and REPL can call it. Currently it's the action handler — needs to be importable. | `src/cli/commands/run.ts` |
+| `prompts/index.ts` | Add `freeform` task type: passes the LLM-parsed task description directly as the prompt, bypassing template builders. Needed for natural language tasks that don't fit existing types. | `src/prompts/index.ts` |
+| `types.ts` | Add `ParsedIntent`, `RegistryEntry`, `SessionContextState` types. Extend `RunOptions` to support `promptOverride?: string` for freeform tasks. | `src/types.ts` |
 
-```typescript
-// BEFORE
-const session = new AgentSession(this.config);
-this.activeSession = session;
-await session.start();
-sessionResult = await session.run(message, logger);
-// finally: await session.stop()
+### Unchanged Components
 
-// AFTER
-const session = new AgentSdkSession(this.config);
-this.activeSession = session;
-sessionResult = await session.run(message, logger);
-// finally: await session.stop()   (no-op or abort)
-```
-
-`AgentSdkSession.run()` must return the same `SessionResult` shape:
-
-```typescript
-interface SessionResult {
-  sessionId: string;
-  status: 'success' | 'failed' | 'timeout' | 'turn_limit';
-  toolCallCount: number;
-  duration: number;
-  finalResponse: string;
-  error?: string;
-}
-```
-
-The SDK's `maxTurns` option replaces `TurnLimitError`. The `AbortController` (passed via `options.abortController`) replaces the manual timeout. The result message stream (`msg.type === 'result'`) provides `finalResponse`. Tool call count is tracked by counting `tool_use` blocks in `msg.type === 'assistant'` messages.
+Everything in the execution layer: `RetryOrchestrator`, `ClaudeCodeSession`, `compositeVerifier`,
+`llmJudge`, `ErrorSummarizer`, `GitHubPRCreator`, `metrics.ts`, `mcp/verifier-server.ts`,
+`cli/docker/index.ts`, `cli/utils/logger.ts`.
 
 ---
 
-## AgentSdkSession: The New Component
-
-This is the only net-new production class. It is deliberately thin — approximately 50 lines.
-
-```typescript
-import { query } from '@anthropic-ai/claude-agent-sdk';
-import * as crypto from 'crypto';
-import pino from 'pino';
-import { SessionConfig, SessionResult } from '../types.js';
-
-export class AgentSdkSession {
-  private config: SessionConfig;
-  private abortController: AbortController | null = null;
-
-  constructor(config: SessionConfig) {
-    this.config = config;
-  }
-
-  async run(message: string, logger?: pino.Logger): Promise<SessionResult> {
-    const sessionId = crypto.randomUUID();
-    const startTime = Date.now();
-    let toolCallCount = 0;
-    let finalResponse = '';
-    const status_ref = { value: 'success' as SessionResult['status'] };
-    let error: string | undefined;
-
-    this.abortController = new AbortController();
-    const timeout = setTimeout(
-      () => this.abortController?.abort(),
-      this.config.timeoutMs ?? 300_000
-    );
-
-    try {
-      logger?.info({ sessionId, status: 'running' }, 'Session started');
-
-      for await (const msg of query({
-        prompt: message,
-        options: {
-          cwd: this.config.workspaceDir,
-          maxTurns: this.config.turnLimit ?? 10,
-          permissionMode: 'acceptEdits',
-          allowedTools: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'],
-          disallowedTools: ['WebSearch', 'WebFetch'],  // no network
-          model: this.config.model,
-          abortController: this.abortController,
-        }
-      })) {
-        if (msg.type === 'assistant') {
-          for (const block of msg.content) {
-            if (block.type === 'tool_use') toolCallCount++;
-          }
-        }
-        if (msg.type === 'result') {
-          finalResponse = msg.result ?? '';
-          if (msg.subtype === 'error_max_turns') status_ref.value = 'turn_limit';
-          else if (msg.subtype !== 'success') status_ref.value = 'failed';
-        }
-      }
-    } catch (err) {
-      if (this.abortController.signal.aborted) {
-        status_ref.value = 'timeout';
-        error = 'Session timeout';
-      } else {
-        status_ref.value = 'failed';
-        error = err instanceof Error ? err.message : String(err);
-      }
-    } finally {
-      clearTimeout(timeout);
-      this.abortController = null;
-    }
-
-    const duration = Date.now() - startTime;
-    logger?.info({ sessionId, status: status_ref.value, toolCallCount, duration }, 'Session completed');
-
-    return { sessionId, status: status_ref.value, toolCallCount, duration, finalResponse, error };
-  }
-
-  async stop(): Promise<void> {
-    this.abortController?.abort();
-  }
-}
-```
-
----
-
-## Container Strategy
-
-**Verdict: Run Claude Agent SDK (the Claude Code process) inside Docker for production isolation.**
-
-### Why Container Is Still Required
-
-The Agent SDK's built-in tools (`Bash`, `Write`, `Edit`) execute on the host machine as the current user. Without a container, the agent can:
-- Modify any file the Node.js process can reach
-- Execute arbitrary shell commands via `Bash` tool
-- Make network calls (if `WebSearch`/`WebFetch` not disallowed)
-
-The core constraint is unchanged: "Agent must run in Docker with no external network access — security non-negotiable."
-
-### Why This Is Not Docker-in-Docker
-
-Docker-in-Docker (DinD) means the orchestrator on the host spins up a container and then the tools inside that container make further Docker calls. That is not the pattern here.
-
-The correct pattern: the Agent SDK's Claude Code process (the thing that runs `query()`) runs inside Docker. The orchestrator process (RetryOrchestrator, verifier, judge) stays on the host. The SDK communicates with its subprocess via the process interface, which the `spawnClaudeCodeProcess` option makes configurable.
+## Recommended Project Structure
 
 ```
-Host machine
-  Node.js orchestrator process (RetryOrchestrator, verifier, judge, PR creator)
-       |
-       | docker run --network=none --user=1001 -v workspace:/workspace agent-sdk:latest
-       |      node dist/orchestrator/sdk-session-entrypoint.js
-       |
-       v
-  Docker container (network=none, non-root, workspace bind-mounted)
-       Node.js Agent SDK process
-            query() runs here
-            Built-in tools execute inside container
-                 Read/Write/Edit/Bash/Glob/Grep against /workspace
+src/
+├── cli/
+│   ├── commands/
+│   │   └── run.ts              # MODIFY: extract runAgent() to be directly importable
+│   ├── docker/
+│   │   └── index.ts            # unchanged
+│   ├── registry/               # NEW
+│   │   ├── project-registry.ts # ProjectRegistry class (~80 lines)
+│   │   └── project-registry.test.ts
+│   ├── repl/                   # NEW
+│   │   ├── input-router.ts     # Entry point: one-shot vs REPL detection (~60 lines)
+│   │   ├── intent-parser.ts    # LLM intent parsing (~120 lines)
+│   │   ├── intent-parser.test.ts
+│   │   ├── clarification-loop.ts  # User confirmation + plan display (~80 lines)
+│   │   ├── context-scanner.ts  # Repo structure scan for parser context (~60 lines)
+│   │   └── session-context.ts  # Multi-turn state (~50 lines)
+│   ├── utils/
+│   │   └── logger.ts           # unchanged
+│   ├── bg-agent.ts             # NEW: conversational entry point binary
+│   └── index.ts                # unchanged (batch mode)
+├── mcp/
+│   └── verifier-server.ts      # unchanged
+├── orchestrator/
+│   ├── claude-code-session.ts  # unchanged
+│   ├── judge.ts                # unchanged
+│   ├── metrics.ts              # unchanged
+│   ├── pr-creator.ts           # unchanged
+│   ├── retry.ts                # unchanged
+│   ├── summarizer.ts           # unchanged
+│   └── verifier.ts             # unchanged
+├── prompts/
+│   ├── index.ts                # MODIFY: add freeform task type passthrough
+│   ├── maven.ts                # unchanged
+│   └── npm.ts                  # unchanged
+├── errors.ts                   # unchanged
+└── types.ts                    # MODIFY: add ParsedIntent, RegistryEntry, SessionContextState
 ```
 
-The Agent SDK `Options.spawnClaudeCodeProcess` accepts a custom spawn function that takes `SpawnOptions` and returns a `SpawnedProcess`. This is the integration point for the container launch.
+### Structure Rationale
 
-### Development Mode (Phases 10-11)
-
-For development and CI, skip the container. Use strict permission controls instead:
-
-```typescript
-options: {
-  permissionMode: 'dontAsk',  // deny anything not in allowedTools
-  allowedTools: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'],
-  disallowedTools: ['WebSearch', 'WebFetch', 'Agent'],
-}
-```
-
-This provides adequate blast-radius limitation for testing without Docker startup overhead.
-
-### Production Mode (Phase 13)
-
-Build a Dockerfile that:
-- Installs `@anthropic-ai/claude-agent-sdk` and ripgrep (for Grep tool)
-- Runs as non-root user (UID 1001)
-- Bind-mounts the workspace directory at `/workspace`
-- Has no network access (`--network=none`)
-- Has read-only root filesystem except `/workspace`
-
-The `spawnClaudeCodeProcess` implementation in `AgentSdkSession` wraps the docker run command.
-
----
-
-## MCP Verifier Server Pattern (Spotify Pattern — Phase 12)
-
-Spotify's Honk agent exposes verifiers as MCP servers. The key quote from their engineering blog: "the agent doesn't know what the verification does and how, it just knows that it can (and in certain cases must) call it to verify its changes."
-
-### Two-Level Verification Architecture
-
-```
-Agent SDK session (inside container)
-     |
-     | calls mcp__verifier__verify
-     v
-MCP verifier server (stdio, host process)
-     |
-     | imports compositeVerifier
-     v
-compositeVerifier(workspaceDir)  [same function as outer RetryOrchestrator uses]
-     |
-     v
-{ passed: boolean, errors: VerificationError[] }
-     |
-     | returned to agent as tool result
-     v
-Agent self-corrects within the session if errors exist
-     |
-     | when agent is satisfied, stops
-     v
-RetryOrchestrator runs compositeVerifier again (authoritative)
-```
-
-### Why Run Verifier Twice
-
-The MCP verifier gives the agent in-session feedback — it can fix its own mistakes without consuming a full outer retry. The outer `RetryOrchestrator` verification is still the mandatory quality gate because it cannot be bypassed and runs regardless of what happened inside the session.
-
-The outer verification is cheap to run (it was already running). The MCP path reduces the number of outer retries needed, not the number of verifications.
-
-### MCP Server Configuration
-
-```typescript
-// In AgentSdkSession.run(), add to options:
-mcpServers: {
-  verifier: {
-    command: 'node',
-    args: ['dist/mcp/verifier-server.js'],
-    env: { WORKSPACE_DIR: this.config.workspaceDir }
-  }
-},
-allowedTools: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'mcp__verifier__verify']
-```
-
-The MCP server itself is a stdio server (~30 lines) that reads `WORKSPACE_DIR` from env and calls `compositeVerifier`:
-
-```typescript
-// mcp/verifier-server.ts
-import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import { z } from 'zod';
-import { compositeVerifier } from '../orchestrator/verifier.js';
-
-const server = createSdkMcpServer({
-  name: 'verifier',
-  tools: [
-    tool('verify', 'Run build, test, and lint checks on the workspace', {}, async () => {
-      const result = await compositeVerifier(process.env.WORKSPACE_DIR!);
-      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
-    })
-  ]
-});
-```
-
-### MCP Verifier Is Optional
-
-This is a Phase 12 optimization. The system works correctly without it. Implement after Phase 10 (core migration) and Phase 11 (deletion) are stable.
-
----
-
-## Data Flow: New Request Lifecycle
-
-```
-CLI: background-agent run --task npm-dependency-update --repo /path/to/repo
-     |
-     v
-RetryOrchestrator.run(originalTask)   [loop: attempt 1..maxRetries=3]
-     |
-     | attempt 1: message = originalTask
-     | attempt 2: message = task + "\n---\n" + errorDigest + "\n---\nFix and complete."
-     |
-     v
-AgentSdkSession.run(message, logger)
-     |
-     | query({
-     |   prompt: message,
-     |   options: {
-     |     cwd: workspaceDir,
-     |     maxTurns: 10,
-     |     permissionMode: 'acceptEdits',
-     |     allowedTools: ['Read','Write','Edit','Bash','Glob','Grep'],
-     |     disallowedTools: ['WebSearch','WebFetch'],
-     |     model: 'claude-sonnet-4-5',
-     |     abortController: (5 min timeout)
-     |   }
-     | })
-     |
-     v  (async generator streams messages)
-     |
-     | type='assistant' with tool_use blocks -> toolCallCount++
-     | type='result', subtype='success'      -> finalResponse = msg.result
-     | type='result', subtype='error_max_turns' -> status = 'turn_limit'
-     |
-     v
-SessionResult { status:'success', toolCallCount:7, duration:45000, finalResponse:'...' }
-     |
-     v  (back in RetryOrchestrator)
-     |
-     | if status !== 'success': return terminal failure (no retry)
-     |
-     v
-preVerify hook (e.g., runNpmInstall for lockfile regen)
-     |
-     v
-compositeVerifier(workspaceDir)   [tsc, vitest, eslint, maven build+test, npm build+test]
-     |
-     | if passed:
-     v
-llmJudge(workspaceDir, originalTask)   [diff scope check, ~25% veto rate]
-     |
-     | if APPROVE:
-     v
-RetryResult { finalStatus:'success', attempts:1, sessionResults, verificationResults }
-     |
-     v
-GitHubPRCreator (if --create-pr flag)
-```
-
-Nothing in this flow changes except the AgentSdkSession box. All error paths, retry logic, judge logic, and PR creation are identical.
-
----
-
-## Hooks Integration
-
-### PostToolUse Hook (Audit Logging)
-
-Replaces the custom tool logging from the old session. Non-blocking (async: true).
-
-```typescript
-import { HookCallback, PostToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
-
-const auditHook: HookCallback = async (input, toolUseId) => {
-  const post = input as PostToolUseHookInput;
-  logger?.debug({ toolName: post.tool_name, toolUseId }, 'Tool executed');
-  return { async: true };  // non-blocking — don't wait
-};
-
-// In query() options:
-hooks: {
-  PostToolUse: [{ hooks: [auditHook] }]
-}
-```
-
-### Stop Hook (Optional In-Session Verification, Phase 12)
-
-When the agent decides to stop, this fires before the session ends. Can inject verification results back into the conversation and keep the agent going.
-
-```typescript
-const verifyBeforeStop: HookCallback = async (input) => {
-  const result = await compositeVerifier(workspaceDir);
-  if (!result.passed) {
-    const errorSummary = ErrorSummarizer.buildDigest([result]);
-    return {
-      systemMessage: `Verification failed:\n${errorSummary}\nFix these issues before stopping.`,
-      continue: true   // keep the session going
-    };
-  }
-  return {};  // allow stop — verification passed
-};
-```
-
-Note: The Stop hook fires when the agent tries to stop. The outer `RetryOrchestrator` verification fires after the session actually ends. Both can fire for the same session. This is correct — the Stop hook gives the agent a chance to self-correct; the outer verification is the final authority.
-
-### No PreToolUse Hooks Needed for Path Safety
-
-The old `AgentSession` had explicit path traversal checks and git flag allowlists. The Agent SDK's `cwd` option scopes the agent to the workspace directory. `allowedTools` without `Bash git push` prevents unauthorized git operations. The combination replaces the need for `PreToolUse` path validation hooks in the common case.
-
-If fine-grained git control is needed (e.g., blocking `git push`), add a `PreToolUse` hook with `matcher: 'Bash'` that checks `tool_input.command` for blocked patterns.
-
----
-
-## Removed vs Replaced vs Retained
-
-### Deleted (~1,190 lines)
-
-| File | Lines | Replaced By |
-|------|-------|-------------|
-| `orchestrator/agent.ts` | 273 | Agent SDK built-in agentic loop |
-| `orchestrator/session.ts` | 667 | `AgentSdkSession` wrapper (~50 lines) |
-| `orchestrator/container.ts` | ~200 | Agent SDK process runs in container (Phase 13) |
-| Tests for above | ~650 | New integration tests for `AgentSdkSession` |
-
-### New
-
-| File | Lines | Purpose |
-|------|-------|---------|
-| `orchestrator/sdk-session.ts` | ~50 | `AgentSdkSession`: thin `query()` wrapper, `SessionResult` mapping |
-| `mcp/verifier-server.ts` | ~30 | MCP stdio server exposing `compositeVerifier` (Phase 12 only) |
-
-### Modified (minimal)
-
-| File | Change |
-|------|--------|
-| `orchestrator/retry.ts` | Line 70: `new AgentSession` -> `new AgentSdkSession`. Remove Docker/container import. |
-| `orchestrator/index.ts` | Remove `AgentClient`, `AgentSession`, `ContainerManager` exports. Add `AgentSdkSession`. |
-| `cli/commands/run.ts` | Remove `image` option. Remove DockerContainerManager references. |
-| `package.json` | Add `@anthropic-ai/claude-agent-sdk`. Remove `dockerode` and `write-file-atomic` (if only used in session.ts). |
-
-### Unchanged (everything else)
-
-`retry.ts` loop logic, `verifier.ts`, `judge.ts`, `summarizer.ts`, `pr-creator.ts`, `metrics.ts`, `prompts/`, `cli/index.ts` core, `types.ts`, all type definitions, all prompt builders.
+- `cli/registry/` — separate from `cli/repl/` because registry is a persistent service (survives sessions) while repl/ holds session-scoped components
+- `cli/repl/` — groups all conversational input components; none touch execution layer
+- `bg-agent.ts` — new binary keeps conversational mode isolated from batch `index.ts`; no risk of breaking existing CLI consumers
 
 ---
 
 ## Architectural Patterns
 
-### Pattern 1: Wrapper with Same Contract
+### Pattern 1: Input Normalization Gateway
 
-**What:** `AgentSdkSession` wraps `query()` and returns the same `SessionResult` interface that `AgentSession` returned. `RetryOrchestrator` sees no API difference.
+**What:** All input paths (batch CLI, REPL, one-shot) converge on `RunOptions` before reaching
+`runAgent()`. The `RunOptions` interface is the contract between input and execution.
 
-**When to use:** Replacing an implementation without changing callers. The existing interface acts as the migration contract.
+**When to use:** Always. `runAgent()` is the stable boundary. Input layer components above it
+are free to evolve; execution layer components below it are free to evolve.
 
-**Trade-offs:** Slight indirection, but all orchestrator logic and tests remain unchanged. The wrapper is so thin that it adds negligible complexity.
+**Trade-offs:** Forces intent parser output to fit the existing `RunOptions` shape. For tasks that
+don't fit existing task types (e.g., "refactor the auth module"), `promptOverride` in `RunOptions`
+enables a freeform pass-through without requiring new prompt builders.
 
-### Pattern 2: Outer Verification Is Always Authoritative
+**Example:**
+```typescript
+// intent-parser.ts returns:
+interface ParsedIntent {
+  taskType: string;           // 'npm-dependency-update' or 'freeform'
+  repo: string;               // resolved absolute path
+  dep?: string;
+  targetVersion?: string;
+  promptOverride?: string;    // for freeform tasks
+  confidence: 'high' | 'low';
+  rawInput: string;
+}
 
-**What:** Verification in `RetryOrchestrator` is the mandatory quality gate. Any in-session verification (via MCP Stop hook) is an optimization for faster feedback, not a replacement.
-
-**When to use:** Every time, without exception.
-
-**Trade-offs:** Some redundancy (verifier runs twice if MCP path is active), but correctness is guaranteed even if the MCP path fails or the Stop hook crashes.
-
-### Pattern 3: Fresh Session Per Retry
-
-**What:** Create a new `AgentSdkSession` (new `query()` call) for each retry attempt. Never resume a failed session.
-
-**When to use:** Always for retry attempts. The Agent SDK supports session resumption via `resume: sessionId`. Do not use this for the retry loop.
-
-**Why:** Prior failure context from a bad session contaminates the model's approach. The retry message (task + error digest, built by `buildRetryMessage()`) provides precisely the right context. Spotify's engineering blog explicitly validates this: fresh session per retry prevents context accumulation.
-
-### Pattern 4: Surrounding Infrastructure Stays Outside the Agent
-
-**What:** PR creation, branch naming, git push, Slack notifications, logging — all of these happen in the orchestrator, not inside the agent session.
-
-**When to use:** Anything that interacts with external systems (GitHub, Slack, monitoring).
-
-**Why:** This is the core Spotify pattern. The agent's scope is: read, understand, edit, verify. The orchestrator's scope is: lifecycle, retry, quality gate, output. Keeping infrastructure outside the agent makes the agent's behavior more predictable and the infrastructure independently testable.
-
----
-
-## Anti-Patterns
-
-### Anti-Pattern 1: Running Agent SDK on Host for Production
-
-**What people do:** Skip the container step — run `query()` directly in the orchestrator process for simplicity. Rely on `permissionMode: 'dontAsk'` and `disallowedTools` for safety.
-
-**Why it's wrong:** No network isolation. `Bash` tool can make network calls unless `WebSearch`/`WebFetch` are disallowed AND the Bash commands themselves are restricted. File access is scoped only by the agent's compliance with `cwd`, not by OS-level enforcement.
-
-**Do this instead:** Container for production (Phase 13). Permission restrictions alone for development/CI only.
-
-### Anti-Pattern 2: Using Stop Hook as Primary Verification
-
-**What people do:** Move `compositeVerifier` into a Stop hook, remove it from `RetryOrchestrator`, let the hook be the quality gate.
-
-**Why it's wrong:** Hooks can crash, be misconfigured, or not fire if the session errors out before stopping cleanly. The `RetryOrchestrator` verification runs on the host with full access to tooling and is completely decoupled from the agent session state.
-
-**Do this instead:** Keep `compositeVerifier` in `RetryOrchestrator`. Add a Stop hook only as an in-session feedback optimization (Phase 12).
-
-### Anti-Pattern 3: Resuming Failed Sessions for Retry
-
-**What people do:** Pass `resume: previousSessionId` when retrying after verification failure, thinking the agent can "continue from where it left off."
-
-**Why it's wrong:** The failed session's context window contains all the wrong tool calls, dead-end reasoning, and possibly invalid workspace state. The model anchors to the prior bad approach instead of starting fresh.
-
-**Do this instead:** Create a fresh `query()` call. The `buildRetryMessage()` in `RetryOrchestrator` already constructs the correct retry prompt: original task first, error digest second.
-
-### Anti-Pattern 4: Migrating Everything at Once
-
-**What people do:** Delete `AgentSession`, replace `RetryOrchestrator` internals directly, update all exports simultaneously, then try to get tests green.
-
-**Why it's wrong:** ~100 passing unit tests become unrunnable mid-migration. Hard to isolate failures. No incremental validation.
-
-**Do this instead:** Phase 10 creates `AgentSdkSession` with same interface, swaps one line in `retry.ts`. All existing unit tests still pass (they mock the session). Phase 11 deletes legacy only after Phase 10 is green and verified.
-
-### Anti-Pattern 5: Putting git push Inside the Agent
-
-**What people do:** Give the agent `allowedTools: ['Bash']` with git push enabled, and let it push its own branch.
-
-**Why it's wrong:** Agent should not push to remote. From Spotify: infrastructure like branch management, pushing, and PR creation lives outside the agent. This is a security and predictability boundary.
-
-**Do this instead:** Agent commits locally (Bash git commit or the Agent SDK's Bash tool with scoped git). `GitHubPRCreator` on the host handles branch creation, push, and PR.
-
----
-
-## Spotify "Honk" Architecture Reference
-
-Spotify's background coding agent evolved through the same trajectory as this project:
-
-1. Open-source agents (brittle, hard to maintain)
-2. Custom agentic loop (what v1.0/v1.1 built)
-3. Claude Code as agent engine (where v2.0 goes)
-
-Their validated architecture after migration (Spotify Engineering Part 1/3, 2025):
-
-- **Agent runs in a sandboxed container** with limited binaries and no network access to surrounding systems
-- **Verifiers exposed as MCP servers** — agent calls a verify tool, doesn't know if it's Maven or npm underneath. Verifier activates automatically based on codebase contents (pom.xml triggers Maven verifier, package.json triggers npm verifier)
-- **Stop hook triggers verification** before PR creation is attempted
-- **LLM Judge vetoes ~25% of proposals** — agents self-correct roughly half the time when given veto feedback
-- **Surrounding infrastructure stays outside** — fleet management, Slack, PR creation, prompt authoring all external to Claude Code itself
-- **Top-performing agent** across ~50 migration comparisons in their evaluation framework
-
-The architecture described in this document implements all of these patterns. Their "small internal CLI" that "delegates to Claude Code, runs MCP verifiers, evaluates diff with LLM Judge, uploads logs" maps directly to our `CLI -> RetryOrchestrator -> AgentSdkSession + compositeVerifier + llmJudge` stack.
-
----
-
-## Build Order Rationale
-
-Dependencies flow as:
-
-```
-Phase 10: AgentSdkSession          -> Phase 11: Delete Legacy
-  (new wrapper, swap in retry.ts)       (cleanup, simplify)
-         |                                     |
-         v                                     v
-Phase 12: MCP Verifiers (optional)   Phase 13: Container Strategy
-  (Spotify pattern, in-session        (production isolation,
-   self-verification)                  spawnClaudeCodeProcess)
+// input-router.ts converts ParsedIntent -> RunOptions:
+function toRunOptions(intent: ParsedIntent, registry: ProjectRegistry): RunOptions {
+  return {
+    taskType: intent.taskType,
+    repo: intent.repo,
+    dep: intent.dep,
+    targetVersion: intent.targetVersion,
+    promptOverride: intent.promptOverride,
+    turnLimit: 10,
+    timeout: 300,
+    maxRetries: 3,
+  };
+}
 ```
 
-Phase 10 must precede Phase 11: cannot delete until replacement works.
+### Pattern 2: Intent Parser as Thin API Wrapper
 
-Phase 12 and Phase 13 are independent of each other. Phase 12 adds the MCP verifier server (runs on host). Phase 13 puts the agent process inside Docker. Neither depends on the other.
+**What:** `IntentParser` calls the Anthropic SDK (or Claude API directly) with a single structured
+output prompt. It is not an agent — it makes one LLM call with a well-constrained JSON schema.
+No tools, no agentic loop, no `query()`.
 
-Phase 12 can be skipped if the outer retry loop provides sufficient correction cycles. Phase 13 is required for production but can be deferred for development.
+**When to use:** Intent parsing only. Keep the LLM call count low and predictable.
+
+**Trade-offs:** One API call per user input. Latency is acceptable (~1-2s). Using `query()` for
+intent parsing would be overkill — the Agent SDK is designed for multi-turn tool-using agents, not
+single structured-output calls.
+
+**Example:**
+```typescript
+// intent-parser.ts — uses @anthropic-ai/sdk directly (or keep as Haiku call)
+const response = await anthropic.messages.create({
+  model: 'claude-haiku-4-5',   // same model as LLM Judge
+  max_tokens: 500,
+  system: INTENT_PARSER_SYSTEM_PROMPT,   // JSON schema + examples
+  messages: [{ role: 'user', content: userInput }],
+});
+// parse response.content[0].text as JSON -> ParsedIntent
+```
+
+This is the same pattern as the existing LLM Judge (`orchestrator/judge.ts`). Reuse the pattern,
+potentially share the Anthropic client instance.
+
+### Pattern 3: Registry as Simple JSON Store
+
+**What:** `ProjectRegistry` reads/writes `~/.bg-agent/projects.json`. No database, no daemon.
+Auto-registers cwd on first invocation. Short names ("my-app") map to absolute paths.
+
+**When to use:** Every invocation that needs to resolve a project name.
+
+**Trade-offs:** Simple and portable. Concurrency is not a concern (single user, sequential CLI
+invocations). File corruption on crash is the risk — mitigated by atomic write (existing
+`write-file-atomic` dependency already in package.json).
+
+**Example:**
+```typescript
+interface RegistryEntry {
+  name: string;         // short name ("my-app") or repo basename
+  path: string;         // absolute path to repo root
+  lastUsed: string;     // ISO timestamp
+}
+// ~/.bg-agent/projects.json = RegistryEntry[]
+```
+
+### Pattern 4: REPL as Thin Read/Run/Print Loop
+
+**What:** The REPL is a while loop: read user input → parse intent → show plan → confirm → run
+`runAgent()` → print result → repeat. All state lives in `SessionContext` in memory.
+
+**When to use:** Interactive mode only.
+
+**Trade-offs:** No persistence between process restarts (by design). SessionContext holds the
+resolved project and prior run results so follow-up inputs like "try again with verbose logging"
+can reference the prior run. If persistence is needed later, it can be added to the registry.
+
+**Example:**
+```typescript
+// input-router.ts REPL loop (simplified)
+while (true) {
+  const userInput = await readline.question('> ');
+  if (userInput === 'exit') break;
+
+  const scanResult = await contextScanner.scan(ctx.project!.path);
+  const intent = await intentParser.parse(userInput, scanResult, ctx.history);
+  const confirmed = await clarificationLoop.confirm(intent);
+  if (!confirmed) continue;
+
+  const options = toRunOptions(intent, registry);
+  const exitCode = await runAgent(options);
+  ctx.addToHistory({ input: userInput, intent, exitCode });
+}
+```
+
+---
+
+## Data Flow
+
+### One-Shot Flow
+
+```
+User: bg-agent 'update recharts to 2.7.0' --repo ./my-app
+         |
+         v
+InputRouter.route(argv)
+  detectes positional arg -> one-shot mode
+  resolves --repo to absolute path (or uses registry if name given)
+         |
+         v
+ContextScanner.scan(repoPath)
+  reads package.json -> current recharts version, peer deps
+  returns { repoType: 'npm', currentVersions: { recharts: '2.6.0' } }
+         |
+         v
+IntentParser.parse(userInput, scanResult)
+  LLM call (Haiku 4.5, structured output):
+    { taskType: 'npm-dependency-update', dep: 'recharts', targetVersion: '2.7.0' }
+  confidence: 'high' (explicit version in input)
+         |
+         v
+ClarificationLoop.confirm(intent)
+  prints: "Plan: update recharts from 2.6.0 to 2.7.0 in /path/to/my-app"
+  prints: "Proceed? [Y/n]"
+  user presses Enter -> confirmed
+         |
+         v
+toRunOptions(intent) -> RunOptions { taskType, repo, dep, targetVersion, ... }
+         |
+         v
+runAgent(options)        <- EXISTING, UNCHANGED
+  RetryOrchestrator
+  ClaudeCodeSession (Docker + iptables)
+  compositeVerifier + llmJudge
+  GitHubPRCreator (if --create-pr)
+         |
+         v
+exit code 0 / 1
+```
+
+### REPL Multi-Turn Flow
+
+```
+User: bg-agent          (no args -> REPL mode)
+         |
+InputRouter detects no args -> REPL mode
+         |
+ProjectRegistry.autoRegister(cwd)   <- cwd registered if new
+         |
+REPL prints: "Background Agent | project: my-app (/path/to/my-app)"
+         |
+Turn 1: user types "update recharts"
+   -> IntentParser: { taskType: 'npm-dep', dep: 'recharts', targetVersion: ?? }
+      confidence: 'low' (no version)
+   -> ClarificationLoop asks: "Which version? (current: 2.6.0)"
+   -> user: "2.7.0"
+   -> IntentParser re-parses with version -> RunOptions
+   -> runAgent() runs
+   -> SessionContext stores: { lastTask: recharts-update, exitCode: 0 }
+         |
+Turn 2: user types "now update react-router too"
+   -> SessionContext provides: repo is already resolved, use same project
+   -> IntentParser: { taskType: 'npm-dep', dep: 'react-router', targetVersion: ?? }
+   -> ClarificationLoop asks: "To which version? (current: 6.10.0)"
+   -> user: "6.20.0"
+   -> runAgent() runs (fresh RetryOrchestrator — multi-turn does NOT share agent context)
+```
+
+**Critical:** Multi-turn in v2.1 means the REPL maintains state (resolved project, history) between
+user inputs. It does NOT mean a single Agent SDK session spans multiple tasks. Each task still creates
+a fresh `ClaudeCodeSession` via `RetryOrchestrator`. The Agent SDK session is always single-task.
+
+### Key Data Flows
+
+1. **Project resolution:** User input → `ProjectRegistry.resolve(name)` → absolute path → `RunOptions.repo`
+2. **Intent parsing:** Natural language + repo scan context → single Haiku LLM call → `ParsedIntent` → validated `RunOptions`
+3. **Context persistence:** `SessionContext` accumulates turn history in memory; intent parser receives last N turns as context for disambiguation ("do it again", "try verbose")
+4. **Execution (unchanged):** `RunOptions` → `runAgent()` → `RetryOrchestrator` → Docker → verify → PR
 
 ---
 
 ## Integration Points
 
+### New vs Modified vs Unchanged
+
+| Component | Status | Touches Execution Layer? |
+|-----------|--------|--------------------------|
+| `InputRouter` | New | No — calls `runAgent()` only |
+| `IntentParser` | New | No — produces `RunOptions` |
+| `ProjectRegistry` | New | No — resolves paths only |
+| `SessionContext` | New | No — holds state only |
+| `ContextScanner` | New | No — reads repo files |
+| `ClarificationLoop` | New | No — user I/O only |
+| `bg-agent.ts` | New binary | No — delegates to `runAgent()` |
+| `cli/commands/run.ts` | Modify | Already is execution layer |
+| `prompts/index.ts` | Modify | Minimal: add freeform case |
+| `types.ts` | Modify | Additive only |
+| Everything else | Unchanged | — |
+
 ### External Services
 
 | Service | Integration Pattern | Notes |
 |---------|---------------------|-------|
-| Anthropic API | Agent SDK `query()` handles auth, retries, rate limits | `ANTHROPIC_API_KEY` env var, same as before |
-| Docker (Phase 13) | `spawnClaudeCodeProcess` custom spawn function in `Options` | SDK docs confirm this option exists for container/VM execution |
-| GitHub | Octokit in `GitHubPRCreator`, unchanged | Outside the agent, pure host infrastructure |
+| Anthropic API (intent parsing) | Direct `@anthropic-ai/sdk` call, structured output, Haiku 4.5 | Same pattern as LLM Judge. Single call per input, no tools, no agentic loop. |
+| Anthropic API (agent session) | `ClaudeCodeSession` via Agent SDK `query()` | Unchanged from v2.0 |
+| GitHub | `GitHubPRCreator` | Unchanged |
+| File system (~/.bg-agent/) | `write-file-atomic` for registry writes | Already in package.json |
 
 ### Internal Boundaries
 
 | Boundary | Communication | Notes |
 |----------|---------------|-------|
-| `RetryOrchestrator` to `AgentSdkSession` | Direct method call, `SessionResult` return | Same contract as `AgentSession` |
-| `AgentSdkSession` to Agent SDK | Async generator (`for await`), `Options` object | SDK streams `SDKMessage` objects |
-| `RetryOrchestrator` to `compositeVerifier` | Direct function call, `VerificationResult` return | Unchanged |
-| Agent SDK to MCP verifier server (Phase 12) | stdio transport, MCP protocol | Server runs as child process spawned by SDK |
-| MCP verifier server to `compositeVerifier` | Direct TypeScript import | Same function, new caller |
+| `InputRouter` to `runAgent()` | Direct function call, `RunOptions` parameter | `runAgent()` must be importable — extract from Commander action handler |
+| `IntentParser` to Anthropic SDK | Single structured-output messages.create() call | Not `query()` — keep it simple |
+| `IntentParser` to `ContextScanner` | Direct call, `ScanResult` parameter | Scanner feeds context to parser |
+| `SessionContext` to `IntentParser` | Prior turn history passed as parameter | Enables follow-up understanding |
+| `ProjectRegistry` to filesystem | Read/write `~/.bg-agent/projects.json` | Atomic write, JSON format |
+| `InputRouter` to `ClarificationLoop` | Direct call, `ParsedIntent` parameter | Loop returns confirmed `RunOptions` or null |
+
+---
+
+## Build Order
+
+Dependencies flow as:
+
+```
+Phase 14: ProjectRegistry + runAgent() extraction
+  (no LLM calls, pure infrastructure, enables all later phases)
+       |
+       v
+Phase 15: IntentParser + ContextScanner
+  (the core NL parsing; one-shot mode works after this)
+       |
+       v
+Phase 16: REPL loop + ClarificationLoop + SessionContext
+  (interactive mode; requires phases 14+15)
+       |
+       v
+Phase 17: Multi-turn context propagation
+  (SessionContext history feeds IntentParser; follow-ups work)
+```
+
+**Phase 14 must come first:** Extracting `runAgent()` from Commander's action handler is the
+prerequisite for all other phases — every new input path calls it.
+
+**Phase 15 enables one-shot mode:** After the intent parser exists, `bg-agent 'update X'`
+works end-to-end.
+
+**Phase 16 enables interactive mode:** After phases 14+15, the REPL loop is straightforward.
+
+**Phase 17 enables follow-up tasks:** Multi-turn context only needs the SessionContext history
+wired into the intent parser; requires 14+15+16 to be stable first.
+
+**Phases 14-17 never touch the execution layer** (`RetryOrchestrator` and below). This is the
+critical constraint — if a phase requires changing `retry.ts`, `claude-code-session.ts`, or
+`verifier.ts`, the design has gone wrong.
+
+---
+
+## Anti-Patterns
+
+### Anti-Pattern 1: Sharing Agent SDK Session Across REPL Turns
+
+**What people do:** Keep a single `ClaudeCodeSession` alive across multiple REPL inputs, resuming
+the same session for each follow-up task.
+
+**Why it's wrong:** Each task needs a fresh context window. Prior task history contaminates the
+model's approach to the current task. The existing `RetryOrchestrator` comment is explicit: "Never
+reuse sessions — prevents context accumulation." This applies equally to cross-task reuse.
+
+**Do this instead:** Each REPL turn that results in a task creates a new `RetryOrchestrator` and
+new `ClaudeCodeSession`. Multi-turn state lives in `SessionContext` (for the user-facing REPL
+context), not in the Agent SDK session.
+
+### Anti-Pattern 2: Intent Parser Using query()
+
+**What people do:** Run the intent parser as a full Agent SDK session to "give it tools to look
+up versions in npm, read the repo, etc."
+
+**Why it's wrong:** The `ContextScanner` already reads the repo. Version lookups from npm registry
+require network access. Keeping the intent parser as a single structured-output call keeps it fast,
+cheap, and deterministic. Agent SDK `query()` is for multi-step code editing, not JSON extraction.
+
+**Do this instead:** Use `anthropic.messages.create()` with a JSON schema system prompt. Feed it
+the `ContextScanner` output so it doesn't need to read files itself. Keep the parser under 200ms.
+
+### Anti-Pattern 3: Bypassing ClarificationLoop for Low-Confidence Intents
+
+**What people do:** Run `runAgent()` immediately even when `IntentParser` returns
+`confidence: 'low'`, treating the intent as a best-guess.
+
+**Why it's wrong:** Low confidence typically means a missing required parameter (e.g., no version
+specified). Running with a guessed version will either fail verification or, worse, update to the
+wrong version silently. The ClarificationLoop exists to close the ambiguity gap before work starts.
+
+**Do this instead:** Always surface low-confidence intents to the user. The clarification roundtrip
+is cheap (one readline prompt) compared to a wasted 5-minute agent session.
+
+### Anti-Pattern 4: Validating RunOptions Twice
+
+**What people do:** Add validation to `InputRouter` for task-type-specific rules (e.g., "Maven
+dep must be groupId:artifactId format") and leave the same validation in Commander.js.
+
+**Why it's wrong:** Duplicate validation creates drift. One validator gets updated; the other
+doesn't.
+
+**Do this instead:** Extract the validation logic from `cli/index.ts` into a shared
+`validateRunOptions()` function that both paths call. The Commander action handler calls it. The
+REPL input router calls it. Single source of truth.
+
+### Anti-Pattern 5: Storing SessionContext in the Registry
+
+**What people do:** Persist REPL history to `~/.bg-agent/projects.json` so sessions survive
+process restarts.
+
+**Why it's wrong:** For v2.1, the REPL is single-process. History only helps within a session
+for follow-up disambiguation. Persisting history adds complexity (staleness, size limits, sensitive
+data) for negligible benefit.
+
+**Do this instead:** Keep `SessionContext` in memory. Persistence can be added in a later version
+when there is a clear user need (e.g., "what did I run last Tuesday?").
+
+---
+
+## Scaling Considerations
+
+| Scale | Architecture Adjustments |
+|-------|--------------------------|
+| Single developer, local use | Current design — in-process, single-user, JSON registry |
+| Team shared install | Add team registry (shared network path) alongside personal registry |
+| CI/CD integration | One-shot mode already works as-is (`bg-agent 'update X'`); no REPL needed |
+| Slack/webhook triggers | Intent parser is the only component that needs to be extracted into an HTTP handler; execution layer already works as a library |
+
+### Scaling Priorities
+
+1. **First bottleneck:** Intent parser latency. If Haiku calls exceed 2s, consider caching parsed intents for recently-seen inputs. Not needed for v2.1.
+2. **Second bottleneck:** Registry contention. Only becomes an issue with concurrent invocations (e.g., CI running multiple agents). Atomic write prevents corruption; sequential reads are safe. Not a v2.1 concern.
 
 ---
 
 ## Sources
 
-- [Claude Agent SDK Overview](https://platform.claude.com/docs/en/agent-sdk/overview) — HIGH confidence, official docs
-- [Claude Agent SDK TypeScript Reference](https://platform.claude.com/docs/en/agent-sdk/typescript) — HIGH confidence, official docs (Options type, query() signature, Query object, spawnClaudeCodeProcess, SDKMessage types)
-- [Claude Agent SDK Hooks](https://platform.claude.com/docs/en/agent-sdk/hooks) — HIGH confidence, official docs (PreToolUse, PostToolUse, Stop, HookCallback interface, permissionDecision)
-- [Claude Agent SDK Permissions](https://platform.claude.com/docs/en/agent-sdk/permissions) — HIGH confidence, official docs (acceptEdits, dontAsk, bypassPermissions, allowedTools vs disallowedTools)
-- [Claude Agent SDK MCP](https://platform.claude.com/docs/en/agent-sdk/mcp) — HIGH confidence, official docs (mcpServers config, stdio transport, createSdkMcpServer, tool())
-- [Spotify Engineering Part 1: Architecture](https://engineering.atspotify.com/2025/11/spotifys-background-coding-agent-part-1) — MEDIUM confidence, engineering blog
-- [Spotify Engineering Part 3: Feedback Loops](https://engineering.atspotify.com/2025/12/feedback-loops-background-coding-agents-part-3) — MEDIUM confidence, engineering blog (container isolation, MCP verifiers, stop hook, judge veto rate, surrounding infrastructure)
-- Existing codebase (`src/orchestrator/`) — HIGH confidence, first-party source for current interfaces and contracts
+- Existing codebase `src/` — HIGH confidence, first-party analysis (v2.0, 2026-03-19)
+- `src/types.ts`, `RunOptions` interface — first-party, defines the integration contract
+- `src/cli/commands/run.ts`, `runAgent()` function — first-party, the stable execution entry point
+- `src/orchestrator/retry.ts` — first-party, confirms fresh-session-per-attempt constraint
+- `src/orchestrator/judge.ts` — first-party, pattern for single structured-output LLM call (reused by IntentParser)
+- `.planning/PROJECT.md` v2.1 requirements — first-party product spec
+- Spotify Engineering Part 1 (2025-11) — "surrounding infrastructure outside agent" pattern validates REPL/registry living outside ClaudeCodeSession
 
 ---
-*Architecture research for: Claude Agent SDK migration — background coding agent*
-*Researched: 2026-03-16*
+*Architecture research for: Conversational mode (v2.1) — background coding agent*
+*Researched: 2026-03-19*
