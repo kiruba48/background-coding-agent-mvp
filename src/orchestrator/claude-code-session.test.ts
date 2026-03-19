@@ -11,10 +11,26 @@ vi.mock('../mcp/verifier-server.js', () => ({
   createVerifierMcpServer: vi.fn().mockReturnValue({ type: 'sdk', name: 'verifier', instance: {} }),
 }));
 
+// Mock child_process for docker spawn and execFile
+vi.mock('node:child_process', () => ({
+  spawn: vi.fn(),
+  execFile: vi.fn(),
+}));
+
+// Mock docker module
+vi.mock('../cli/docker/index.js', () => ({
+  buildDockerRunArgs: vi.fn().mockReturnValue(['run', '--rm', '--interactive', 'background-agent:latest', '/usr/local/bin/claude', '--json']),
+}));
+
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import { spawn, execFile } from 'node:child_process';
+import { buildDockerRunArgs } from '../cli/docker/index.js';
 import { ClaudeCodeSession } from './claude-code-session.js';
 
 const mockQuery = query as ReturnType<typeof vi.fn>;
+const mockSpawn = spawn as ReturnType<typeof vi.fn>;
+const mockExecFile = execFile as ReturnType<typeof vi.fn>;
+const mockBuildDockerRunArgs = buildDockerRunArgs as ReturnType<typeof vi.fn>;
 
 // Helper: create an async generator that yields specified messages
 async function* makeQueryGen(messages: any[]) {
@@ -393,5 +409,113 @@ describe('ClaudeCodeSession', () => {
     const callArg = mockQuery.mock.calls[0][0];
     const postMatcher = callArg.options.hooks.PostToolUse[0].matcher;
     expect(postMatcher).toContain('mcp__verifier__verify');
+  });
+
+  // Helper: create a mock ChildProcess-like object for spawn
+  function makeMockChildProcess() {
+    const listeners: Record<string, ((...args: any[]) => void)[]> = {};
+    return {
+      stdin: { write: vi.fn(), end: vi.fn() },
+      stdout: { on: vi.fn(), pipe: vi.fn() },
+      stderr: { on: vi.fn() },
+      killed: false,
+      exitCode: 0,
+      kill: vi.fn().mockReturnValue(true),
+      on: vi.fn((event: string, listener: (...args: any[]) => void) => {
+        if (!listeners[event]) listeners[event] = [];
+        listeners[event].push(listener);
+      }),
+      once: vi.fn(),
+      off: vi.fn(),
+      emit: (event: string, ...args: any[]) => {
+        (listeners[event] ?? []).forEach(fn => fn(...args));
+      },
+    };
+  }
+
+  // Test 21: query() receives spawnClaudeCodeProcess option
+  it('query() receives spawnClaudeCodeProcess option', async () => {
+    process.env.ANTHROPIC_API_KEY = 'test-key';
+    mockQuery.mockReturnValue(makeQueryGen([makeSuccessResult()]));
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace' });
+    await session.run('task');
+    const callArg = mockQuery.mock.calls[0][0];
+    expect(typeof callArg.options.spawnClaudeCodeProcess).toBe('function');
+  });
+
+  // Test 22: spawnClaudeCodeProcess spawns docker with correct args
+  it('spawnClaudeCodeProcess spawns docker with correct args', async () => {
+    process.env.ANTHROPIC_API_KEY = 'test-key';
+    mockQuery.mockReturnValue(makeQueryGen([makeSuccessResult()]));
+    const mockProcess = makeMockChildProcess();
+    mockSpawn.mockReturnValue(mockProcess);
+
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace' });
+    await session.run('task');
+
+    const callArg = mockQuery.mock.calls[0][0];
+    const spawnFn = callArg.options.spawnClaudeCodeProcess;
+    const signal = new AbortController().signal;
+    spawnFn({ command: '/usr/local/bin/claude', args: ['--json'], signal });
+
+    expect(mockSpawn).toHaveBeenCalledWith(
+      'docker',
+      expect.arrayContaining(['run', '--rm', '--interactive']),
+      expect.objectContaining({ stdio: ['pipe', 'pipe', 'inherit'] }),
+    );
+  });
+
+  // Test 23: docker kill called in finally block
+  it('docker kill called in finally block', async () => {
+    process.env.ANTHROPIC_API_KEY = 'test-key';
+    mockQuery.mockReturnValue(makeQueryGen([makeSuccessResult()]));
+
+    // Mock execFile to invoke callback (promisify pattern)
+    mockExecFile.mockImplementation((...args: any[]) => {
+      const callback = args[args.length - 1];
+      callback(null, '', '');
+    });
+
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace' });
+    await session.run('task');
+
+    // execFile should have been called with docker kill agent-{sessionId}
+    const dockerKillCall = mockExecFile.mock.calls.find(
+      (call: any[]) => call[0] === 'docker' && Array.isArray(call[1]) && call[1][0] === 'kill'
+    );
+    expect(dockerKillCall).toBeDefined();
+    expect(dockerKillCall![1][1]).toMatch(/^agent-/);
+  });
+
+  // Test 24: docker kill failure in finally block is silently caught
+  it('docker kill failure in finally block is silently caught', async () => {
+    process.env.ANTHROPIC_API_KEY = 'test-key';
+    mockQuery.mockReturnValue(makeQueryGen([makeSuccessResult()]));
+
+    // Mock execFile to reject for docker kill
+    mockExecFile.mockImplementation((...args: any[]) => {
+      const callback = args[args.length - 1];
+      callback(new Error('container not found'), '', '');
+    });
+
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace' });
+    // Should not throw
+    const result = await session.run('task');
+    expect(result.status).toBe('success');
+  });
+
+  // Test 25: throws when ANTHROPIC_API_KEY is not set
+  it('returns failed status when ANTHROPIC_API_KEY is not set', async () => {
+    const savedKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    mockQuery.mockReturnValue(makeQueryGen([makeSuccessResult()]));
+
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace' });
+    const result = await session.run('task');
+    expect(result.status).toBe('failed');
+    expect(result.error).toContain('ANTHROPIC_API_KEY');
+
+    // Restore
+    if (savedKey !== undefined) process.env.ANTHROPIC_API_KEY = savedKey;
   });
 });
