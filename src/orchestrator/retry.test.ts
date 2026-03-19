@@ -8,6 +8,21 @@ vi.mock('./claude-code-session.js', () => {
   return { ClaudeCodeSession: MockClaudeCodeSession };
 });
 
+// Mock judge.js to control captureBaselineSha output
+vi.mock('./judge.js', () => ({
+  captureBaselineSha: vi.fn().mockResolvedValue(undefined),
+  llmJudge: vi.fn(),
+}));
+
+// Mock child_process for git reset verification
+vi.mock('node:child_process', () => ({
+  execFile: vi.fn((...args: any[]) => {
+    const callback = args[args.length - 1];
+    if (typeof callback === 'function') callback(null, '', '');
+  }),
+  spawn: vi.fn(),
+}));
+
 // Import AFTER mocks are set up
 import { RetryOrchestrator } from './retry.js';
 import { ClaudeCodeSession } from './claude-code-session.js';
@@ -458,6 +473,121 @@ describe('RetryOrchestrator', () => {
     expect(result.attempts).toBe(2);
     // preVerify must be called on every attempt where session succeeds
     expect(preVerify).toHaveBeenCalledTimes(2);
+  });
+
+  // -------------------------------------------------------------------------
+  // Cancellation tests (Task 2: AbortSignal threading)
+  // -------------------------------------------------------------------------
+
+  it('cancel-1. run() with already-aborted signal returns cancelled without starting a session', async () => {
+    const verifier = vi.fn();
+    const controller = new AbortController();
+    controller.abort();
+
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace', signal: controller.signal },
+      { maxRetries: 3, verifier }
+    );
+
+    const result = await orchestrator.run('Fix the bug');
+
+    expect(result.finalStatus).toBe('cancelled');
+    expect(result.attempts).toBe(0);
+    expect(result.sessionResults).toHaveLength(0);
+    // Session constructor should NOT have been called
+    expect(MockClaudeCodeSession.mock.calls).toHaveLength(0);
+    // Verifier must NOT have been called
+    expect(verifier).not.toHaveBeenCalled();
+  });
+
+  it('cancel-2. run() with signal that fires mid-session returns cancelled', async () => {
+    const controller = new AbortController();
+
+    // Session that fires the abort mid-run and returns cancelled
+    const session = createMockSession(async () => {
+      // Simulate signal firing during session
+      controller.abort();
+      return makeSessionResult({ status: 'cancelled' });
+    });
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
+
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace', signal: controller.signal },
+      { maxRetries: 3 }
+    );
+
+    const result = await orchestrator.run('Fix the bug');
+
+    expect(result.finalStatus).toBe('cancelled');
+  });
+
+  it('cancel-3. on cancellation, git reset --hard is called with baseline SHA', async () => {
+    // Mock captureBaselineSha
+    const { captureBaselineSha } = await import('./judge.js');
+    const mockCaptureBaseline = captureBaselineSha as ReturnType<typeof vi.fn>;
+    mockCaptureBaseline.mockResolvedValue('baseline-sha-abc123');
+
+    // Mock execFile for git reset
+    const { execFile } = await import('node:child_process');
+    const mockExecFile = execFile as unknown as ReturnType<typeof vi.fn>;
+    const gitResetCalls: string[][] = [];
+    mockExecFile.mockImplementation((...args: any[]) => {
+      const cmdArgs = args[1] as string[];
+      if (args[0] === 'git' && cmdArgs[0] === 'reset') {
+        gitResetCalls.push(cmdArgs);
+        const callback = args[args.length - 1];
+        if (typeof callback === 'function') callback(null, '', '');
+      } else {
+        const callback = args[args.length - 1];
+        if (typeof callback === 'function') callback(null, '', '');
+      }
+    });
+
+    const controller = new AbortController();
+    const session = createMockSession(async () => {
+      controller.abort();
+      return makeSessionResult({ status: 'cancelled' });
+    });
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
+
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace', signal: controller.signal },
+      { maxRetries: 3 }
+    );
+
+    await orchestrator.run('Fix the bug');
+
+    // git reset --hard should have been called with baseline SHA
+    const resetCall = gitResetCalls.find(args => args[0] === 'reset' && args[1] === '--hard');
+    expect(resetCall).toBeDefined();
+    expect(resetCall![2]).toBe('baseline-sha-abc123');
+  });
+
+  it('cancel-4. on success (no cancellation), git reset --hard is NOT called', async () => {
+    const { execFile } = await import('node:child_process');
+    const mockExecFile = execFile as unknown as ReturnType<typeof vi.fn>;
+    const gitResetCalls: string[][] = [];
+    mockExecFile.mockImplementation((...args: any[]) => {
+      const cmdArgs = args[1] as string[];
+      if (args[0] === 'git' && cmdArgs[0] === 'reset') {
+        gitResetCalls.push(cmdArgs);
+      }
+      const callback = args[args.length - 1];
+      if (typeof callback === 'function') callback(null, '', '');
+    });
+
+    const session = createMockSession(makeSessionResult({ status: 'success' }));
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
+
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace' },
+      { maxRetries: 3 }
+    );
+
+    const result = await orchestrator.run('Fix the bug');
+
+    expect(result.finalStatus).toBe('success');
+    expect(gitResetCalls).toHaveLength(0);
   });
 
   it('14. retry message only includes last failed verification (not stale errors)', async () => {

@@ -531,4 +531,152 @@ describe('ClaudeCodeSession', () => {
     // Restore
     if (savedKey !== undefined) process.env.ANTHROPIC_API_KEY = savedKey;
   });
+
+  // -------------------------------------------------------------------------
+  // Cancellation tests (Task 2: AbortSignal threading)
+  // -------------------------------------------------------------------------
+
+  // Test 26: run() accepts optional signal parameter
+  it('26. run() accepts optional signal parameter', async () => {
+    mockQuery.mockReturnValue(makeQueryGen([makeSuccessResult()]));
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace' });
+    const controller = new AbortController();
+    // Should not throw when signal is passed
+    const result = await session.run('task', undefined, controller.signal);
+    expect(result.status).toBe('success');
+  });
+
+  // Test 27: run() with pre-aborted signal returns status 'cancelled'
+  it('27. run() with pre-aborted signal returns status cancelled', async () => {
+    mockQuery.mockReturnValue(makeQueryGen([makeSuccessResult()]));
+    const controller = new AbortController();
+    controller.abort(); // abort before calling run
+
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace' });
+    const result = await session.run('task', undefined, controller.signal);
+    expect(result.status).toBe('cancelled');
+    expect(result.error).toBeTruthy(); // 'Cancelled before start' or similar
+  });
+
+  // Test 28: signal check happens BEFORE timedOut check in catch block
+  // This is verified by the 'cancelled' return (not 'timeout') when both signal and timeout are true
+  it('28. cancelled status takes priority over timeout status', async () => {
+    const controller = new AbortController();
+    // Create a generator that throws when aborted
+    mockQuery.mockImplementation((args: any) => {
+      const abortController: AbortController = args.options.abortController;
+      return (async function* () {
+        await new Promise<void>((_, reject) => {
+          abortController.signal.addEventListener('abort', () => reject(new Error('aborted by controller')));
+        });
+      })();
+    });
+
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace', timeoutMs: 50 });
+    // Abort via external signal immediately
+    controller.abort();
+    const result = await session.run('task', undefined, controller.signal);
+    // Even if timeout fires, signal.aborted takes priority
+    expect(result.status).toBe('cancelled');
+  });
+
+  // Test 29: docker kill is called after 5-second grace period when session hangs on cancel
+  it('29. docker kill called after 5s grace period when session does not exit gracefully', async () => {
+    vi.useFakeTimers();
+
+    const controller = new AbortController();
+    let abortHandlerCalled = false;
+
+    // Create a generator that hangs after being aborted (simulates stuck session)
+    mockQuery.mockImplementation((args: any) => {
+      const abortCtrl: AbortController = args.options.abortController;
+      return (async function* () {
+        await new Promise<void>((_, reject) => {
+          abortCtrl.signal.addEventListener('abort', () => {
+            abortHandlerCalled = true;
+            // Don't resolve — simulate hung session
+          });
+          // The external signal also fires the abort
+          controller.signal.addEventListener('abort', () => reject(new Error('external abort')));
+        });
+      })();
+    });
+
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace' });
+    const runPromise = session.run('task', undefined, controller.signal);
+
+    // Give run() time to set up the abort listener
+    await vi.advanceTimersByTimeAsync(10);
+
+    // Fire the external abort signal
+    controller.abort();
+
+    // Advance past the 5-second grace period
+    await vi.advanceTimersByTimeAsync(5100);
+
+    // Wait for run to settle
+    await runPromise.catch(() => {});
+
+    // docker kill should have been called with the grace period (for the container)
+    // Check that execFile was called with docker kill at some point
+    const dockerKillCalls = mockExecFile.mock.calls.filter(
+      (call: any[]) => call[0] === 'docker' && Array.isArray(call[1]) && call[1][0] === 'kill'
+    );
+    expect(dockerKillCalls.length).toBeGreaterThanOrEqual(1);
+
+    vi.useRealTimers();
+  });
+
+  // Test 30: if session exits within grace period, docker kill is not called by grace handler
+  // (the always-runs finally block still calls docker kill — that's expected and fine)
+  it('30. grace period docker kill is NOT invoked if session exits before 5s', async () => {
+    vi.useFakeTimers();
+
+    const controller = new AbortController();
+    let resolveSession: (() => void) | null = null;
+
+    mockQuery.mockImplementation((args: any) => {
+      const abortCtrl: AbortController = args.options.abortController;
+      return (async function* () {
+        await new Promise<void>((resolve, reject) => {
+          resolveSession = resolve;
+          abortCtrl.signal.addEventListener('abort', () => {
+            // Resolve quickly to simulate graceful exit
+            resolve();
+          });
+        });
+        // Session exits before grace period ends — yield no result (empty generator)
+      })();
+    });
+
+    const killCallsBefore = mockExecFile.mock.calls.filter(
+      (call: any[]) => call[0] === 'docker' && Array.isArray(call[1]) && call[1][0] === 'kill'
+    ).length;
+
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace' });
+    const runPromise = session.run('task', undefined, controller.signal);
+
+    // Give run() time to set up
+    await vi.advanceTimersByTimeAsync(10);
+
+    // Fire abort — session resolves immediately (graceful)
+    controller.abort();
+
+    // Advance past the 5-second grace period
+    await vi.advanceTimersByTimeAsync(5100);
+
+    await runPromise.catch(() => {});
+
+    // The grace handler should NOT have fired a NEW docker kill — only the finally block's
+    // docker kill should have run (which is always called)
+    const killCallsAfter = mockExecFile.mock.calls.filter(
+      (call: any[]) => call[0] === 'docker' && Array.isArray(call[1]) && call[1][0] === 'kill'
+    ).length;
+
+    // Only 1 docker kill call: from the finally block (always-runs cleanup)
+    // NOT an additional call from the grace period handler
+    expect(killCallsAfter - killCallsBefore).toBe(1);
+
+    vi.useRealTimers();
+  });
 });

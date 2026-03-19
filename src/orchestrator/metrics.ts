@@ -5,7 +5,7 @@
  * Tracks merge rate, veto rate, failure rate, and averages.
  */
 
-export type SessionStatus = 'success' | 'failed' | 'timeout' | 'turn_limit' | 'vetoed';
+export type SessionStatus = 'success' | 'failed' | 'timeout' | 'turn_limit' | 'vetoed' | 'cancelled';
 
 export interface SessionMetrics {
   totalSessions: number;
