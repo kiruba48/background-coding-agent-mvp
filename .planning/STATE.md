@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Claude Agent SDK Migration
 status: executing
-stopped_at: Completed 11-02-PLAN.md
-last_updated: "2026-03-18T09:01:31.942Z"
+stopped_at: Completed 12-02-PLAN.md (MCP verifier server wiring)
+last_updated: "2026-03-18T15:58:51.806Z"
 last_activity: 2026-03-17 — Plan 10-01 complete, ClaudeCodeSession implemented
 progress:
   total_phases: 7
-  completed_phases: 5
-  total_plans: 12
-  completed_plans: 12
+  completed_phases: 6
+  total_plans: 14
+  completed_plans: 14
   percent: 14
 ---
 
@@ -52,6 +52,8 @@ Progress: [█░░░░░░░░░] 14% (v2.0 phases)
 | Phase 10 P02 | 15m | 2 tasks | 7 files |
 | Phase 11 P01 | 3m 12s | 2 tasks | 15 files |
 | Phase 11 P02 | 3m | 2 tasks | 2 files |
+| Phase 12 P01 | 100s | 1 tasks | 2 files |
+| Phase 12 P02 | 86s | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -71,6 +73,11 @@ Progress: [█░░░░░░░░░] 14% (v2.0 phases)
 - [Phase 11-01]: ContainerConfig and ToolResult removed from types.ts — exclusively used by deleted legacy files
 - [Phase 11-01]: RetryOrchestrator simplified to unconditional new ClaudeCodeSession(this.config) — no conditional branch
 - [Phase Phase 11-02]: vitest.config.ts at project root excludes dist/ and node_modules/ — prevents compiled JS files from being picked up as test suites
+- [Phase 12-01]: formatVerifyDigest: no rawOutput, no durationMs, no action hints — locked decisions for LLM-safe digest
+- [Phase 12-01]: CallToolResult defined inline in verifier-server.ts to avoid transitive @modelcontextprotocol/sdk import issues
+- [Phase 12-01]: _createVerifyHandler exported for direct testing without MCP server introspection
+- [Phase Phase 12-02]: createVerifierMcpServer called inside run() (not constructor) — bound to workspaceDir at session time
+- [Phase Phase 12-02]: PostToolUse matcher extended to Write|Edit|mcp__verifier__verify — MCP verify calls audited same as file writes
 
 ### Pending Todos
 
@@ -84,7 +91,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-18T08:58:26.642Z
-Stopped at: Completed 11-02-PLAN.md
+Last session: 2026-03-18T15:55:32.839Z
+Stopped at: Completed 12-02-PLAN.md (MCP verifier server wiring)
 Resume file: None
 Next action: Execute Plan 10-02 (RetryOrchestrator wiring with --use-sdk flag)

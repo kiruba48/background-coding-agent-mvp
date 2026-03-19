@@ -528,7 +528,7 @@ export async function npmTestVerifier(workspaceDir: string): Promise<Verificatio
  * Aggregates results with Build > Test > Maven Build > Maven Test > npm Build > npm Test > Lint ordering.
  * Uses Promise.allSettled so a verifier crash doesn't block others.
  */
-export async function compositeVerifier(workspaceDir: string): Promise<VerificationResult> {
+export async function compositeVerifier(workspaceDir: string, options?: { skipLint?: boolean }): Promise<VerificationResult> {
   const wallStart = Date.now();
 
   // TypeScript build and test run in parallel (read-only on workspace)
@@ -574,9 +574,16 @@ export async function compositeVerifier(workspaceDir: string): Promise<Verificat
   }
 
   // Lint runs sequentially after build+test to avoid git stash race condition (P2)
-  const lintResult = await lintVerifier(workspaceDir)
-    .then((v): PromiseSettledResult<VerificationResult> => ({ status: 'fulfilled', value: v }))
-    .catch((r): PromiseSettledResult<VerificationResult> => ({ status: 'rejected', reason: r }));
+  // skipLint: true when called mid-session via MCP — git stash would corrupt uncommitted agent work
+  let lintResult: PromiseSettledResult<VerificationResult>;
+  if (options?.skipLint) {
+    console.info('[Lint] Skipped — mid-session MCP call (git stash unsafe with uncommitted changes)');
+    lintResult = { status: 'fulfilled', value: { passed: true, errors: [], durationMs: 0 } };
+  } else {
+    lintResult = await lintVerifier(workspaceDir)
+      .then((v): PromiseSettledResult<VerificationResult> => ({ status: 'fulfilled', value: v }))
+      .catch((r): PromiseSettledResult<VerificationResult> => ({ status: 'rejected', reason: r }));
+  }
 
   const build = resolveResult(buildResult, 'Build');
   const test = resolveResult(testResult, 'Test');

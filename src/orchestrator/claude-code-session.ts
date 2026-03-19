@@ -10,6 +10,7 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import pino from 'pino';
 import { type SessionConfig, type SessionResult } from '../types.js';
+import { createVerifierMcpServer } from '../mcp/verifier-server.js';
 
 // Patterns for sensitive files that must never be written by the agent.
 // Patterns use (?:^|\/) to match at any directory depth (V-2).
@@ -250,6 +251,9 @@ export class ClaudeCodeSession {
     const preHook = buildPreToolUseHook(workspaceDir, log);
     const postHook = buildPostToolUseHook(log, toolCallCounter);
 
+    const verifierServer = createVerifierMcpServer(workspaceDir);
+    log.info({ type: 'mcp', server: 'verifier', tools: ['verify'] }, 'mcp_server_registered');
+
     let queryGen: ReturnType<typeof query> | null = null;
 
     try {
@@ -263,9 +267,17 @@ export class ClaudeCodeSession {
           disallowedTools: ['WebSearch', 'WebFetch'],     // SDK-04
           model: this.config.model,
           abortController: this.abortController,
+          systemPrompt: {
+            type: 'preset' as const,
+            preset: 'claude_code' as const,
+            append: '\n\nBefore stopping, call mcp__verifier__verify to check your changes. Fix any failures before declaring done.',
+          },
+          mcpServers: {
+            verifier: verifierServer,
+          },
           hooks: {
-            PreToolUse: [{ matcher: 'Write|Edit', hooks: [preHook] }],   // SDK-08
-            PostToolUse: [{ matcher: 'Write|Edit', hooks: [postHook] }], // SDK-07
+            PreToolUse: [{ matcher: 'Write|Edit', hooks: [preHook] }],                         // SDK-08
+            PostToolUse: [{ matcher: 'Write|Edit|mcp__verifier__verify', hooks: [postHook] }], // SDK-07
           },
           settingSources: [],  // No filesystem settings — isolation guaranteed
         },

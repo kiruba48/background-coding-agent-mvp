@@ -30,9 +30,9 @@ Requirements for Claude Agent SDK migration. Each maps to roadmap phases.
 
 ### MCP Verifier
 
-- [ ] **MCP-01**: In-process MCP server wraps compositeVerifier as `mcp__verifier__verify` tool
-- [ ] **MCP-02**: Agent can call verify tool mid-session to self-check before stopping
-- [ ] **MCP-03**: MCP server uses `createSdkMcpServer()` — no external process or HTTP server
+- [x] **MCP-01**: In-process MCP server wraps compositeVerifier as `mcp__verifier__verify` tool
+- [x] **MCP-02**: Agent can call verify tool mid-session to self-check before stopping
+- [x] **MCP-03**: MCP server uses `createSdkMcpServer()` — no external process or HTTP server
 
 ### Container Strategy
 
@@ -89,9 +89,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DEL-03 | Phase 11 | Complete |
 | DEL-04 | Phase 11 | Complete |
 | DEL-05 | Phase 11 | Complete |
-| MCP-01 | Phase 12 | Pending |
-| MCP-02 | Phase 12 | Pending |
-| MCP-03 | Phase 12 | Pending |
+| MCP-01 | Phase 12 | Complete |
+| MCP-02 | Phase 12 | Complete |
+| MCP-03 | Phase 12 | Complete |
 | CTR-01 | Phase 13 | Pending |
 | CTR-02 | Phase 13 | Pending |
 | CTR-03 | Phase 13 | Pending |
