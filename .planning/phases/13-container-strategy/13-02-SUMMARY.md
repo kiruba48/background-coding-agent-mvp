@@ -24,7 +24,7 @@ decisions:
 metrics:
   duration: "8m 7s"
   completed: "2026-03-19"
-  tasks: 2
+  tasks: 3
   files: 3
 ---
 
@@ -39,6 +39,7 @@ metrics:
 | 1 (TDD RED) | Add failing tests for spawnClaudeCodeProcess and docker kill | 9b0dd38 | src/orchestrator/claude-code-session.test.ts |
 | 1 (TDD GREEN) | Implement spawnClaudeCodeProcess + docker kill fallback | 46f9423 | src/orchestrator/claude-code-session.ts, test.ts |
 | 2 | Add Docker readiness checks to CLI run command | c06410f | src/cli/commands/run.ts |
+| 3 (human-verify) | Verify Docker container runs agent session end-to-end | approved | All Docker pipeline verification checks passed |
 
 ## What Was Built
 
@@ -97,6 +98,15 @@ If Docker is not running, `assertDockerRunning()` throws a descriptive error tha
 - `npx tsc --noEmit` — exits 0 (no type errors)
 - Full test suite `npx vitest run` — 271/271 tests pass (5 new tests added)
 
+### Human Verification (Task 3 — Approved)
+
+End-to-end Docker container pipeline confirmed working by human:
+1. `npm test` — 271/271 tests pass
+2. `docker build -t background-agent:latest -f docker/Dockerfile docker/` — success (all layers cached)
+3. `docker run --rm --cap-add NET_ADMIN background-agent:latest whoami` — outputs `agent`
+4. `docker run --rm --cap-add NET_ADMIN background-agent:latest id` — outputs `uid=1001(agent) gid=1001(agent)`
+5. `docker run --rm --cap-add NET_ADMIN background-agent:latest claude --version` — outputs Claude Code CLI version 2.1.79
+
 ## Deviations from Plan
 
 ### Auto-fixed Issues
@@ -114,14 +124,6 @@ If Docker is not running, `assertDockerRunning()` throws a descriptive error tha
 - **Fix:** Added `mockExecFile.mockImplementation((...args) => { const cb = args[args.length-1]; if (typeof cb === 'function') cb(null, '', ''); })` to `beforeEach`.
 - **Files modified:** src/orchestrator/claude-code-session.test.ts
 - **Commit:** 46f9423
-
-## Checkpoint Status
-
-Task 3 (human-verify) is the next step — requires Docker daemon for end-to-end verification:
-1. `npm test` — 271 tests should pass
-2. `docker build -t background-agent:latest -f docker/Dockerfile docker/`
-3. `docker run --rm --cap-add NET_ADMIN background-agent:latest whoami` — should output `agent`
-4. `docker run --rm --cap-add NET_ADMIN background-agent:latest claude --version`
 
 ## Self-Check: PASSED
 
