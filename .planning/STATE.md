@@ -2,89 +2,59 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Claude Agent SDK Migration
-status: executing
-stopped_at: Completed 13-02-PLAN.md (all tasks complete — human-verify Task 3 approved)
-last_updated: "2026-03-19T13:16:01.541Z"
-last_activity: 2026-03-17 — Plan 10-01 complete, ClaudeCodeSession implemented
+status: complete
+stopped_at: Milestone v2.0 archived
+last_updated: "2026-03-19T17:30:00.000Z"
+last_activity: 2026-03-19 — v2.0 milestone completed and archived
 progress:
-  total_phases: 7
-  completed_phases: 7
-  total_plans: 16
-  completed_plans: 16
-  percent: 14
+  total_phases: 4
+  completed_phases: 4
+  total_plans: 8
+  completed_plans: 8
+  percent: 100
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-16)
+See: .planning/PROJECT.md (updated 2026-03-19)
 
 **Core value:** The full verification loop must work: agent changes code, deterministic verifiers catch failures, LLM Judge catches scope creep, and only verified changes proceed.
-**Current focus:** Phase 10 — Agent SDK Integration
+**Current focus:** Planning next milestone
 
 ## Current Position
 
-Phase: 10 of 13 (Agent SDK Integration)
-Plan: 1 of 2 (ClaudeCodeSession complete)
-Status: In progress
-Last activity: 2026-03-17 — Plan 10-01 complete, ClaudeCodeSession implemented
-
-Progress: [█░░░░░░░░░] 14% (v2.0 phases)
+Milestone: v2.0 Claude Agent SDK Migration — SHIPPED 2026-03-19
+Status: Complete
+Next: `/gsd:new-milestone` to start next version
 
 ## Performance Metrics
 
-**Velocity (from v1.0 + v1.1):**
-- Total plans completed: 23 (v1.0: 15, v1.1: 8)
+**Velocity (cumulative):**
+- Total plans completed: 31 (v1.0: 15, v1.1: 8, v2.0: 8)
 - v1.0 average: ~2.3 days/plan across 6 phases
 - v1.1 average: ~1.1 days/plan across 3 phases
+- v2.0 average: ~0.4 days/plan across 4 phases
 
-**By Phase (v2.0):**
+**v2.0 Plan Execution:**
 
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| 10. SDK Integration | TBD | - | - |
-| 11. Legacy Deletion | TBD | - | - |
-| 12. MCP Verifier | TBD | - | - |
-| 13. Container Strategy | TBD | - | - |
-
-*Updated after each plan completion*
+| Plan | Duration | Tasks | Files |
+|------|----------|-------|-------|
+| Phase 10 P01 | 18m | 1 task | 4 files |
 | Phase 10 P02 | 15m | 2 tasks | 7 files |
 | Phase 11 P01 | 3m 12s | 2 tasks | 15 files |
 | Phase 11 P02 | 3m | 2 tasks | 2 files |
-| Phase 12 P01 | 100s | 1 tasks | 2 files |
-| Phase 12 P02 | 86s | 1 tasks | 2 files |
+| Phase 12 P01 | 100s | 1 task | 2 files |
+| Phase 12 P02 | 86s | 1 task | 2 files |
 | Phase 13 P01 | 17m 29s | 2 tasks | 4 files |
-| Phase 13 P02 | 8m 7s | 2 tasks | 3 files |
+| Phase 13 P02 | 8m 7s | 3 tasks | 3 files |
 
 ## Accumulated Context
 
 ### Decisions
 
-- [v2.0 planning]: `allowedTools` is an auto-approval list, not a blocklist. Always pair with `disallowedTools: ["WebSearch", "WebFetch"]` for network isolation at tool layer.
-- [v2.0 planning]: Stop hooks do not fire on maxTurns — do not rely on them for verification triggers. RetryOrchestrator remains the authoritative quality gate.
-- [v2.0 planning]: Full `@anthropic-ai/sdk` removal is out of scope — LLM Judge keeps it for structured output. Phase 11 must decide: migrate Judge to `query()`, keep as peer dep, or constrained JSON prompt.
-- [v2.0 planning]: Phase 13 MVP uses `--network bridge` + firewall rules. Full Unix proxy socket pattern deferred to v2.1.
-- [10-01]: maxBudgetUsd = 2.00 USD per session — 6-40x safety margin above typical task cost ($0.05-0.30); exhaustion maps to turn_limit (terminal).
-- [10-01]: toolCallCount counted via PostToolUse hook counter ref, not num_turns (which counts API round-trips).
-- [10-01]: error_max_budget_usd maps to turn_limit status (same as error_max_turns) — prevents RetryOrchestrator from retrying expensive failed sessions.
-- [10-01]: settingSources: [] — no filesystem config imported into agent sessions; isolation guaranteed.
-- [Phase 10-02]: useSDK defaults to true via !== false check — undefined and true both select ClaudeCodeSession path; safe default-on pattern
-- [Phase 10-02]: Commander.js --no-use-sdk sets options.useSdk = false; wired as options.useSdk !== false in runAgent to preserve undefined-as-true semantics
-- [Phase 11-01]: SessionConfig migrated to src/types.ts without useSDK or image fields — single source of truth for session configuration
-- [Phase 11-01]: ContainerConfig and ToolResult removed from types.ts — exclusively used by deleted legacy files
-- [Phase 11-01]: RetryOrchestrator simplified to unconditional new ClaudeCodeSession(this.config) — no conditional branch
-- [Phase Phase 11-02]: vitest.config.ts at project root excludes dist/ and node_modules/ — prevents compiled JS files from being picked up as test suites
-- [Phase 12-01]: formatVerifyDigest: no rawOutput, no durationMs, no action hints — locked decisions for LLM-safe digest
-- [Phase 12-01]: CallToolResult defined inline in verifier-server.ts to avoid transitive @modelcontextprotocol/sdk import issues
-- [Phase 12-01]: _createVerifyHandler exported for direct testing without MCP server introspection
-- [Phase Phase 12-02]: createVerifierMcpServer called inside run() (not constructor) — bound to workspaceDir at session time
-- [Phase Phase 12-02]: PostToolUse matcher extended to Write|Edit|mcp__verifier__verify — MCP verify calls audited same as file writes
-- [Phase 13-01]: Mock callback extraction must handle both 3-arg and 4-arg execFile forms — promisify drops opts when not provided
-- [Phase 13-01]: buildDockerRunArgs passes full security hardening flags: --cap-drop ALL, --cap-add NET_ADMIN, --security-opt no-new-privileges, --pids-limit 200
-- [Phase Phase 13-02]: spawnClaudeCodeProcess built inside try block to catch ANTHROPIC_API_KEY missing error and return failed SessionResult (not throw)
-- [Phase Phase 13-02]: execFile mock needs default beforeEach implementation — docker kill in finally block hangs tests without resolved mock
-- [Phase Phase 13-02]: Docker readiness checks (assertDockerRunning, ensureNetworkExists, buildImageIfNeeded) run before RetryOrchestrator — always-on Docker mode
+(Archived to milestones/v2.0-ROADMAP.md — see phase summaries for full decision log)
 
 ### Pending Todos
 
@@ -92,13 +62,11 @@ None.
 
 ### Blockers/Concerns
 
-- [Phase 11]: LLM Judge migration path undecided — three options (migrate to `query()`, keep `@anthropic-ai/sdk` as peer dep, constrained JSON prompt). Decide before Phase 11 planning.
-- [Phase 13]: Unix proxy socket implementation specifics not detailed. Flag for deep research before Phase 13 planning.
-- [Phase 13]: Validate whether Agent SDK bundles Claude Code CLI binary or requires separate global install — affects Dockerfile.
+None — v2.0 complete.
 
 ## Session Continuity
 
-Last session: 2026-03-19T13:07:31.694Z
-Stopped at: Completed 13-02-PLAN.md (all tasks complete — human-verify Task 3 approved)
+Last session: 2026-03-19
+Stopped at: v2.0 milestone archived
 Resume file: None
-Next action: Phase 13 complete — v2.0 milestone achieved
+Next action: `/gsd:new-milestone` for v2.1+
