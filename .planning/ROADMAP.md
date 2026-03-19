@@ -139,7 +139,10 @@ Plans:
   2. Agent API calls to `api.anthropic.com` succeed from within the container; all other outbound connections are blocked
   3. The container process runs as non-root user (UID 1001) — `whoami` inside the container does not return `root`
   4. `ANTHROPIC_API_KEY` is not present in the container environment — the proxy pattern routes the key outside the container
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 13-01-PLAN.md — Dockerfile + entrypoint.sh + Docker helper module with unit tests
+- [ ] 13-02-PLAN.md — Wire spawnClaudeCodeProcess into ClaudeCodeSession and Docker readiness into CLI
 
 ## Progress
 
@@ -157,4 +160,4 @@ Plans:
 | 10. Agent SDK Integration | v2.0 | 2/2 | Complete | 2026-03-17 |
 | 11. Legacy Deletion | 2/2 | Complete    | 2026-03-18 | - |
 | 12. MCP Verifier Server | 2/2 | Complete    | 2026-03-18 | - |
-| 13. Container Strategy | v2.0 | 0/TBD | Not started | - |
+| 13. Container Strategy | v2.0 | 0/2 | Not started | - |
