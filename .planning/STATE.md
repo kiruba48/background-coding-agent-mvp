@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.1
 milestone_name: Conversational Mode
 status: planning
-stopped_at: "Completed 14-01-PLAN.md: runAgent extraction + AbortSignal threading"
-last_updated: "2026-03-19T22:56:44.742Z"
+stopped_at: "Completed 14-03-PLAN.md: CLI thin adapter + auto-registration"
+last_updated: "2026-03-19T23:04:04.787Z"
 last_activity: 2026-03-19 — v2.1 roadmap created; phases 14-17 defined
 progress:
   total_phases: 4
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 3
-  completed_plans: 2
+  completed_plans: 3
   percent: 0
 ---
 
@@ -55,6 +55,8 @@ Progress: [░░░░░░░░░░] 0% (v2.1)
 - [Phase 14]: AbortSignal threaded via SessionConfig.signal field for clean library separation
 - [Phase 14]: sessionSettled flag prevents double docker kill in grace period handler
 - [Phase 14]: signal?.aborted checked BEFORE timedOut in catch block — cancellation takes priority
+- [Phase 14-infrastructure-foundation]: Signal handlers (SIGINT/SIGTERM) live only in src/cli/index.ts — library code is process-signal-free
+- [Phase 14-infrastructure-foundation]: autoRegisterCwd fires in run action only — projects subcommands do not trigger registration
 
 ### Pending Todos
 
@@ -67,7 +69,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-19T22:56:44.740Z
-Stopped at: Completed 14-01-PLAN.md: runAgent extraction + AbortSignal threading
+Last session: 2026-03-19T23:04:04.785Z
+Stopped at: Completed 14-03-PLAN.md: CLI thin adapter + auto-registration
 Resume file: None
 Next action: `/gsd:plan-phase 14`

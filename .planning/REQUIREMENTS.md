@@ -27,7 +27,7 @@ Requirements for conversational mode. Each maps to roadmap phases.
 ### Project Registry
 
 - [x] **REG-01**: User can register and resolve project short names to repo paths
-- [ ] **REG-02**: Terminal sessions auto-register cwd into project registry on first use
+- [x] **REG-02**: Terminal sessions auto-register cwd into project registry on first use
 
 ### Multi-Turn Sessions
 
@@ -70,7 +70,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INFRA-01 | Phase 14 | Complete |
 | INFRA-02 | Phase 14 | Complete |
 | REG-01 | Phase 14 | Complete |
-| REG-02 | Phase 14 | Pending |
+| REG-02 | Phase 14 | Complete |
 | INTENT-01 | Phase 15 | Pending |
 | INTENT-02 | Phase 15 | Pending |
 | INTENT-03 | Phase 15 | Pending |

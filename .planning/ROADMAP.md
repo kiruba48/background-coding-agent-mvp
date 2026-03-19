@@ -50,7 +50,7 @@ Full details: [v2.0-ROADMAP.md](milestones/v2.0-ROADMAP.md)
 
 **Milestone Goal:** Replace rigid CLI flags with a conversational interface — REPL + one-shot, natural language in, context-aware plan proposal, same verification pipeline out.
 
-- [ ] **Phase 14: Infrastructure Foundation** — Extract runAgent(), wire AbortSignal, build project registry
+- [x] **Phase 14: Infrastructure Foundation** — Extract runAgent(), wire AbortSignal, build project registry (completed 2026-03-19)
 - [ ] **Phase 15: Intent Parser + One-Shot Mode** — Natural language → structured intent, fast-path heuristic, context scan, confirm flow, end-to-end one-shot
 - [ ] **Phase 16: Interactive REPL** — readline loop, Ctrl+C/Ctrl+D semantics, Docker build check at startup, persistent history
 - [ ] **Phase 17: Multi-Turn Session Context** — In-memory session history propagated to intent parser for follow-up disambiguation
@@ -66,7 +66,7 @@ Full details: [v2.0-ROADMAP.md](milestones/v2.0-ROADMAP.md)
   2. Passing an AbortSignal to `runAgent()` causes a running agent task to cancel gracefully without crashing the process
   3. User can register a project short name to a local repo path and resolve it back to that path
   4. Running `bg-agent` in a directory with a `.git` folder or build manifest auto-registers that directory on first use
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 
 Plans:
 - [ ] 14-01-PLAN.md — Extract runAgent() and wire AbortSignal threading
@@ -124,7 +124,7 @@ Plans:
 | 11. Legacy Deletion | v2.0 | 2/2 | Complete | 2026-03-18 |
 | 12. MCP Verifier Server | v2.0 | 2/2 | Complete | 2026-03-18 |
 | 13. Container Strategy | v2.0 | 2/2 | Complete | 2026-03-19 |
-| 14. Infrastructure Foundation | 2/3 | In Progress|  | - |
+| 14. Infrastructure Foundation | 3/3 | Complete   | 2026-03-19 | - |
 | 15. Intent Parser + One-Shot Mode | v2.1 | 0/? | Not started | - |
 | 16. Interactive REPL | v2.1 | 0/? | Not started | - |
 | 17. Multi-Turn Session Context | v2.1 | 0/? | Not started | - |
