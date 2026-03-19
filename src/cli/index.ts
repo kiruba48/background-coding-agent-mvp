@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import pc from 'picocolors';
 import { promises as fs } from 'fs';
 import { runAgent } from './commands/run.js';
+import { createProjectsCommand } from './commands/projects.js';
 
 const program = new Command();
 
@@ -112,5 +113,7 @@ program
 
     process.exit(exitCode);
   });
+
+program.addCommand(createProjectsCommand());
 
 program.parse();
