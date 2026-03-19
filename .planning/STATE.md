@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.1
 milestone_name: Conversational Mode
 status: planning
-stopped_at: Completed 14-02-PLAN.md
-last_updated: "2026-03-19T22:50:15.597Z"
+stopped_at: "Completed 14-01-PLAN.md: runAgent extraction + AbortSignal threading"
+last_updated: "2026-03-19T22:56:44.742Z"
 last_activity: 2026-03-19 — v2.1 roadmap created; phases 14-17 defined
 progress:
   total_phases: 4
   completed_phases: 0
   total_plans: 3
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -52,6 +52,9 @@ Progress: [░░░░░░░░░░] 0% (v2.1)
 - [v2.1 research]: `conf@^15` for project registry — atomic writes, ESM-native
 - [Phase 14]: Registry factory injection pattern for test isolation (avoids mocking conf internals)
 - [Phase 14]: conf@15 cwd option used in tests to isolate storage in tmpDir
+- [Phase 14]: AbortSignal threaded via SessionConfig.signal field for clean library separation
+- [Phase 14]: sessionSettled flag prevents double docker kill in grace period handler
+- [Phase 14]: signal?.aborted checked BEFORE timedOut in catch block — cancellation takes priority
 
 ### Pending Todos
 
@@ -64,7 +67,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-19T22:50:15.595Z
-Stopped at: Completed 14-02-PLAN.md
+Last session: 2026-03-19T22:56:44.740Z
+Stopped at: Completed 14-01-PLAN.md: runAgent extraction + AbortSignal threading
 Resume file: None
 Next action: `/gsd:plan-phase 14`

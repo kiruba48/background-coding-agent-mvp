@@ -9,8 +9,8 @@ Requirements for conversational mode. Each maps to roadmap phases.
 
 ### Infrastructure
 
-- [ ] **INFRA-01**: runAgent() extracted as importable function callable from REPL and one-shot paths
-- [ ] **INFRA-02**: runAgent() accepts AbortSignal for graceful mid-task cancellation
+- [x] **INFRA-01**: runAgent() extracted as importable function callable from REPL and one-shot paths
+- [x] **INFRA-02**: runAgent() accepts AbortSignal for graceful mid-task cancellation
 
 ### Intent Parsing
 
@@ -67,8 +67,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INFRA-01 | Phase 14 | Pending |
-| INFRA-02 | Phase 14 | Pending |
+| INFRA-01 | Phase 14 | Complete |
+| INFRA-02 | Phase 14 | Complete |
 | REG-01 | Phase 14 | Complete |
 | REG-02 | Phase 14 | Pending |
 | INTENT-01 | Phase 15 | Pending |
