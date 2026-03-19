@@ -1,6 +1,8 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as nodePath from 'path';
+import { spawn, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import {
   query,
   type HookCallback,
@@ -11,6 +13,9 @@ import {
 import pino from 'pino';
 import { type SessionConfig, type SessionResult } from '../types.js';
 import { createVerifierMcpServer } from '../mcp/verifier-server.js';
+import { buildDockerRunArgs } from '../cli/docker/index.js';
+
+const execFileAsync = promisify(execFile);
 
 // Patterns for sensitive files that must never be written by the agent.
 // Patterns use (?:^|\/) to match at any directory depth (V-2).
@@ -233,6 +238,7 @@ export class ClaudeCodeSession {
   async run(userMessage: string, logger?: pino.Logger): Promise<SessionResult> {
     const log = logger ?? pino({ level: 'silent' });
     const sessionId = crypto.randomUUID();
+    const containerName = `agent-${sessionId}`;
     const workspaceDir = nodePath.resolve(this.config.workspaceDir);
     const startTime = Date.now();
     const toolCallCounter = { count: 0 };
@@ -257,6 +263,32 @@ export class ClaudeCodeSession {
     let queryGen: ReturnType<typeof query> | null = null;
 
     try {
+      // Require API key before starting — Docker container needs it via env
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) {
+        throw new Error('ANTHROPIC_API_KEY environment variable is required');
+      }
+
+      // Build spawnClaudeCodeProcess: wraps SDK command in docker run
+      const spawnClaudeCodeProcess = (sdkOptions: { command: string; args: string[]; signal: AbortSignal }) => {
+        const dockerArgs = buildDockerRunArgs(
+          {
+            workspaceDir,
+            apiKey,
+            sessionId,
+            // networkName and imageTag use defaults from docker module
+          },
+          sdkOptions.command,
+          sdkOptions.args,
+        );
+
+        return spawn('docker', dockerArgs, {
+          stdio: ['pipe', 'pipe', 'inherit'],
+          signal: sdkOptions.signal,
+          env: {}, // Docker container has its own env
+        });
+      };
+
       queryGen = query({
         prompt: userMessage,
         options: {
@@ -280,6 +312,7 @@ export class ClaudeCodeSession {
             PostToolUse: [{ matcher: 'Write|Edit|mcp__verifier__verify', hooks: [postHook] }], // SDK-07
           },
           settingSources: [],  // No filesystem settings — isolation guaranteed
+          spawnClaudeCodeProcess,
         },
       });
 
@@ -321,6 +354,12 @@ export class ClaudeCodeSession {
         try { await queryGen.return(undefined); } catch {}
       }
       this.abortController = null;
+      // Docker kill fallback — ensure no zombie containers
+      try {
+        await execFileAsync('docker', ['kill', containerName], { timeout: 5000 });
+      } catch {
+        // Container may have already exited — ignore errors
+      }
     }
   }
 

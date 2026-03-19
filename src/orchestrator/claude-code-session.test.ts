@@ -28,8 +28,9 @@ import { buildDockerRunArgs } from '../cli/docker/index.js';
 import { ClaudeCodeSession } from './claude-code-session.js';
 
 const mockQuery = query as ReturnType<typeof vi.fn>;
-const mockSpawn = spawn as ReturnType<typeof vi.fn>;
-const mockExecFile = execFile as ReturnType<typeof vi.fn>;
+const mockSpawn = spawn as unknown as ReturnType<typeof vi.fn>;
+const mockExecFile = execFile as unknown as ReturnType<typeof vi.fn>;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const mockBuildDockerRunArgs = buildDockerRunArgs as ReturnType<typeof vi.fn>;
 
 // Helper: create an async generator that yields specified messages
@@ -76,7 +77,16 @@ function makeSuccessResult() {
 }
 
 describe('ClaudeCodeSession', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Default: ANTHROPIC_API_KEY is set for most tests
+    process.env.ANTHROPIC_API_KEY = 'test-api-key';
+    // Default: execFile (docker kill in finally block) resolves immediately
+    mockExecFile.mockImplementation((...args: any[]) => {
+      const callback = args[args.length - 1];
+      if (typeof callback === 'function') callback(null, '', '');
+    });
+  });
 
   // Test 1: success path
   it('returns success SessionResult on successful query', async () => {
