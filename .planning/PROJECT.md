@@ -34,7 +34,23 @@ The full verification loop must work: agent changes code, deterministic verifier
 
 ### Active
 
-(None — planning next milestone)
+- [ ] Interactive REPL with freeform natural language task input
+- [ ] One-shot mode for scripts/CI (`bg-agent 'update recharts'`)
+- [ ] LLM-powered intent parser extracting task type + params from natural language
+- [ ] Context-first clarification — agent scans repo, proposes plan, user confirms/redirects
+- [ ] Project registry mapping short names → repo paths (terminal auto-registers cwd)
+- [ ] Multi-turn sessions — REPL maintains context across follow-up tasks
+
+## Current Milestone: v2.1 Conversational Mode
+
+**Goal:** Replace rigid CLI flags with a conversational interface — REPL + one-shot, natural language in, context-aware plan proposal, same verification pipeline out.
+
+**Target features:**
+- Interactive REPL and one-shot CLI modes
+- LLM intent parser (natural language → structured task params)
+- Context-first clarification (scan repo → propose plan → confirm)
+- Project registry (cwd auto-register, Slack-ready)
+- Multi-turn session context
 
 ## Shipped: v2.0 Claude Agent SDK Migration (2026-03-19)
 
@@ -96,4 +112,4 @@ Replaced the custom agent loop with the Claude Agent SDK. Deleted 1,989 lines of
 | API key via -e flag (not proxy) | Simpler MVP; Unix socket proxy deferred to v2.1 | ✓ Good — functional, proxy adds complexity without clear need yet |
 
 ---
-*Last updated: 2026-03-19 after v2.0 milestone*
+*Last updated: 2026-03-19 after v2.1 milestone started*
