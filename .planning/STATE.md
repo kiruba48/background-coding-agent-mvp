@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.1
 milestone_name: Conversational Mode
 status: planning
-stopped_at: Phase 14 context gathered
-last_updated: "2026-03-19T22:11:16.655Z"
+stopped_at: Completed 14-02-PLAN.md
+last_updated: "2026-03-19T22:50:15.597Z"
 last_activity: 2026-03-19 — v2.1 roadmap created; phases 14-17 defined
 progress:
   total_phases: 4
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  total_plans: 3
+  completed_plans: 1
   percent: 0
 ---
 
@@ -50,6 +50,8 @@ Progress: [░░░░░░░░░░] 0% (v2.1)
 - [v2.1 research]: Intent parser uses `messages.create()` structured output (Haiku 4.5), NOT `query()`
 - [v2.1 research]: Version numbers must never come from LLM — Zod schema enforces sentinel (`"latest"` or `null`)
 - [v2.1 research]: `conf@^15` for project registry — atomic writes, ESM-native
+- [Phase 14]: Registry factory injection pattern for test isolation (avoids mocking conf internals)
+- [Phase 14]: conf@15 cwd option used in tests to isolate storage in tmpDir
 
 ### Pending Todos
 
@@ -62,7 +64,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-19T22:11:16.652Z
-Stopped at: Phase 14 context gathered
-Resume file: .planning/phases/14-infrastructure-foundation/14-CONTEXT.md
+Last session: 2026-03-19T22:50:15.595Z
+Stopped at: Completed 14-02-PLAN.md
+Resume file: None
 Next action: `/gsd:plan-phase 14`
