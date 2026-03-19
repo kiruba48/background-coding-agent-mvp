@@ -5,6 +5,7 @@ import { compositeVerifier } from '../../orchestrator/verifier.js';
 import { llmJudge } from '../../orchestrator/judge.js';
 import { GitHubPRCreator } from '../../orchestrator/pr-creator.js';
 import { buildPrompt } from '../../prompts/index.js';
+import { assertDockerRunning, ensureNetworkExists, buildImageIfNeeded } from '../docker/index.js';
 import pc from 'picocolors';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
@@ -72,6 +73,11 @@ export async function runAgent(options: RunOptions): Promise<number> {
         }
       }
     : undefined;
+
+  // Docker is always-on — every agent run goes through Docker
+  await assertDockerRunning();
+  await ensureNetworkExists();
+  await buildImageIfNeeded();
 
   // Create RetryOrchestrator with session config + retry config
   const orchestrator = new RetryOrchestrator(
