@@ -124,7 +124,7 @@ Plans:
 | 11. Legacy Deletion | v2.0 | 2/2 | Complete | 2026-03-18 |
 | 12. MCP Verifier Server | v2.0 | 2/2 | Complete | 2026-03-18 |
 | 13. Container Strategy | v2.0 | 2/2 | Complete | 2026-03-19 |
-| 14. Infrastructure Foundation | 3/3 | Complete   | 2026-03-19 | - |
+| 14. Infrastructure Foundation | 3/3 | Complete    | 2026-03-19 | - |
 | 15. Intent Parser + One-Shot Mode | v2.1 | 0/? | Not started | - |
 | 16. Interactive REPL | v2.1 | 0/? | Not started | - |
 | 17. Multi-Turn Session Context | v2.1 | 0/? | Not started | - |

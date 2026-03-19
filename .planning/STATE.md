@@ -4,7 +4,7 @@ milestone: v2.1
 milestone_name: Conversational Mode
 status: planning
 stopped_at: "Completed 14-03-PLAN.md: CLI thin adapter + auto-registration"
-last_updated: "2026-03-19T23:04:04.787Z"
+last_updated: "2026-03-19T23:07:41.516Z"
 last_activity: 2026-03-19 — v2.1 roadmap created; phases 14-17 defined
 progress:
   total_phases: 4
