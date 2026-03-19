@@ -11,37 +11,36 @@ import { execFile } from 'node:child_process';
 
 const mockExecFile = execFile as unknown as ReturnType<typeof vi.fn>;
 
+type ExecCallback = (err: Error | null, result?: { stdout: string; stderr: string }) => void;
+
+/**
+ * Extract the callback from execFile args — handles both 3-arg (no opts) and 4-arg (with opts) forms.
+ * promisify(execFile) calls either execFile(cmd, args, cb) or execFile(cmd, args, opts, cb).
+ */
+function extractCallback(args: unknown[]): ExecCallback {
+  const last = args[args.length - 1];
+  return last as ExecCallback;
+}
+
 /**
  * Helper to make execFile resolve (simulate success: exit code 0).
  * promisify(execFile) resolves with { stdout, stderr }.
  */
 function mockExecSuccess(stdout = '', stderr = ''): void {
-  mockExecFile.mockImplementation(
-    (
-      _cmd: string,
-      _args: string[],
-      _opts: unknown,
-      callback: (err: null, result: { stdout: string; stderr: string }) => void
-    ) => {
-      callback(null, { stdout, stderr });
-    }
-  );
+  mockExecFile.mockImplementation((...args: unknown[]) => {
+    const callback = extractCallback(args);
+    callback(null, { stdout, stderr });
+  });
 }
 
 /**
  * Helper to make execFile reject (simulate failure: non-zero exit code).
  */
 function mockExecFailure(message = 'Command failed'): void {
-  mockExecFile.mockImplementation(
-    (
-      _cmd: string,
-      _args: string[],
-      _opts: unknown,
-      callback: (err: Error) => void
-    ) => {
-      callback(new Error(message));
-    }
-  );
+  mockExecFile.mockImplementation((...args: unknown[]) => {
+    const callback = extractCallback(args);
+    callback(new Error(message));
+  });
 }
 
 beforeEach(() => {
@@ -84,28 +83,20 @@ describe('ensureNetworkExists', () => {
 
   it('creates network if inspect fails', async () => {
     mockExecFile
-      .mockImplementationOnce(
+      .mockImplementationOnce((...args: unknown[]) => {
         // First call (inspect) fails
-        (_cmd: string, _args: string[], _opts: unknown, callback: (err: Error) => void) => {
-          callback(new Error('network not found'));
-        }
-      )
-      .mockImplementationOnce(
+        extractCallback(args)(new Error('network not found'));
+      })
+      .mockImplementationOnce((...args: unknown[]) => {
         // Second call (create) succeeds
-        (_cmd: string, _args: string[], _opts: unknown, callback: (err: null, result: { stdout: string; stderr: string }) => void) => {
-          callback(null, { stdout: '', stderr: '' });
-        }
-      );
+        extractCallback(args)(null, { stdout: '', stderr: '' });
+      });
 
     await ensureNetworkExists('agent-net');
     expect(mockExecFile).toHaveBeenCalledTimes(2);
-    expect(mockExecFile).toHaveBeenNthCalledWith(
-      2,
-      'docker',
-      ['network', 'create', 'agent-net'],
-      expect.any(Object),
-      expect.any(Function)
-    );
+    const secondCallArgs = mockExecFile.mock.calls[1];
+    expect(secondCallArgs[0]).toBe('docker');
+    expect(secondCallArgs[1]).toEqual(['network', 'create', 'agent-net']);
   });
 });
 
@@ -114,28 +105,21 @@ describe('buildImageIfNeeded', () => {
     mockExecSuccess();
     await buildImageIfNeeded('background-agent:latest');
     expect(mockExecFile).toHaveBeenCalledTimes(1);
-    expect(mockExecFile).toHaveBeenCalledWith(
-      'docker',
-      ['image', 'inspect', 'background-agent:latest'],
-      expect.any(Object),
-      expect.any(Function)
-    );
+    const firstCall = mockExecFile.mock.calls[0];
+    expect(firstCall[0]).toBe('docker');
+    expect(firstCall[1]).toEqual(['image', 'inspect', 'background-agent:latest']);
   });
 
   it('builds image if not found', async () => {
     mockExecFile
-      .mockImplementationOnce(
+      .mockImplementationOnce((...args: unknown[]) => {
         // First call (image inspect) fails
-        (_cmd: string, _args: string[], _opts: unknown, callback: (err: Error) => void) => {
-          callback(new Error('image not found'));
-        }
-      )
-      .mockImplementationOnce(
+        extractCallback(args)(new Error('image not found'));
+      })
+      .mockImplementationOnce((...args: unknown[]) => {
         // Second call (docker build) succeeds
-        (_cmd: string, _args: string[], _opts: unknown, callback: (err: null, result: { stdout: string; stderr: string }) => void) => {
-          callback(null, { stdout: '', stderr: '' });
-        }
-      );
+        extractCallback(args)(null, { stdout: '', stderr: '' });
+      });
 
     await buildImageIfNeeded('background-agent:latest');
     expect(mockExecFile).toHaveBeenCalledTimes(2);
