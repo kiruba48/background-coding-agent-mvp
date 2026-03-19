@@ -471,7 +471,10 @@ describe('ClaudeCodeSession', () => {
     expect(mockSpawn).toHaveBeenCalledWith(
       'docker',
       expect.arrayContaining(['run', '--rm', '--interactive']),
-      expect.objectContaining({ stdio: ['pipe', 'pipe', 'inherit'] }),
+      expect.objectContaining({
+        stdio: ['pipe', 'pipe', 'inherit'],
+        env: expect.objectContaining({ ANTHROPIC_API_KEY: 'test-key' }),
+      }),
     );
   });
 

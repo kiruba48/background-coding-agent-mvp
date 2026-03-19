@@ -152,13 +152,22 @@ describe('buildDockerRunArgs', () => {
     expect(args).toContain('no-new-privileges');
     expect(args).toContain('--pids-limit');
     expect(args).toContain('200');
+    expect(args).toContain('--memory');
+    expect(args).toContain('2g');
+    expect(args).toContain('--read-only');
+    expect(args).toContain('--tmpfs');
+    expect(args).toContain('/tmp');
+    expect(args).toContain('--sysctl');
+    expect(args).toContain('net.ipv6.conf.all.disable_ipv6=1');
   });
 
-  it('passes API key as environment variable', () => {
+  it('passes API key name only for env inheritance (not in ps args)', () => {
     const args = buildDockerRunArgs(opts, '/usr/local/bin/claude', []);
     const apiKeyArgIndex = args.indexOf('-e');
     expect(apiKeyArgIndex).toBeGreaterThan(-1);
-    expect(args[apiKeyArgIndex + 1]).toBe('ANTHROPIC_API_KEY=sk-ant-test123');
+    // V-1: key value must NOT appear in args (would be visible via ps aux)
+    expect(args[apiKeyArgIndex + 1]).toBe('ANTHROPIC_API_KEY');
+    expect(args.join(' ')).not.toContain('sk-ant-test123');
   });
 
   it('mounts workspace directory', () => {

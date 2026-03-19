@@ -99,18 +99,24 @@ export async function runAgent(options: RunOptions): Promise<number> {
   // Create metrics collector
   const metrics = new MetricsCollector();
 
+  // Track the active run promise so signal handlers can await full cleanup
+  // (including the finally block that runs docker kill) before exiting.
+  let activeRunPromise: Promise<unknown> | null = null;
+
   // Register signal handlers for graceful cleanup.
-  // Must await orchestrator.stop() to abort the active SDK session
-  // before exiting — process.exit() alone skips async cleanup.
+  // Must await orchestrator.stop() AND the run promise's finally block
+  // before exiting — process.exit() alone skips async cleanup (P-2).
   process.once('SIGINT', async () => {
     childLogger.info('Received SIGINT, cleaning up...');
     await orchestrator.stop();
+    if (activeRunPromise) await activeRunPromise.catch(() => {});
     process.exit(130);
   });
 
   process.once('SIGTERM', async () => {
     childLogger.info('Received SIGTERM, cleaning up...');
     await orchestrator.stop();
+    if (activeRunPromise) await activeRunPromise.catch(() => {});
     process.exit(143);
   });
 
@@ -123,7 +129,9 @@ export async function runAgent(options: RunOptions): Promise<number> {
     });
 
     // Run the retry orchestration loop
-    const retryResult = await orchestrator.run(prompt, childLogger);
+    const runPromise = orchestrator.run(prompt, childLogger);
+    activeRunPromise = runPromise;
+    const retryResult = await runPromise;
 
     // Create GitHub PR if requested and run was successful
     if (options.createPr && retryResult.finalStatus === 'success') {

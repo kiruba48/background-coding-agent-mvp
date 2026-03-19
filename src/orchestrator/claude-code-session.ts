@@ -285,7 +285,12 @@ export class ClaudeCodeSession {
         return spawn('docker', dockerArgs, {
           stdio: ['pipe', 'pipe', 'inherit'],
           signal: sdkOptions.signal,
-          env: {}, // Docker container has its own env
+          env: {
+            HOME: process.env.HOME,
+            PATH: process.env.PATH,
+            DOCKER_HOST: process.env.DOCKER_HOST,
+            ANTHROPIC_API_KEY: apiKey, // docker -e inherits from parent env
+          },
         });
       };
 

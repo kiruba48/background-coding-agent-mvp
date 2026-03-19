@@ -28,7 +28,7 @@ export async function ensureNetworkExists(networkName: string = NETWORK_NAME): P
 
 export async function buildImageIfNeeded(imageTag: string = IMAGE_TAG): Promise<void> {
   try {
-    await execFileAsync('docker', ['image', 'inspect', imageTag]);
+    await execFileAsync('docker', ['image', 'inspect', imageTag], {});
   } catch {
     // Resolve the docker/ directory relative to this source file
     const currentDir = nodePath.dirname(fileURLToPath(import.meta.url));
@@ -68,7 +68,11 @@ export function buildDockerRunArgs(
     '--cap-add', 'NET_ADMIN',
     '--security-opt', 'no-new-privileges',
     '--pids-limit', '200',
-    '-e', `ANTHROPIC_API_KEY=${opts.apiKey}`,
+    '--memory', '2g',
+    '--read-only',
+    '--tmpfs', '/tmp',
+    '--sysctl', 'net.ipv6.conf.all.disable_ipv6=1',
+    '-e', 'ANTHROPIC_API_KEY',  // inherit from parent env, not in ps args
     '-v', `${opts.workspaceDir}:/workspace:rw`,
     '--workdir', '/workspace',
     imageTag,
