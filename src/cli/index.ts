@@ -1,8 +1,10 @@
 import { Command } from 'commander';
 import pc from 'picocolors';
 import { promises as fs } from 'fs';
-import { runAgent } from './commands/run.js';
+import { runCommand } from './commands/run.js';
 import { createProjectsCommand } from './commands/projects.js';
+import { autoRegisterCwd } from './auto-register.js';
+import { ProjectRegistry } from '../agent/registry.js';
 
 const program = new Command();
 
@@ -97,8 +99,30 @@ program
       }
     }
 
-    // Run agent with validated options
-    const exitCode = await runAgent({
+    // Auto-register cwd as a project (only fires for run command, not projects subcommands)
+    const registry = new ProjectRegistry();
+    await autoRegisterCwd(registry);
+
+    // Create AbortController at CLI level for signal handling
+    const abortController = new AbortController();
+
+    // Track run promise for clean shutdown
+    let runPromise: Promise<number> | null = null;
+
+    // Signal handlers live here at the CLI entry point — not in library code
+    process.once('SIGINT', async () => {
+      abortController.abort();
+      if (runPromise) await runPromise.catch(() => {});
+      process.exit(130);
+    });
+
+    process.once('SIGTERM', async () => {
+      abortController.abort();
+      if (runPromise) await runPromise.catch(() => {});
+      process.exit(143);
+    });
+
+    runPromise = runCommand({
       taskType: options.taskType,
       repo: options.repo,
       turnLimit,
@@ -109,8 +133,9 @@ program
       branchOverride: options.branch as string | undefined,
       dep: options.dep as string | undefined,
       targetVersion: options.targetVersion as string | undefined,
-    });
+    }, abortController.signal);
 
+    const exitCode = await runPromise;
     process.exit(exitCode);
   });
 
