@@ -14,9 +14,9 @@ Requirements for conversational mode. Each maps to roadmap phases.
 
 ### Intent Parsing
 
-- [ ] **INTENT-01**: User can describe a task in natural language and get structured intent (task type, repo, dep, version)
-- [ ] **INTENT-02**: Obvious patterns (e.g. "update recharts") are resolved via fast-path heuristic without LLM call
-- [ ] **INTENT-03**: Intent parser reads package.json/pom.xml to inject repo context before parsing ambiguous input
+- [x] **INTENT-01**: User can describe a task in natural language and get structured intent (task type, repo, dep, version)
+- [x] **INTENT-02**: Obvious patterns (e.g. "update recharts") are resolved via fast-path heuristic without LLM call
+- [x] **INTENT-03**: Intent parser reads package.json/pom.xml to inject repo context before parsing ambiguous input
 
 ### CLI Modes
 
@@ -71,9 +71,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INFRA-02 | Phase 14 | Complete |
 | REG-01 | Phase 14 | Complete |
 | REG-02 | Phase 14 | Complete |
-| INTENT-01 | Phase 15 | Pending |
-| INTENT-02 | Phase 15 | Pending |
-| INTENT-03 | Phase 15 | Pending |
+| INTENT-01 | Phase 15 | Complete |
+| INTENT-02 | Phase 15 | Complete |
+| INTENT-03 | Phase 15 | Complete |
 | CLI-01 | Phase 15 | Pending |
 | CLI-03 | Phase 15 | Pending |
 | CLI-02 | Phase 16 | Pending |

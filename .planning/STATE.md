@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.1
 milestone_name: Conversational Mode
-status: planning
-stopped_at: Phase 15 context gathered
-last_updated: "2026-03-20T10:44:07.980Z"
-last_activity: 2026-03-19 — v2.1 roadmap created; phases 14-17 defined
+status: executing
+stopped_at: "Phase 15, Plan 01 complete"
+last_updated: "2026-03-20T15:02:41Z"
+last_activity: 2026-03-20 — Phase 15 Plan 01 complete (types, fast-path, context-scanner)
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 3
   completed_plans: 3
-  percent: 0
+  percent: 25
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-19)
 
 **Core value:** The full verification loop must work: agent changes code, deterministic verifiers catch failures, LLM Judge catches scope creep, and only verified changes proceed.
-**Current focus:** Phase 14 — Infrastructure Foundation
+**Current focus:** Phase 15 — Intent Parser + One-Shot Mode
 
 ## Current Position
 
-Phase: 14 of 17 (Infrastructure Foundation)
-Plan: 0 of ? in current phase
-Status: Ready to plan
-Last activity: 2026-03-19 — v2.1 roadmap created; phases 14-17 defined
+Phase: 15 of 17 (Intent Parser + One-Shot Mode)
+Plan: 1 of 3 in current phase
+Status: Executing Phase 15
+Last activity: 2026-03-20 — Phase 15 Plan 01 complete (types, fast-path, context-scanner)
 
-Progress: [░░░░░░░░░░] 0% (v2.1)
+Progress: [██░░░░░░░░] 25% (v2.1)
 
 ## Performance Metrics
 
@@ -57,6 +57,10 @@ Progress: [░░░░░░░░░░] 0% (v2.1)
 - [Phase 14]: signal?.aborted checked BEFORE timedOut in catch block — cancellation takes priority
 - [Phase 14-infrastructure-foundation]: Signal handlers (SIGINT/SIGTERM) live only in src/cli/index.ts — library code is process-signal-free
 - [Phase 14-infrastructure-foundation]: autoRegisterCwd fires in run action only — projects subcommands do not trigger registration
+- [Phase 15-01]: Zod IntentSchema.version is z.enum(['latest']).nullable() — enforces that version numbers never come from LLM; FastPathResult.version is plain string (fast-path CAN extract user-specified versions)
+- [Phase 15-01]: pom.xml parsing scoped to <dependency> blocks only to avoid including project's own artifactId
+- [Phase 15-01]: validateDepInManifest() in fast-path.ts (not context-scanner.ts) — serves fast-path validation before LLM fallback
+- [Phase 15-01]: detectTaskType() returns null for both-or-neither manifest case — falls through to LLM
 
 ### Pending Todos
 
@@ -65,11 +69,11 @@ None.
 ### Blockers/Concerns
 
 - [Phase 17]: Token budget sizing for multi-turn history is unvalidated — recommend `/gsd:research-phase` before planning
-- [Phase 15]: `"latest"` sentinel resolution integration point (ContextScanner vs IntentParser vs InputRouter) — resolve during Phase 15 planning
+- [Phase 17]: Token budget sizing for multi-turn history is unvalidated — recommend `/gsd:research-phase` before planning
 
 ## Session Continuity
 
-Last session: 2026-03-20T10:44:07.978Z
-Stopped at: Phase 15 context gathered
-Resume file: .planning/phases/15-intent-parser-one-shot-mode/15-CONTEXT.md
-Next action: `/gsd:plan-phase 14`
+Last session: 2026-03-20T15:02:41Z
+Stopped at: Completed Phase 15, Plan 01
+Resume file: .planning/phases/15-intent-parser-one-shot-mode/15-01-SUMMARY.md
+Next action: Execute Phase 15, Plan 02 (LLM parser + confirm loop)
