@@ -6,12 +6,22 @@
  * discovers the current state and plans its own approach.
  *
  * @param dep - Maven coordinate in groupId:artifactId format
- * @param targetVersion - Target version to update to
+ * @param targetVersion - Target version to update to, or 'latest' sentinel
  * @returns End-state prompt string
  */
 export function buildMavenPrompt(dep: string, targetVersion: string): string {
+  const isLatest = targetVersion === 'latest';
+
+  const firstLine = isLatest
+    ? `You are a coding agent. Update the Maven dependency ${dep} to the latest available version.`
+    : `You are a coding agent. Update the Maven dependency ${dep} to version ${targetVersion}.`;
+
+  const afterChangesVersion = isLatest
+    ? `- All pom.xml files that reference ${dep} use the latest available version`
+    : `- All pom.xml files that reference ${dep} use version ${targetVersion}`;
+
   return [
-    `You are a coding agent. Update the Maven dependency ${dep} to version ${targetVersion}.`,
+    firstLine,
     '',
     `SCOPE: Only modify what is necessary to update ${dep}. Do NOT:`,
     `- Add, remove, or update any other dependencies`,
@@ -20,7 +30,7 @@ export function buildMavenPrompt(dep: string, targetVersion: string): string {
     `- Modify files unrelated to the ${dep} version update`,
     '',
     `After your changes, the following should be true:`,
-    `- All pom.xml files that reference ${dep} use version ${targetVersion}`,
+    afterChangesVersion,
     `- Only the ${dep} version entries in pom.xml files have changed`,
     `- If the update introduces breaking API changes in source code that imports ${dep}, adapt only those affected source files so compilation succeeds`,
     '',

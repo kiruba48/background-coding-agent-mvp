@@ -44,6 +44,18 @@ describe('buildMavenPrompt', () => {
     const result = buildMavenPrompt('org.springframework:spring-core', '6.1.0');
     expect(result).toContain('Work in the current directory');
   });
+
+  it('handles "latest" sentinel — says "latest available version" not "version latest"', () => {
+    const result = buildMavenPrompt('org.springframework:spring-core', 'latest');
+    expect(result).toContain('latest available version');
+    expect(result).not.toContain('to version latest');
+  });
+
+  it('still uses exact version for non-latest versions', () => {
+    const result = buildMavenPrompt('org.springframework:spring-core', '6.1.0');
+    expect(result).toContain('to version 6.1.0');
+    expect(result).not.toContain('latest available version');
+  });
 });
 
 describe('buildPrompt', () => {
@@ -63,10 +75,19 @@ describe('buildPrompt', () => {
     ).toThrow();
   });
 
-  it('throws when maven-dependency-update is missing targetVersion', () => {
-    expect(() =>
-      buildPrompt({ taskType: 'maven-dependency-update', dep: 'g:a' })
-    ).toThrow();
+  it('defaults targetVersion to "latest" when omitted for maven-dependency-update', () => {
+    // Should NOT throw — defaults to latest
+    const result = buildPrompt({ taskType: 'maven-dependency-update', dep: 'g:a' });
+    expect(result).toContain('latest available version');
+  });
+
+  it('handles "latest" sentinel in buildPrompt for maven', () => {
+    const result = buildPrompt({
+      taskType: 'maven-dependency-update',
+      dep: 'org.springframework:spring-core',
+      targetVersion: 'latest',
+    });
+    expect(result).toContain('latest available version');
   });
 
   it('returns generic fallback for unknown task types', () => {

@@ -9,12 +9,26 @@
  * Note: Lockfile regeneration is a host-side concern; do not instruct the agent.
  *
  * @param packageName - npm package name (e.g., lodash, @types/node)
- * @param targetVersion - Target version to update to
+ * @param targetVersion - Target version to update to, or 'latest' sentinel
  * @returns End-state prompt string
  */
 export function buildNpmPrompt(packageName: string, targetVersion: string): string {
+  const isLatest = targetVersion === 'latest';
+
+  const firstLine = isLatest
+    ? `You are a coding agent. Update the npm package ${packageName} to the latest available version.`
+    : `You are a coding agent. Update the npm package ${packageName} to version ${targetVersion}.`;
+
+  const afterChangesVersion = isLatest
+    ? `- The version string for ${packageName} in package.json is the latest version available on the npm registry`
+    : `- The version string for ${packageName} in package.json is exactly ${targetVersion}`;
+
+  const scopeLatestNote = isLatest
+    ? [`- First, determine the latest version of ${packageName} available on the npm registry, then update to that exact version`]
+    : [];
+
   return [
-    `You are a coding agent. Update the npm package ${packageName} to version ${targetVersion}.`,
+    firstLine,
     '',
     `SCOPE: Only modify what is necessary to update ${packageName}. Do NOT:`,
     `- Add, remove, or update any other dependencies`,
@@ -22,9 +36,10 @@ export function buildNpmPrompt(packageName: string, targetVersion: string): stri
     `- Reformat or reorganize package.json beyond the targeted version change`,
     `- Modify files unrelated to the ${packageName} version update`,
     `- Read or modify package-lock.json (lockfile regeneration is handled externally)`,
+    ...scopeLatestNote,
     '',
     `After your changes, the following should be true:`,
-    `- The version string for ${packageName} in package.json is exactly ${targetVersion}`,
+    afterChangesVersion,
     `- Only the ${packageName} version line in package.json has changed`,
     `- If the update introduces breaking API changes in source code that imports ${packageName}, adapt only those affected source files so compilation succeeds`,
     '',
