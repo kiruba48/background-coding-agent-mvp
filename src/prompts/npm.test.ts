@@ -46,6 +46,23 @@ describe('buildNpmPrompt', () => {
     expect(result).toMatch(/package-lock/i);
     expect(result).toMatch(/not|do not/i);
   });
+
+  it('handles "latest" sentinel — says "latest available version" not "version latest"', () => {
+    const result = buildNpmPrompt('recharts', 'latest');
+    expect(result).toContain('latest available version');
+    expect(result).not.toContain('to version latest');
+  });
+
+  it('handles "latest" sentinel — prompts agent to find latest from registry', () => {
+    const result = buildNpmPrompt('recharts', 'latest');
+    expect(result).toMatch(/npm registry|latest/i);
+  });
+
+  it('still uses exact version for non-latest versions', () => {
+    const result = buildNpmPrompt('lodash', '5.0.0');
+    expect(result).toContain('to version 5.0.0');
+    expect(result).not.toContain('latest available version');
+  });
 });
 
 describe('buildPrompt npm-dependency-update dispatch', () => {
@@ -65,9 +82,18 @@ describe('buildPrompt npm-dependency-update dispatch', () => {
     ).toThrow();
   });
 
-  it('throws when npm-dependency-update is missing targetVersion', () => {
-    expect(() =>
-      buildPrompt({ taskType: 'npm-dependency-update', dep: 'lodash' })
-    ).toThrow();
+  it('defaults targetVersion to "latest" when omitted for npm-dependency-update', () => {
+    // Should NOT throw — defaults to latest
+    const result = buildPrompt({ taskType: 'npm-dependency-update', dep: 'lodash' });
+    expect(result).toContain('latest available version');
+  });
+
+  it('handles "latest" sentinel in buildPrompt for npm', () => {
+    const result = buildPrompt({
+      taskType: 'npm-dependency-update',
+      dep: 'recharts',
+      targetVersion: 'latest',
+    });
+    expect(result).toContain('latest available version');
   });
 });
