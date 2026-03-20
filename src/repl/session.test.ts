@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ResolvedIntent } from '../intent/types.js';
 import type { RetryResult } from '../types.js';
 
