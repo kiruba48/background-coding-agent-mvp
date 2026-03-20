@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v2.1
 milestone_name: Conversational Mode
 status: planning
-stopped_at: "Completed 14-03-PLAN.md: CLI thin adapter + auto-registration"
-last_updated: "2026-03-19T23:07:41.516Z"
+stopped_at: Phase 15 context gathered
+last_updated: "2026-03-20T10:44:07.980Z"
 last_activity: 2026-03-19 — v2.1 roadmap created; phases 14-17 defined
 progress:
   total_phases: 4
@@ -69,7 +69,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-19T23:04:04.785Z
-Stopped at: Completed 14-03-PLAN.md: CLI thin adapter + auto-registration
-Resume file: None
+Last session: 2026-03-20T10:44:07.978Z
+Stopped at: Phase 15 context gathered
+Resume file: .planning/phases/15-intent-parser-one-shot-mode/15-CONTEXT.md
 Next action: `/gsd:plan-phase 14`
