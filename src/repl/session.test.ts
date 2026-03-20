@@ -65,16 +65,14 @@ function makeRetryResult(overrides: Partial<RetryResult> = {}): RetryResult {
   };
 }
 
-function makeCallbacks(overrides: Partial<{
-  confirm: ReturnType<typeof vi.fn>;
-  clarify: ReturnType<typeof vi.fn>;
-  getSignal: ReturnType<typeof vi.fn>;
-}> = {}) {
+import type { SessionCallbacks } from './types.js';
+
+function makeCallbacks(overrides: Partial<SessionCallbacks> = {}): SessionCallbacks {
   const controller = new AbortController();
   return {
-    confirm: vi.fn().mockResolvedValue(makeIntent()),
-    clarify: vi.fn().mockResolvedValue(null),
-    getSignal: vi.fn().mockReturnValue(controller.signal),
+    confirm: vi.fn<SessionCallbacks['confirm']>().mockResolvedValue(makeIntent()),
+    clarify: vi.fn<SessionCallbacks['clarify']>().mockResolvedValue(null),
+    getSignal: vi.fn<SessionCallbacks['getSignal']>().mockReturnValue(controller.signal),
     ...overrides,
   };
 }
