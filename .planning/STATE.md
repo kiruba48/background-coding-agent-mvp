@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.1
 milestone_name: Conversational Mode
 status: executing
-stopped_at: Phase 16 context gathered
-last_updated: "2026-03-20T19:27:19.439Z"
+stopped_at: Completed 16-01-PLAN.md
+last_updated: "2026-03-20T19:57:27.533Z"
 last_activity: 2026-03-20 — Phase 15 Plan 02 complete (LLM parser, confirm loop, prompt sentinel handling)
 progress:
   total_phases: 4
   completed_phases: 2
-  total_plans: 6
-  completed_plans: 6
+  total_plans: 8
+  completed_plans: 7
   percent: 33
 ---
 
@@ -67,6 +67,8 @@ Progress: [███░░░░░░░] 33% (v2.1)
 - [Phase 15]: parseIntent coordinator is channel-agnostic — repo prompting and clarification UI in CLI layer, not index.ts
 - [Phase 15]: vi.fn() constructor mocks require regular function syntax, not arrow functions (arrow fns cannot be called with new)
 - [Phase 15]: oneShotCommand returns 0 on user cancel (clarification or confirm loop) — clean exits, not errors
+- [Phase 16-01]: SessionCallbacks callback injection pattern decouples I/O (readline) from session logic — enables CLI, Slack, MCP adapters to share processInput()
+- [Phase 16-01]: skipDockerChecks: true passed by REPL session core — Docker checks run once at REPL startup by CLI adapter
 
 ### Pending Todos
 
@@ -79,7 +81,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-20T19:27:19.437Z
-Stopped at: Phase 16 context gathered
-Resume file: .planning/phases/16-interactive-repl/16-CONTEXT.md
+Last session: 2026-03-20T19:57:27.531Z
+Stopped at: Completed 16-01-PLAN.md
+Resume file: None
 Next action: Execute Phase 15, Plan 03 (coordinator parseIntent + one-shot CLI command)
