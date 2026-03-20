@@ -77,6 +77,9 @@ export class MetricsCollector {
       case 'turn_limit':
         this.metrics.turnLimitCount++;
         break;
+      case 'cancelled':
+        // Cancelled sessions are counted in totalSessions but not as failures
+        break;
     }
   }
 

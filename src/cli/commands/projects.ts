@@ -38,9 +38,14 @@ export function createProjectsCommand(opts: ProjectsCommandOptions = {}): Comman
       const registry = makeRegistry();
       const absPath = path.resolve(repoPath);
 
-      // Validate path exists
+      // Validate path exists and is a directory
       try {
-        await fs.access(absPath);
+        const stat = await fs.stat(absPath);
+        if (!stat.isDirectory()) {
+          console.error(pc.red(`Error: Path is not a directory: ${absPath}`));
+          process.exitCode = 1;
+          return;
+        }
       } catch {
         console.error(pc.red(`Error: Path does not exist: ${absPath}`));
         process.exitCode = 1;

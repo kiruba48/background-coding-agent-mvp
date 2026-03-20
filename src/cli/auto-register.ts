@@ -5,15 +5,18 @@ import { ProjectRegistry } from '../agent/registry.js';
 const INDICATORS = ['.git', 'package.json', 'pom.xml'];
 
 /**
- * Auto-register the current working directory as a project in the registry.
+ * Auto-register a directory as a project in the registry.
  *
- * Fires when cwd contains any project indicator (.git, package.json, pom.xml).
+ * Fires when the directory contains any project indicator (.git, package.json, pom.xml).
  * Uses the directory basename as the project short name.
  * Skips silently if name is already registered to a different path (no conflict resolution).
  * Prints a one-line notice on first registration.
+ *
+ * @param registry - ProjectRegistry to register in
+ * @param workingDir - Directory to register (defaults to process.cwd() for CLI use)
  */
-export async function autoRegisterCwd(registry: ProjectRegistry): Promise<void> {
-  const cwd = process.cwd();
+export async function autoRegisterCwd(registry: ProjectRegistry, workingDir?: string): Promise<void> {
+  const cwd = workingDir ?? process.cwd();
   const name = path.basename(cwd);
 
   // Check if any project indicator exists in cwd

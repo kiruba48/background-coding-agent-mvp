@@ -156,8 +156,7 @@ describe('src/agent/index.ts', () => {
   it('6. runAgent source does not call process.exit', async () => {
     const fs = await import('node:fs');
     // Use __dirname-style resolution to find the source file
-    const url = new URL('./index.ts', 'file:///Users/kiruba/code/Projects/ai/background-coding-agent/src/agent/');
-    const source = fs.readFileSync(url.pathname, 'utf-8');
+    const source = fs.readFileSync(new URL('./index.ts', import.meta.url).pathname, 'utf-8');
     expect(source).not.toContain('process.exit');
     expect(source).not.toContain('process.once');
   });

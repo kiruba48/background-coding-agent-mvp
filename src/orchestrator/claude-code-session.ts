@@ -248,7 +248,6 @@ export class ClaudeCodeSession {
 
     // Fast-path: if external signal is already aborted, return immediately
     if (signal?.aborted) {
-      clearTimeout(undefined); // no timeout to clear yet
       this.abortController = null;
       return {
         sessionId,
@@ -271,6 +270,7 @@ export class ClaudeCodeSession {
 
     // Track whether the session has exited (to avoid redundant docker kill in grace handler)
     let sessionSettled = false;
+    let graceTimerHandle: ReturnType<typeof setTimeout> | undefined;
 
     // Thread external AbortSignal: signal SDK abort, then start a 5-second grace period
     // before calling docker kill (in case SDK abort doesn't cause session to exit cleanly)
@@ -282,7 +282,7 @@ export class ClaudeCodeSession {
         // Step 2: 5-second grace period — if session hasn't exited, force-kill container
         // Per locked decision: "signal abort to SDK, wait 5s for graceful shutdown, then docker kill"
         if (!sessionSettled) {
-          setTimeout(async () => {
+          graceTimerHandle = setTimeout(async () => {
             if (!sessionSettled) {
               try {
                 await execFileAsync('docker', ['kill', containerName], { timeout: 5000 });
@@ -412,6 +412,7 @@ export class ClaudeCodeSession {
       // Mark session as settled so grace period handler skips redundant docker kill
       sessionSettled = true;
       clearTimeout(timeoutHandle);
+      if (graceTimerHandle) clearTimeout(graceTimerHandle);
       // Close generator to prevent subprocess leaks (Pitfall 3)
       if (queryGen) {
         try { await queryGen.return(undefined); } catch {}

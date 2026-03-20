@@ -68,7 +68,7 @@ export class RetryOrchestrator {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       // Check signal at start of each loop iteration
       if (this.config.signal?.aborted) {
-        await this.resetWorkspace(this.config.workspaceDir, baselineSha);
+        await this.resetWorkspace(this.config.workspaceDir, baselineSha, logger);
         return { finalStatus: 'cancelled', attempts: attempt - 1, sessionResults, verificationResults, judgeResults };
       }
 
@@ -100,7 +100,7 @@ export class RetryOrchestrator {
 
       // Cancellation: reset workspace and return immediately
       if (sessionResult.status === 'cancelled') {
-        await this.resetWorkspace(this.config.workspaceDir, baselineSha);
+        await this.resetWorkspace(this.config.workspaceDir, baselineSha, logger);
         return {
           finalStatus: 'cancelled',
           attempts: attempt,
@@ -276,12 +276,13 @@ export class RetryOrchestrator {
    * Reset the workspace to the baseline SHA on cancellation.
    * Best-effort: errors are caught and ignored to not block cancellation flow.
    */
-  private async resetWorkspace(workspaceDir: string, baselineSha: string | undefined): Promise<void> {
+  private async resetWorkspace(workspaceDir: string, baselineSha: string | undefined, logger?: pino.Logger): Promise<void> {
     if (!baselineSha) return;
     try {
       await execFileAsync('git', ['reset', '--hard', baselineSha], { cwd: workspaceDir, timeout: 10_000 });
-    } catch {
-      // Best-effort reset — log but don't throw
+    } catch (err) {
+      // Best-effort reset — warn but don't throw (workspace may retain agent changes)
+      logger?.warn({ err, workspaceDir, baselineSha }, 'Failed to reset workspace after cancellation — agent changes may remain');
     }
   }
 

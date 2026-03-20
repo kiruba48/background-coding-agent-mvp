@@ -99,9 +99,10 @@ program
       }
     }
 
-    // Auto-register cwd as a project (only fires for run command, not projects subcommands)
+    // Auto-register the target repo as a project (not cwd — user may run from agent's own directory)
     const registry = new ProjectRegistry();
-    await autoRegisterCwd(registry);
+    const resolvedRepo = (await import('node:path')).resolve(options.repo);
+    await autoRegisterCwd(registry, resolvedRepo);
 
     // Create AbortController at CLI level for signal handling
     const abortController = new AbortController();
@@ -109,18 +110,28 @@ program
     // Track run promise for clean shutdown
     let runPromise: Promise<number> | null = null;
 
-    // Signal handlers live here at the CLI entry point — not in library code
-    process.once('SIGINT', async () => {
+    // Signal handlers live here at the CLI entry point — not in library code.
+    // Use process.on (not once) with a guard flag so double-signal (rapid Ctrl+C)
+    // triggers a force-exit instead of falling through to Node's default handler.
+    let shuttingDown = false;
+    const handleSignal = (code: number) => {
+      if (shuttingDown) {
+        // Second signal — force exit immediately
+        process.exit(code);
+      }
+      shuttingDown = true;
       abortController.abort();
-      if (runPromise) await runPromise.catch(() => {});
-      process.exit(130);
-    });
-
-    process.once('SIGTERM', async () => {
-      abortController.abort();
-      if (runPromise) await runPromise.catch(() => {});
-      process.exit(143);
-    });
+      // Safety net: force exit after 10s if cleanup hangs
+      const forceTimer = setTimeout(() => process.exit(code), 10_000);
+      forceTimer.unref(); // don't block event loop from exiting naturally
+      if (runPromise) {
+        runPromise.catch(() => {}).then(() => process.exit(code));
+      } else {
+        process.exit(code);
+      }
+    };
+    process.on('SIGINT', () => handleSignal(130));
+    process.on('SIGTERM', () => handleSignal(143));
 
     runPromise = runCommand({
       taskType: options.taskType,

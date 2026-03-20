@@ -67,4 +67,25 @@ describe('ProjectRegistry', () => {
     const registry2 = new ProjectRegistry({ cwd: tmpDir });
     expect(registry2.resolve('myapp')).toBe('/home/user/projects/myapp');
   });
+
+  it('Test 9: rejects __proto__ as project name', () => {
+    expect(() => registry.register('__proto__', '/path')).toThrow('Invalid project name');
+  });
+
+  it('Test 10: rejects constructor as project name', () => {
+    expect(() => registry.register('constructor', '/path')).toThrow('Invalid project name');
+  });
+
+  it('Test 11: rejects names with path separators', () => {
+    expect(() => registry.register('../../etc', '/path')).toThrow('Invalid project name');
+  });
+
+  it('Test 12: rejects empty string as project name', () => {
+    expect(() => registry.register('', '/path')).toThrow('Invalid project name');
+  });
+
+  it('Test 13: allows valid names with dots, hyphens, underscores', () => {
+    registry.register('my-app_v2.0', '/path/to/app');
+    expect(registry.resolve('my-app_v2.0')).toBe('/path/to/app');
+  });
 });

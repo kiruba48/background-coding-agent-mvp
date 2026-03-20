@@ -181,8 +181,17 @@ export async function runAgent(
   // Record metrics
   if (retryResult.sessionResults.length > 0) {
     const lastSession = retryResult.sessionResults[retryResult.sessionResults.length - 1];
-    const status = retryResult.finalStatus === 'max_retries_exhausted' ? 'failed' : retryResult.finalStatus;
-    metrics.recordSession(status as Parameters<typeof metrics.recordSession>[0], lastSession.toolCallCount, lastSession.duration);
+    const statusMap: Record<string, import('../orchestrator/metrics.js').SessionStatus> = {
+      success: 'success',
+      failed: 'failed',
+      timeout: 'timeout',
+      turn_limit: 'turn_limit',
+      vetoed: 'vetoed',
+      cancelled: 'cancelled',
+      max_retries_exhausted: 'failed',
+    };
+    const status = statusMap[retryResult.finalStatus] ?? 'failed';
+    metrics.recordSession(status, lastSession.toolCallCount, lastSession.duration);
   }
 
   // Log retry result
