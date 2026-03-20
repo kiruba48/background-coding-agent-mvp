@@ -1,4 +1,5 @@
 import path from 'node:path';
+import pc from 'picocolors';
 import { fastPathParse, validateDepInManifest, detectTaskType } from './fast-path.js';
 import { readManifestDeps } from './context-scanner.js';
 import { llmParse } from './llm-parser.js';
@@ -49,6 +50,7 @@ export async function parseIntent(
   if (!repoPath) {
     // cwd fallback — CLI layer may have already prompted before calling us
     repoPath = process.cwd();
+    console.error(pc.yellow('  Warning: No repo path specified, using current directory'));
   }
 
   repoPath = path.resolve(repoPath);
@@ -76,12 +78,14 @@ export async function parseIntent(
   const llmResult = await llmParse(input, manifestContext);
 
   // Step 4: Map LLM result to ResolvedIntent — pass through clarifications
+  const isGeneric = llmResult.taskType === 'unknown';
   return {
-    taskType: llmResult.taskType === 'unknown' ? input : llmResult.taskType,
+    taskType: isGeneric ? 'generic' : llmResult.taskType,
     repo: repoPath,
     dep: llmResult.dep,
     version: llmResult.version,
     confidence: llmResult.confidence,
+    description: isGeneric ? input : undefined,
     clarifications: llmResult.clarifications.length > 0 ? llmResult.clarifications : undefined,
   };
 }

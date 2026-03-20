@@ -30,5 +30,6 @@ export interface ResolvedIntent {
   dep: string | null;
   version: string | null;   // 'latest' sentinel, explicit version, or null
   confidence: 'high' | 'low';
+  description?: string;     // raw NL input when taskType is 'generic'
   clarifications?: ClarificationOption[];  // from LLM when confidence is low
 }

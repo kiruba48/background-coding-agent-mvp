@@ -157,7 +157,7 @@ describe('oneShotCommand', () => {
           repo: '/path/to/repo',
           dep: 'recharts',
           targetVersion: 'latest',
-          turnLimit: 10,
+          turnLimit: 30,
           timeoutMs: 300000,
           maxRetries: 3,
         }),

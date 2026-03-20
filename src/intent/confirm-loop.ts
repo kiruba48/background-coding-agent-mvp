@@ -25,7 +25,7 @@ export async function confirmLoop(
   let attempts = 0;
 
   try {
-    while (attempts <= maxRedirects) {
+    while (attempts < maxRedirects) {
       displayIntent(current);
       const answer = await rl.question(pc.bold('  Proceed? [Y/n] '));
 
@@ -37,15 +37,11 @@ export async function confirmLoop(
         // Treat any non-y/n input as a correction directly
         current = await reparse(answer, current);
         attempts++;
-        if (attempts > maxRedirects) {
-          console.log(pc.red('\n  Please try again with a clearer command'));
-          return null;
-        }
         continue;
       }
 
       attempts++;
-      if (attempts > maxRedirects) {
+      if (attempts >= maxRedirects) {
         console.log(pc.red('\n  Please try again with a clearer command'));
         return null;
       }
@@ -53,6 +49,13 @@ export async function confirmLoop(
       const correction = await rl.question('  Correction: ');
       current = await reparse(correction, current);
     }
+    // Final display after last correction — user gets one more chance to accept
+    displayIntent(current);
+    const finalAnswer = await rl.question(pc.bold('  Proceed? [Y/n] '));
+    if (finalAnswer === '' || finalAnswer.toLowerCase() === 'y') {
+      return current;
+    }
+    console.log(pc.red('\n  Please try again with a clearer command'));
     return null;
   } finally {
     rl.close();

@@ -56,6 +56,16 @@ describe('fastPathParse', () => {
     const result = fastPathParse('UPDATE recharts');
     expect(result).toEqual({ dep: 'recharts', version: 'latest', project: null });
   });
+
+  it('"update recharts in myapp to 2.15.0" matches reversed project-before-version order', () => {
+    const result = fastPathParse('update recharts in myapp to 2.15.0');
+    expect(result).toEqual({ dep: 'recharts', version: '2.15.0', project: 'myapp' });
+  });
+
+  it('"update recharts for myapp to latest" matches reversed order with "for"', () => {
+    const result = fastPathParse('update recharts for myapp to latest');
+    expect(result).toEqual({ dep: 'recharts', version: 'latest', project: 'myapp' });
+  });
 });
 
 describe('validateDepInManifest', () => {

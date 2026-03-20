@@ -1,11 +1,13 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { FastPathResult } from './types.js';
+import { readPackageJson, readPomDependencies } from './manifest-utils.js';
 
 // Patterns: "update|upgrade|bump <dep> [to <version>] [in|for <project>]"
-// Supports scoped packages (@scope/name) and dotted names
+// Also matches reversed order: "update <dep> in <project> to <version>"
 const DEPENDENCY_PATTERNS = [
   /^(?:update|upgrade|bump)\s+(?<dep>@?[a-z0-9\-._~/]+)(?:\s+to\s+(?<version>[a-zA-Z0-9._\-+]+))?(?:\s+(?:in|for)\s+(?<project>[a-zA-Z0-9._-]+))?$/i,
+  /^(?:update|upgrade|bump)\s+(?<dep>@?[a-z0-9\-._~/]+)\s+(?:in|for)\s+(?<project>[a-zA-Z0-9._-]+)(?:\s+to\s+(?<version>[a-zA-Z0-9._\-+]+))?$/i,
 ];
 
 export function fastPathParse(input: string): FastPathResult | null {
@@ -26,25 +28,18 @@ export function fastPathParse(input: string): FastPathResult | null {
 
 export async function validateDepInManifest(repoPath: string, dep: string): Promise<boolean> {
   // Try package.json
-  try {
-    const raw = await fs.readFile(path.join(repoPath, 'package.json'), 'utf-8');
-    const pkg = JSON.parse(raw) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+  const pkg = await readPackageJson(repoPath);
+  if (pkg) {
     const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
     if (dep in allDeps) return true;
-  } catch { /* no package.json */ }
+  }
 
   // Try pom.xml
-  try {
-    const raw = await fs.readFile(path.join(repoPath, 'pom.xml'), 'utf-8');
-    const depBlocks = [...raw.matchAll(/<dependency>[\s\S]*?<\/dependency>/g)];
-    const artifactIds = depBlocks.map(m => {
-      const match = m[0].match(/<artifactId>([^<]+)<\/artifactId>/);
-      return match?.[1] ?? '';
-    }).filter(Boolean);
-    // For Maven, dep might be "groupId:artifactId" — check artifactId part
+  const pomDeps = await readPomDependencies(repoPath);
+  if (pomDeps) {
     const targetArtifact = dep.includes(':') ? dep.split(':')[1] : dep;
-    if (artifactIds.includes(targetArtifact)) return true;
-  } catch { /* no pom.xml */ }
+    if (pomDeps.some(d => d.artifactId === targetArtifact)) return true;
+  }
 
   return false;
 }

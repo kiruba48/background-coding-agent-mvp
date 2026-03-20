@@ -6,6 +6,7 @@ export interface PromptOptions {
   taskType: string;
   dep?: string;
   targetVersion?: string;
+  description?: string;  // raw NL task description for generic tasks
 }
 
 /**
@@ -30,6 +31,6 @@ export function buildPrompt(options: PromptOptions): string {
       return buildNpmPrompt(options.dep, options.targetVersion ?? 'latest');
     }
     default:
-      return `You are a coding agent. Your task: ${options.taskType}. Work in the current directory.`;
+      return `You are a coding agent. Your task: ${options.description ?? options.taskType}. Work in the current directory.`;
   }
 }

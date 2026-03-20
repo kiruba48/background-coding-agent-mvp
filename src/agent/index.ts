@@ -40,6 +40,7 @@ export interface AgentOptions {
   branchOverride?: string;
   dep?: string;
   targetVersion?: string;
+  description?: string;     // raw NL task description for generic tasks
 }
 
 /**
@@ -140,6 +141,7 @@ export async function runAgent(
     taskType: options.taskType,
     dep: options.dep,
     targetVersion: options.targetVersion,
+    description: options.description,
   });
 
   // Run the retry orchestration loop

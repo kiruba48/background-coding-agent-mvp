@@ -15,7 +15,7 @@ program
   .argument('[input]', 'Natural language task description (one-shot mode)')
   .option('-t, --task-type <type>', 'Task type (e.g., maven-dependency-update, npm-dependency-update)')
   .option('-r, --repo <path>', 'Target repository path (absolute or relative)')
-  .option('--turn-limit <number>', 'Maximum agent turns (default: 10)', '10')
+  .option('--turn-limit <number>', 'Maximum agent turns (default: 30)', '30')
   .option('--timeout <seconds>', 'Session timeout in seconds (default: 300)', '300')
   .option('--max-retries <number>', 'Maximum retry attempts on verification failure (default: 3)', '3')
   .option('--no-judge', 'Disable LLM Judge semantic verification (also: JUDGE_ENABLED=false)')

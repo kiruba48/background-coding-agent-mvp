@@ -1,6 +1,7 @@
 import { parseIntent, confirmLoop, fastPathParse } from '../../intent/index.js';
 import { runAgent, type AgentOptions, type AgentContext } from '../../agent/index.js';
 import { createInterface } from 'node:readline/promises';
+import { promises as fs } from 'node:fs';
 import pc from 'picocolors';
 import path from 'node:path';
 import { ProjectRegistry } from '../../agent/registry.js';
@@ -49,12 +50,26 @@ async function resolveRepoInteractively(
       if (choiceNum >= 1 && choiceNum <= names.length) {
         return registered[names[choiceNum - 1]];
       }
+      if (!(choiceNum === names.length + 1)) {
+        console.log(pc.red('  Invalid selection.'));
+      }
       // Fall through to manual path entry
     }
 
     // No registered projects or user chose "different path"
     const localPath = await rl.question(pc.bold('  Enter project path: '));
     const resolved = path.resolve(localPath.trim());
+
+    // Validate the path exists and is a directory
+    try {
+      const stat = await fs.stat(resolved);
+      if (!stat.isDirectory()) {
+        console.log(pc.red(`  Error: ${resolved} is not a directory`));
+        return resolved; // let downstream handle gracefully
+      }
+    } catch {
+      console.log(pc.red(`  Warning: ${resolved} does not exist`));
+    }
 
     // Extract a short name from the path for registration
     const shortName = path.basename(resolved);
@@ -165,7 +180,7 @@ export async function oneShotCommand(
   }
 
   // Map ResolvedIntent to AgentOptions
-  const turnLimit = parseInt(options.turnLimit ?? '10', 10);
+  const turnLimit = parseInt(options.turnLimit ?? '30', 10);
   const timeout = parseInt(options.timeout ?? '300', 10);
   const maxRetries = parseInt(options.maxRetries ?? '3', 10);
 
@@ -174,6 +189,7 @@ export async function oneShotCommand(
     repo: confirmed.repo,
     dep: confirmed.dep ?? undefined,
     targetVersion: confirmed.version ?? undefined,
+    description: confirmed.description,
     turnLimit,
     timeoutMs: timeout * 1000,
     maxRetries,

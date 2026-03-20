@@ -169,7 +169,7 @@ describe('parseIntent coordinator', () => {
       expect(result.taskType).toBe('npm-dependency-update'); // from mocked LLM
     });
 
-    it('maps unknown taskType to raw input as generic task', async () => {
+    it('maps unknown taskType to generic with description field', async () => {
       mockFastPathParse.mockReturnValue(null);
       mockLlmParse.mockResolvedValue({
         taskType: 'unknown',
@@ -182,7 +182,8 @@ describe('parseIntent coordinator', () => {
       const registry = makeRegistry();
       const result = await parseIntent('fix the login bug', { repoPath: '/path', registry });
 
-      expect(result.taskType).toBe('fix the login bug'); // raw input as task description
+      expect(result.taskType).toBe('generic');
+      expect(result.description).toBe('fix the login bug');
     });
   });
 
