@@ -50,6 +50,7 @@ export interface AgentOptions {
 export interface AgentContext {
   logger?: pino.Logger;    // falls back to pino({ level: 'silent' }) if omitted
   signal?: AbortSignal;    // graceful cancellation via AbortSignal
+  skipDockerChecks?: boolean;   // REPL sets true after startup check
 }
 
 /**
@@ -110,10 +111,12 @@ export async function runAgent(
       }
     : undefined;
 
-  // Docker lifecycle — every agent run goes through Docker
-  await assertDockerRunning();
-  await ensureNetworkExists();
-  await buildImageIfNeeded();
+  // Docker lifecycle — skip if caller already handled (REPL startup)
+  if (!context.skipDockerChecks) {
+    await assertDockerRunning();
+    await ensureNetworkExists();
+    await buildImageIfNeeded();
+  }
 
   // Create RetryOrchestrator — signal is threaded through SessionConfig
   const orchestrator = new RetryOrchestrator(
