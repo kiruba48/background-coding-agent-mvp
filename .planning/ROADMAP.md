@@ -51,7 +51,7 @@ Full details: [v2.0-ROADMAP.md](milestones/v2.0-ROADMAP.md)
 **Milestone Goal:** Replace rigid CLI flags with a conversational interface — REPL + one-shot, natural language in, context-aware plan proposal, same verification pipeline out.
 
 - [x] **Phase 14: Infrastructure Foundation** — Extract runAgent(), wire AbortSignal, build project registry (completed 2026-03-19)
-- [ ] **Phase 15: Intent Parser + One-Shot Mode** — Natural language → structured intent, fast-path heuristic, context scan, confirm flow, end-to-end one-shot
+- [x] **Phase 15: Intent Parser + One-Shot Mode** — Natural language → structured intent, fast-path heuristic, context scan, confirm flow, end-to-end one-shot (completed 2026-03-20)
 - [ ] **Phase 16: Interactive REPL** — readline loop, Ctrl+C/Ctrl+D semantics, Docker build check at startup, persistent history
 - [ ] **Phase 17: Multi-Turn Session Context** — In-memory session history propagated to intent parser for follow-up disambiguation
 
@@ -83,7 +83,7 @@ Plans:
   3. Before executing, the user sees the proposed plan and is prompted to confirm or redirect; the agent does not run until the user confirms
   4. When the intent is ambiguous, the user is asked exactly one targeted clarification question rather than failing or guessing
   5. Package.json or pom.xml data is read from the repo and injected as structured context before the intent parser makes an LLM call on ambiguous input
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 
 Plans:
 - [ ] 15-01-PLAN.md — Intent types, fast-path regex parser, and context scanner
@@ -130,6 +130,6 @@ Plans:
 | 12. MCP Verifier Server | v2.0 | 2/2 | Complete | 2026-03-18 |
 | 13. Container Strategy | v2.0 | 2/2 | Complete | 2026-03-19 |
 | 14. Infrastructure Foundation | v2.1 | 3/3 | Complete | 2026-03-19 |
-| 15. Intent Parser + One-Shot Mode | 2/3 | In Progress|  | - |
+| 15. Intent Parser + One-Shot Mode | 3/3 | Complete   | 2026-03-20 | - |
 | 16. Interactive REPL | v2.1 | 0/? | Not started | - |
 | 17. Multi-Turn Session Context | v2.1 | 0/? | Not started | - |

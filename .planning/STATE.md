@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.1
 milestone_name: Conversational Mode
 status: executing
-stopped_at: "Phase 15, Plan 02 complete"
-last_updated: "2026-03-20T15:27:00Z"
+stopped_at: Completed Phase 15, Plan 03 (parseIntent coordinator + one-shot CLI command)
+last_updated: "2026-03-20T15:21:49.507Z"
 last_activity: 2026-03-20 — Phase 15 Plan 02 complete (LLM parser, confirm loop, prompt sentinel handling)
 progress:
   total_phases: 4
-  completed_phases: 1
-  total_plans: 3
-  completed_plans: 4
+  completed_phases: 2
+  total_plans: 6
+  completed_plans: 6
   percent: 33
 ---
 
@@ -64,6 +64,9 @@ Progress: [███░░░░░░░] 33% (v2.1)
 - [Phase 15-02]: llmParse() timeout is 15s (vs 30s in judge) — intent parsing is on the interactive path, latency matters
 - [Phase 15-02]: Non-y/n input in confirmLoop treated as inline correction (not forced 'n' + separate correction prompt)
 - [Phase 15-02]: buildPrompt defaults targetVersion to 'latest' via ?? operator — no longer throws when omitted for dep update types
+- [Phase 15]: parseIntent coordinator is channel-agnostic — repo prompting and clarification UI in CLI layer, not index.ts
+- [Phase 15]: vi.fn() constructor mocks require regular function syntax, not arrow functions (arrow fns cannot be called with new)
+- [Phase 15]: oneShotCommand returns 0 on user cancel (clarification or confirm loop) — clean exits, not errors
 
 ### Pending Todos
 
@@ -76,7 +79,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-20T15:27:00Z
-Stopped at: Completed Phase 15, Plan 02
-Resume file: .planning/phases/15-intent-parser-one-shot-mode/15-02-SUMMARY.md
+Last session: 2026-03-20T15:21:49.505Z
+Stopped at: Completed Phase 15, Plan 03 (parseIntent coordinator + one-shot CLI command)
+Resume file: None
 Next action: Execute Phase 15, Plan 03 (coordinator parseIntent + one-shot CLI command)
