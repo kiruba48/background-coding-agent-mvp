@@ -12,8 +12,9 @@ program
   .name('background-agent')
   .description('Run background coding agent using Claude Agent SDK')
   .version('0.1.0')
-  .requiredOption('-t, --task-type <type>', 'Task type (e.g., maven-dependency-update, npm-dependency-update)')
-  .requiredOption('-r, --repo <path>', 'Target repository path (absolute or relative)')
+  .argument('[input]', 'Natural language task description (one-shot mode)')
+  .option('-t, --task-type <type>', 'Task type (e.g., maven-dependency-update, npm-dependency-update)')
+  .option('-r, --repo <path>', 'Target repository path (absolute or relative)')
   .option('--turn-limit <number>', 'Maximum agent turns (default: 10)', '10')
   .option('--timeout <seconds>', 'Session timeout in seconds (default: 300)', '300')
   .option('--max-retries <number>', 'Maximum retry attempts on verification failure (default: 3)', '3')
@@ -22,89 +23,8 @@ program
   .option('--branch <name>', 'Branch name for the PR (default: auto-generated from task type). Only valid with --create-pr')
   .option('--dep <name>', 'Dependency to update (e.g., org.springframework:spring-core for Maven, lodash for npm)')
   .option('--target-version <version>', 'Target version for dependency update')
-  .action(async (options) => {
-    // Validate turn-limit
-    const turnLimit = parseInt(options.turnLimit, 10);
-    if (isNaN(turnLimit) || turnLimit < 1 || turnLimit > 100) {
-      console.error(pc.red('Error: --turn-limit must be a number between 1 and 100'));
-      process.exit(2);
-    }
-
-    // Validate timeout
-    const timeout = parseInt(options.timeout, 10);
-    if (isNaN(timeout) || timeout < 30 || timeout > 3600) {
-      console.error(pc.red('Error: --timeout must be a number between 30 and 3600 seconds'));
-      process.exit(2);
-    }
-
-    // Validate max-retries
-    const maxRetries = parseInt(options.maxRetries, 10);
-    if (isNaN(maxRetries) || maxRetries < 1 || maxRetries > 10) {
-      console.error(pc.red('Error: --max-retries must be a number between 1 and 10'));
-      process.exit(2);
-    }
-
-    // Validate repo path exists
-    try {
-      await fs.access(options.repo);
-    } catch {
-      console.error(pc.red(`Error: Repository path does not exist: ${options.repo}`));
-      process.exit(2);
-    }
-
-    // Validate --branch requires --create-pr
-    if (options.branch && !options.createPr) {
-      console.error(pc.red('Error: --branch requires --create-pr'));
-      process.exit(2);
-    }
-
-    // Validate GITHUB_TOKEN is set when --create-pr is used
-    if (options.createPr && !process.env.GITHUB_TOKEN) {
-      console.error(pc.red('Error: GITHUB_TOKEN environment variable is required for --create-pr'));
-      process.exit(2);
-    }
-
-    // Validate --dep and --target-version for task types that require them
-    const depRequiringTaskTypes = ['maven-dependency-update', 'npm-dependency-update'];
-    if (depRequiringTaskTypes.includes(options.taskType)) {
-      if (!options.dep) {
-        console.error(pc.red('Error: --dep is required for task type: ' + options.taskType));
-        process.exit(2);
-      }
-      if (!options.targetVersion) {
-        console.error(pc.red('Error: --target-version is required for task type: ' + options.taskType));
-        process.exit(2);
-      }
-      // Validate --dep format: task-type-aware
-      if (options.taskType === 'maven-dependency-update') {
-        // Maven: strict groupId:artifactId format (alphanumeric, dots, hyphens, underscores)
-        const depPattern = /^[a-zA-Z0-9._-]+:[a-zA-Z0-9._-]+$/;
-        if (!depPattern.test(options.dep)) {
-          console.error(pc.red('Error: --dep must be in groupId:artifactId format (e.g., org.springframework:spring-core)'));
-          process.exit(2);
-        }
-      } else if (options.taskType === 'npm-dependency-update') {
-        // npm: validate against npm package name spec (scoped and unscoped)
-        const npmPkgPattern = /^(@[a-z0-9\-~][a-z0-9._\-~]*\/)?[a-z0-9\-~][a-z0-9._\-~]*$/;
-        if (!npmPkgPattern.test(options.dep) || options.dep.length > 214) {
-          console.error(pc.red('Error: --dep must be a valid npm package name (e.g., lodash, @types/node)'));
-          process.exit(2);
-        }
-      }
-      // Validate --target-version: reject control characters and newlines
-      const versionPattern = /^[a-zA-Z0-9._\-+]+$/;
-      if (!versionPattern.test(options.targetVersion)) {
-        console.error(pc.red('Error: --target-version contains invalid characters'));
-        process.exit(2);
-      }
-    }
-
-    // Auto-register the target repo as a project (not cwd — user may run from agent's own directory)
-    const registry = new ProjectRegistry();
-    const resolvedRepo = (await import('node:path')).resolve(options.repo);
-    await autoRegisterCwd(registry, resolvedRepo);
-
-    // Create AbortController at CLI level for signal handling
+  .action(async (input: string | undefined, options: Record<string, unknown>) => {
+    // Create AbortController at CLI level for signal handling — shared by both paths
     const abortController = new AbortController();
 
     // Track run promise for clean shutdown
@@ -133,9 +53,114 @@ program
     process.on('SIGINT', () => handleSignal(130));
     process.on('SIGTERM', () => handleSignal(143));
 
+    // NL one-shot path: positional input present
+    if (input) {
+      const { oneShotCommand } = await import('./commands/one-shot.js');
+      runPromise = oneShotCommand(input, {
+        repo: options.repo as string | undefined,
+        createPr: options.createPr === true,
+        branch: options.branch as string | undefined,
+        noJudge: options.judge === false,
+        turnLimit: options.turnLimit as string | undefined,
+        timeout: options.timeout as string | undefined,
+        maxRetries: options.maxRetries as string | undefined,
+      }, abortController.signal);
+
+      const exitCode = await runPromise;
+      process.exit(exitCode);
+      return;
+    }
+
+    // Legacy flag-based path — require -t and -r
+    if (!options.taskType || !options.repo) {
+      program.help();
+      return;
+    }
+
+    // Validate turn-limit
+    const turnLimit = parseInt(options.turnLimit as string, 10);
+    if (isNaN(turnLimit) || turnLimit < 1 || turnLimit > 100) {
+      console.error(pc.red('Error: --turn-limit must be a number between 1 and 100'));
+      process.exit(2);
+    }
+
+    // Validate timeout
+    const timeout = parseInt(options.timeout as string, 10);
+    if (isNaN(timeout) || timeout < 30 || timeout > 3600) {
+      console.error(pc.red('Error: --timeout must be a number between 30 and 3600 seconds'));
+      process.exit(2);
+    }
+
+    // Validate max-retries
+    const maxRetries = parseInt(options.maxRetries as string, 10);
+    if (isNaN(maxRetries) || maxRetries < 1 || maxRetries > 10) {
+      console.error(pc.red('Error: --max-retries must be a number between 1 and 10'));
+      process.exit(2);
+    }
+
+    // Validate repo path exists
+    try {
+      await fs.access(options.repo as string);
+    } catch {
+      console.error(pc.red(`Error: Repository path does not exist: ${options.repo}`));
+      process.exit(2);
+    }
+
+    // Validate --branch requires --create-pr
+    if (options.branch && !options.createPr) {
+      console.error(pc.red('Error: --branch requires --create-pr'));
+      process.exit(2);
+    }
+
+    // Validate GITHUB_TOKEN is set when --create-pr is used
+    if (options.createPr && !process.env.GITHUB_TOKEN) {
+      console.error(pc.red('Error: GITHUB_TOKEN environment variable is required for --create-pr'));
+      process.exit(2);
+    }
+
+    // Validate --dep and --target-version for task types that require them
+    const depRequiringTaskTypes = ['maven-dependency-update', 'npm-dependency-update'];
+    if (depRequiringTaskTypes.includes(options.taskType as string)) {
+      if (!options.dep) {
+        console.error(pc.red('Error: --dep is required for task type: ' + (options.taskType as string)));
+        process.exit(2);
+      }
+      if (!options.targetVersion) {
+        console.error(pc.red('Error: --target-version is required for task type: ' + (options.taskType as string)));
+        process.exit(2);
+      }
+      // Validate --dep format: task-type-aware
+      if (options.taskType === 'maven-dependency-update') {
+        // Maven: strict groupId:artifactId format (alphanumeric, dots, hyphens, underscores)
+        const depPattern = /^[a-zA-Z0-9._-]+:[a-zA-Z0-9._-]+$/;
+        if (!depPattern.test(options.dep as string)) {
+          console.error(pc.red('Error: --dep must be in groupId:artifactId format (e.g., org.springframework:spring-core)'));
+          process.exit(2);
+        }
+      } else if (options.taskType === 'npm-dependency-update') {
+        // npm: validate against npm package name spec (scoped and unscoped)
+        const npmPkgPattern = /^(@[a-z0-9\-~][a-z0-9._\-~]*\/)?[a-z0-9\-~][a-z0-9._\-~]*$/;
+        if (!npmPkgPattern.test(options.dep as string) || (options.dep as string).length > 214) {
+          console.error(pc.red('Error: --dep must be a valid npm package name (e.g., lodash, @types/node)'));
+          process.exit(2);
+        }
+      }
+      // Validate --target-version: reject control characters and newlines
+      const versionPattern = /^[a-zA-Z0-9._\-+]+$/;
+      if (!versionPattern.test(options.targetVersion as string)) {
+        console.error(pc.red('Error: --target-version contains invalid characters'));
+        process.exit(2);
+      }
+    }
+
+    // Auto-register the target repo as a project (not cwd — user may run from agent's own directory)
+    const registry = new ProjectRegistry();
+    const resolvedRepo = (await import('node:path')).resolve(options.repo as string);
+    await autoRegisterCwd(registry, resolvedRepo);
+
     runPromise = runCommand({
-      taskType: options.taskType,
-      repo: options.repo,
+      taskType: options.taskType as string,
+      repo: options.repo as string,
       turnLimit,
       timeout,
       maxRetries,

@@ -22,16 +22,9 @@ vi.mock('../../agent/registry.js', () => ({
   ProjectRegistry: vi.fn(),
 }));
 
-// Mock readline/promises
-const mockQuestion = vi.fn();
-const mockClose = vi.fn();
-const mockRlInstance = {
-  question: mockQuestion,
-  close: mockClose,
-  on: vi.fn(),
-};
+// Mock readline/promises — factory cannot reference top-level variables (hoisting constraint)
 vi.mock('node:readline/promises', () => ({
-  createInterface: vi.fn().mockReturnValue(mockRlInstance),
+  createInterface: vi.fn(),
 }));
 
 import { oneShotCommand } from './one-shot.js';
@@ -45,14 +38,16 @@ const mockParseIntent = parseIntent as MockedFunction<typeof parseIntent>;
 const mockConfirmLoop = confirmLoop as MockedFunction<typeof confirmLoop>;
 const mockFastPathParse = fastPathParse as MockedFunction<typeof fastPathParse>;
 const mockRunAgent = runAgent as MockedFunction<typeof runAgent>;
-const mockAutoRegisterCwd = autoRegisterCwd as MockedFunction<typeof autoRegisterCwd>;
+// autoRegisterCwd is imported for side-effects; unused directly in assertions for now
+void (autoRegisterCwd as MockedFunction<typeof autoRegisterCwd>);
 const MockProjectRegistryCtor = ProjectRegistry as unknown as MockedFunction<new () => {
   resolve: MockedFunction<(name: string) => string | undefined>;
   list: MockedFunction<() => Record<string, string>>;
   register: MockedFunction<(name: string, path: string) => void>;
   has: MockedFunction<(name: string) => boolean>;
 }>;
-const mockCreateInterface = createInterface as MockedFunction<typeof createInterface>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockCreateInterface = createInterface as unknown as MockedFunction<(...args: any[]) => any>;
 
 const baseIntent: ResolvedIntent = {
   taskType: 'npm-dependency-update',
@@ -72,14 +67,38 @@ function makeRegistryInstance(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** Wrap registry instance as a constructor function (arrow fns can't be `new`-called) */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function makeRegistryCtor(instance: ReturnType<typeof makeRegistryInstance>): new () => any {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return function (this: any) {
+    return instance;
+  } as unknown as new () => any;
+}
+
+/** Create a readline mock instance that resolves question() with given answers in sequence */
+function makeRlMock(answers: string[]) {
+  let callIndex = 0;
+  const mockQuestion = vi.fn().mockImplementation(() => {
+    const answer = answers[callIndex] ?? '';
+    callIndex++;
+    return Promise.resolve(answer);
+  });
+  const rl = {
+    question: mockQuestion,
+    close: vi.fn(),
+    on: vi.fn().mockReturnThis(),
+  };
+  return rl;
+}
+
 describe('oneShotCommand', () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    // Setup readline mock
-    mockCreateInterface.mockReturnValue(mockRlInstance as any);
-    mockRlInstance.on.mockImplementation(() => mockRlInstance);
-    mockRlInstance.close.mockReset();
+    // Default readline: no questions will be asked (tests that don't need prompting)
+    const defaultRl = makeRlMock([]);
+    mockCreateInterface.mockReturnValue(defaultRl as any);
 
     // Default: fast-path returns null (no project extraction)
     mockFastPathParse.mockReturnValue(null);
@@ -98,9 +117,9 @@ describe('oneShotCommand', () => {
       verificationResults: [],
     });
 
-    // Default: registry with no registered projects
+    // Default: registry with no registered projects — but tests with repo provided won't need prompting
     const registryInstance = makeRegistryInstance();
-    MockProjectRegistryCtor.mockImplementation(() => registryInstance as any);
+    MockProjectRegistryCtor.mockImplementation(makeRegistryCtor(registryInstance));
   });
 
   describe('core happy path', () => {
@@ -213,7 +232,10 @@ describe('oneShotCommand', () => {
         ],
       };
       mockParseIntent.mockResolvedValueOnce(lowConfidenceIntent).mockResolvedValue(baseIntent);
-      mockQuestion.mockResolvedValueOnce('1'); // user picks option 1
+
+      // Setup readline to answer "1" for clarification choice
+      const rl = makeRlMock(['1']);
+      mockCreateInterface.mockReturnValue(rl as any);
 
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -235,7 +257,10 @@ describe('oneShotCommand', () => {
         ],
       };
       mockParseIntent.mockResolvedValueOnce(lowConfidenceIntent).mockResolvedValue(baseIntent);
-      mockQuestion.mockResolvedValueOnce('1'); // user picks option 1
+
+      // Setup readline to answer "1" for clarification choice
+      const rl = makeRlMock(['1']);
+      mockCreateInterface.mockReturnValue(rl as any);
 
       await oneShotCommand('update the chart lib', { repo: '/path' });
 
@@ -255,9 +280,14 @@ describe('oneShotCommand', () => {
         ],
       };
       mockParseIntent.mockResolvedValueOnce(lowConfidenceIntent);
-      mockQuestion.mockResolvedValueOnce('99'); // invalid choice
 
+      // Setup readline to answer invalid choice
+      const rl = makeRlMock(['99']);
+      mockCreateInterface.mockReturnValue(rl as any);
+
+      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
       const exitCode = await oneShotCommand('update the chart lib', { repo: '/path' });
+      consoleSpy.mockRestore();
 
       expect(exitCode).toBe(0);
       expect(mockRunAgent).not.toHaveBeenCalled();
@@ -272,10 +302,12 @@ describe('oneShotCommand', () => {
           otherapp: '/path/to/otherapp',
         }),
       });
-      MockProjectRegistryCtor.mockImplementation(() => registryInstance as any);
+      MockProjectRegistryCtor.mockImplementation(makeRegistryCtor(registryInstance));
       mockFastPathParse.mockReturnValue(null); // no project in NL
 
-      mockQuestion.mockResolvedValueOnce('1'); // user picks first project
+      // Setup readline to answer "1" for project selection
+      const rl = makeRlMock(['1']);
+      mockCreateInterface.mockReturnValue(rl as any);
 
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -292,10 +324,12 @@ describe('oneShotCommand', () => {
           myapp: '/path/to/myapp',
         }),
       });
-      MockProjectRegistryCtor.mockImplementation(() => registryInstance as any);
+      MockProjectRegistryCtor.mockImplementation(makeRegistryCtor(registryInstance));
       mockFastPathParse.mockReturnValue(null);
 
-      mockQuestion.mockResolvedValueOnce('1'); // user picks myapp
+      // Setup readline to answer "1" (picks myapp)
+      const rl = makeRlMock(['1']);
+      mockCreateInterface.mockReturnValue(rl as any);
 
       await oneShotCommand('update recharts', {});
 
@@ -309,10 +343,12 @@ describe('oneShotCommand', () => {
       const registryInstance = makeRegistryInstance({
         list: vi.fn().mockReturnValue({}), // no registered projects
       });
-      MockProjectRegistryCtor.mockImplementation(() => registryInstance as any);
+      MockProjectRegistryCtor.mockImplementation(makeRegistryCtor(registryInstance));
       mockFastPathParse.mockReturnValue(null);
 
-      mockQuestion.mockResolvedValueOnce('/my/local/project'); // user enters path
+      // Setup readline to answer path
+      const rl = makeRlMock(['/my/local/project']);
+      mockCreateInterface.mockReturnValue(rl as any);
 
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -330,10 +366,11 @@ describe('oneShotCommand', () => {
         list: vi.fn().mockReturnValue({}), // no registered projects
         register: vi.fn(),
       });
-      MockProjectRegistryCtor.mockImplementation(() => registryInstance as any);
+      MockProjectRegistryCtor.mockImplementation(makeRegistryCtor(registryInstance));
       mockFastPathParse.mockReturnValue(null);
 
-      mockQuestion.mockResolvedValueOnce('/my/local/project');
+      const rl = makeRlMock(['/my/local/project']);
+      mockCreateInterface.mockReturnValue(rl as any);
 
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -351,12 +388,13 @@ describe('oneShotCommand', () => {
         resolve: vi.fn().mockReturnValue(undefined), // project not in registry
         list: vi.fn().mockReturnValue({}),
       });
-      MockProjectRegistryCtor.mockImplementation(() => registryInstance as any);
+      MockProjectRegistryCtor.mockImplementation(makeRegistryCtor(registryInstance));
 
       // fast-path extracts project name from NL
       mockFastPathParse.mockReturnValue({ dep: 'recharts', version: 'latest', project: 'unknownapp' });
 
-      mockQuestion.mockResolvedValueOnce('/path/to/unknownapp');
+      const rl = makeRlMock(['/path/to/unknownapp']);
+      mockCreateInterface.mockReturnValue(rl as any);
 
       const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
