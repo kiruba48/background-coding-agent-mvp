@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { MockedFunction } from 'vitest';
-import type { FastPathResult, IntentResult, ResolvedIntent } from './types.js';
+import type { FastPathResult } from './types.js';
+import type { ProjectRegistry as ProjectRegistryType } from '../agent/registry.js';
 
 // Mock all dependencies before importing parseIntent
 vi.mock('./fast-path.js', () => ({
@@ -17,36 +18,39 @@ vi.mock('./llm-parser.js', () => ({
   llmParse: vi.fn(),
 }));
 
-vi.mock('../agent/registry.js', () => ({
-  ProjectRegistry: vi.fn().mockImplementation(() => ({
-    resolve: vi.fn().mockReturnValue(undefined),
-    list: vi.fn().mockReturnValue({}),
-    register: vi.fn(),
-    has: vi.fn().mockReturnValue(false),
-  })),
-}));
-
 import { parseIntent } from './index.js';
 import { fastPathParse, validateDepInManifest, detectTaskType } from './fast-path.js';
 import { readManifestDeps } from './context-scanner.js';
 import { llmParse } from './llm-parser.js';
-import { ProjectRegistry } from '../agent/registry.js';
 
 const mockFastPathParse = fastPathParse as MockedFunction<typeof fastPathParse>;
 const mockValidateDepInManifest = validateDepInManifest as MockedFunction<typeof validateDepInManifest>;
 const mockDetectTaskType = detectTaskType as MockedFunction<typeof detectTaskType>;
 const mockReadManifestDeps = readManifestDeps as MockedFunction<typeof readManifestDeps>;
 const mockLlmParse = llmParse as MockedFunction<typeof llmParse>;
-const MockProjectRegistry = ProjectRegistry as unknown as MockedFunction<() => {
-  resolve: MockedFunction<(name: string) => string | undefined>;
-  list: MockedFunction<() => Record<string, string>>;
-  register: MockedFunction<(name: string, path: string) => void>;
-  has: MockedFunction<(name: string) => boolean>;
-}>;
+
+/** Create a stub registry instance for injection via ParseOptions.registry */
+function makeRegistry(overrides: Partial<{
+  resolve: (name: string) => string | undefined;
+  list: () => Record<string, string>;
+  register: (name: string, path: string) => void;
+  has: (name: string) => boolean;
+}> = {}): ProjectRegistryType {
+  return {
+    resolve: vi.fn().mockReturnValue(undefined),
+    list: vi.fn().mockReturnValue({}),
+    register: vi.fn(),
+    has: vi.fn().mockReturnValue(false),
+    remove: vi.fn().mockReturnValue(false),
+    configPath: '/tmp/test-registry',
+    ...overrides,
+  } as unknown as ProjectRegistryType;
+}
 
 describe('parseIntent coordinator', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+
     // Default: fast-path returns null, LLM returns a result
     mockFastPathParse.mockReturnValue(null);
     mockValidateDepInManifest.mockResolvedValue(false);
@@ -68,7 +72,8 @@ describe('parseIntent coordinator', () => {
       mockValidateDepInManifest.mockResolvedValue(true);
       mockDetectTaskType.mockResolvedValue('npm-dependency-update');
 
-      const result = await parseIntent('update recharts', { repoPath: '/path/to/repo' });
+      const registry = makeRegistry();
+      const result = await parseIntent('update recharts', { repoPath: '/path/to/repo', registry });
 
       expect(result.taskType).toBe('npm-dependency-update');
       expect(result.dep).toBe('recharts');
@@ -87,7 +92,8 @@ describe('parseIntent coordinator', () => {
       mockValidateDepInManifest.mockResolvedValue(true);
       mockDetectTaskType.mockResolvedValue('npm-dependency-update');
 
-      await parseIntent('update recharts to 2.0.0', { repoPath: '/my/project' });
+      const registry = makeRegistry();
+      await parseIntent('update recharts to 2.0.0', { repoPath: '/my/project', registry });
 
       expect(mockValidateDepInManifest).toHaveBeenCalledWith('/my/project', 'recharts');
     });
@@ -99,7 +105,8 @@ describe('parseIntent coordinator', () => {
       mockFastPathParse.mockReturnValue(fastResult);
       mockValidateDepInManifest.mockResolvedValue(false); // dep not in manifest
 
-      await parseIntent('update unknown-dep', { repoPath: '/path/to/repo' });
+      const registry = makeRegistry();
+      await parseIntent('update unknown-dep', { repoPath: '/path/to/repo', registry });
 
       expect(mockLlmParse).toHaveBeenCalledOnce();
     });
@@ -122,7 +129,8 @@ describe('parseIntent coordinator', () => {
       });
       mockFastPathParse.mockReturnValue(null);
 
-      await parseIntent('fix the login bug', { repoPath: '/path' });
+      const registry = makeRegistry();
+      await parseIntent('fix the login bug', { repoPath: '/path', registry });
 
       expect(callOrder).toEqual(['readManifestDeps', 'llmParse']);
     });
@@ -131,7 +139,8 @@ describe('parseIntent coordinator', () => {
       mockFastPathParse.mockReturnValue(null);
       mockReadManifestDeps.mockResolvedValue('package.json dependencies: react, recharts');
 
-      await parseIntent('update recharts', { repoPath: '/path' });
+      const registry = makeRegistry();
+      await parseIntent('update recharts', { repoPath: '/path', registry });
 
       expect(mockLlmParse).toHaveBeenCalledWith('update recharts', 'package.json dependencies: react, recharts');
     });
@@ -142,7 +151,8 @@ describe('parseIntent coordinator', () => {
       mockValidateDepInManifest.mockResolvedValue(true);
       mockDetectTaskType.mockResolvedValue(null); // ambiguous — both or neither manifest
 
-      await parseIntent('update recharts', { repoPath: '/path' });
+      const registry = makeRegistry();
+      await parseIntent('update recharts', { repoPath: '/path', registry });
 
       expect(mockLlmParse).toHaveBeenCalledOnce();
     });
@@ -152,7 +162,8 @@ describe('parseIntent coordinator', () => {
     it('calls LLM when fast-path returns null', async () => {
       mockFastPathParse.mockReturnValue(null);
 
-      const result = await parseIntent('fix the login bug', { repoPath: '/path' });
+      const registry = makeRegistry();
+      const result = await parseIntent('fix the login bug', { repoPath: '/path', registry });
 
       expect(mockLlmParse).toHaveBeenCalledOnce();
       expect(result.taskType).toBe('npm-dependency-update'); // from mocked LLM
@@ -168,7 +179,8 @@ describe('parseIntent coordinator', () => {
         clarifications: [],
       });
 
-      const result = await parseIntent('fix the login bug', { repoPath: '/path' });
+      const registry = makeRegistry();
+      const result = await parseIntent('fix the login bug', { repoPath: '/path', registry });
 
       expect(result.taskType).toBe('fix the login bug'); // raw input as task description
     });
@@ -176,41 +188,35 @@ describe('parseIntent coordinator', () => {
 
   describe('project name resolution from NL', () => {
     it('resolves project name via registry when fast-path extracts it', async () => {
-      const mockRegistry = {
+      const registry = makeRegistry({
         resolve: vi.fn().mockReturnValue('/registered/myapp/path'),
         list: vi.fn().mockReturnValue({ myapp: '/registered/myapp/path' }),
-        register: vi.fn(),
         has: vi.fn().mockReturnValue(true),
-      };
-      MockProjectRegistry.mockImplementation(() => mockRegistry as any);
+      });
 
       const fastResult: FastPathResult = { dep: 'recharts', version: 'latest', project: 'myapp' };
       mockFastPathParse.mockReturnValue(fastResult);
       mockValidateDepInManifest.mockResolvedValue(true);
       mockDetectTaskType.mockResolvedValue('npm-dependency-update');
 
-      const result = await parseIntent('update recharts in myapp', {});
+      const result = await parseIntent('update recharts in myapp', { registry });
 
       // Registry is consulted and path resolved
-      expect(mockRegistry.resolve).toHaveBeenCalledWith('myapp');
+      expect((registry.resolve as MockedFunction<typeof registry.resolve>)).toHaveBeenCalledWith('myapp');
       expect(result.repo).toBe('/registered/myapp/path');
     });
 
     it('uses options.repoPath over NL project name when both present', async () => {
-      const mockRegistry = {
+      const registry = makeRegistry({
         resolve: vi.fn().mockReturnValue('/from/registry'),
-        list: vi.fn().mockReturnValue({}),
-        register: vi.fn(),
-        has: vi.fn().mockReturnValue(false),
-      };
-      MockProjectRegistry.mockImplementation(() => mockRegistry as any);
+      });
 
       const fastResult: FastPathResult = { dep: 'recharts', version: 'latest', project: 'myapp' };
       mockFastPathParse.mockReturnValue(fastResult);
       mockValidateDepInManifest.mockResolvedValue(true);
       mockDetectTaskType.mockResolvedValue('npm-dependency-update');
 
-      const result = await parseIntent('update recharts in myapp', { repoPath: '/explicit/path' });
+      const result = await parseIntent('update recharts in myapp', { repoPath: '/explicit/path', registry });
 
       // Explicit repoPath takes priority
       expect(result.repo).toBe('/explicit/path');
@@ -231,7 +237,8 @@ describe('parseIntent coordinator', () => {
         ],
       });
 
-      const result = await parseIntent('update the chart lib', { repoPath: '/path' });
+      const registry = makeRegistry();
+      const result = await parseIntent('update the chart lib', { repoPath: '/path', registry });
 
       expect(result.confidence).toBe('low');
       expect(result.clarifications).toEqual([
@@ -250,7 +257,8 @@ describe('parseIntent coordinator', () => {
         clarifications: [],
       });
 
-      const result = await parseIntent('update recharts', { repoPath: '/path' });
+      const registry = makeRegistry();
+      const result = await parseIntent('update recharts', { repoPath: '/path', registry });
 
       expect(result.confidence).toBe('high');
       expect(result.clarifications).toBeUndefined();
@@ -266,7 +274,8 @@ describe('parseIntent coordinator', () => {
         clarifications: [], // empty
       });
 
-      const result = await parseIntent('do something vague', { repoPath: '/path' });
+      const registry = makeRegistry();
+      const result = await parseIntent('do something vague', { repoPath: '/path', registry });
 
       expect(result.clarifications).toBeUndefined();
     });
@@ -284,7 +293,8 @@ describe('parseIntent coordinator', () => {
       mockFastPathParse.mockReturnValue(fastResult);
       mockDetectTaskType.mockResolvedValue('npm-dependency-update');
 
-      await parseIntent('update recharts', { repoPath: '/explicit/repo' });
+      const registry = makeRegistry();
+      await parseIntent('update recharts', { repoPath: '/explicit/repo', registry });
 
       // validateDepInManifest should be called with the fully resolved path
       expect(callsWithRepoPath[0]).toBe('/explicit/repo');
