@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.1
 milestone_name: Conversational Mode
 status: executing
-stopped_at: Completed 16-01-PLAN.md
-last_updated: "2026-03-20T19:57:27.533Z"
+stopped_at: Completed 16-02-PLAN.md
+last_updated: "2026-03-20T20:02:11.385Z"
 last_activity: 2026-03-20 — Phase 15 Plan 02 complete (LLM parser, confirm loop, prompt sentinel handling)
 progress:
   total_phases: 4
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 8
-  completed_plans: 7
+  completed_plans: 8
   percent: 33
 ---
 
@@ -69,6 +69,8 @@ Progress: [███░░░░░░░] 33% (v2.1)
 - [Phase 15]: oneShotCommand returns 0 on user cancel (clarification or confirm loop) — clean exits, not errors
 - [Phase 16-01]: SessionCallbacks callback injection pattern decouples I/O (readline) from session logic — enables CLI, Slack, MCP adapters to share processInput()
 - [Phase 16-01]: skipDockerChecks: true passed by REPL session core — Docker checks run once at REPL startup by CLI adapter
+- [Phase 16-02]: REPL guard in index.ts placed BEFORE AbortController and process signal handlers — readline owns SIGINT in REPL mode
+- [Phase 16-02]: Dynamic import('./commands/repl.js') in index.ts — nanospinner and REPL code loaded only when needed
 
 ### Pending Todos
 
@@ -81,7 +83,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-20T19:57:27.531Z
-Stopped at: Completed 16-01-PLAN.md
+Last session: 2026-03-20T20:02:11.383Z
+Stopped at: Completed 16-02-PLAN.md
 Resume file: None
 Next action: Execute Phase 15, Plan 03 (coordinator parseIntent + one-shot CLI command)
