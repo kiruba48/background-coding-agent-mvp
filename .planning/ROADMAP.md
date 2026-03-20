@@ -83,7 +83,12 @@ Plans:
   3. Before executing, the user sees the proposed plan and is prompted to confirm or redirect; the agent does not run until the user confirms
   4. When the intent is ambiguous, the user is asked exactly one targeted clarification question rather than failing or guessing
   5. Package.json or pom.xml data is read from the repo and injected as structured context before the intent parser makes an LLM call on ambiguous input
-**Plans**: TBD
+**Plans:** 3 plans
+
+Plans:
+- [ ] 15-01-PLAN.md — Intent types, fast-path regex parser, and context scanner
+- [ ] 15-02-PLAN.md — LLM parser, confirm loop, and "latest" sentinel handling
+- [ ] 15-03-PLAN.md — parseIntent() coordinator, one-shot CLI command, and CLI routing
 
 ### Phase 16: Interactive REPL
 **Goal**: Users can start an interactive session with no arguments and issue multiple tasks conversationally, with correct signal handling and no per-task Docker startup pause
@@ -124,7 +129,7 @@ Plans:
 | 11. Legacy Deletion | v2.0 | 2/2 | Complete | 2026-03-18 |
 | 12. MCP Verifier Server | v2.0 | 2/2 | Complete | 2026-03-18 |
 | 13. Container Strategy | v2.0 | 2/2 | Complete | 2026-03-19 |
-| 14. Infrastructure Foundation | 3/3 | Complete    | 2026-03-19 | - |
-| 15. Intent Parser + One-Shot Mode | v2.1 | 0/? | Not started | - |
+| 14. Infrastructure Foundation | v2.1 | 3/3 | Complete | 2026-03-19 |
+| 15. Intent Parser + One-Shot Mode | v2.1 | 0/3 | Not started | - |
 | 16. Interactive REPL | v2.1 | 0/? | Not started | - |
 | 17. Multi-Turn Session Context | v2.1 | 0/? | Not started | - |
