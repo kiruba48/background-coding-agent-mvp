@@ -1,72 +1,65 @@
 # Requirements: Background Coding Agent
 
-**Defined:** 2026-03-16
+**Defined:** 2026-03-19
 **Core Value:** The full verification loop must work: agent changes code, deterministic verifiers catch failures, LLM Judge catches scope creep, and only verified changes proceed.
 
-## v2.0 Requirements
+## v2.1 Requirements
 
-Requirements for Claude Agent SDK migration. Each maps to roadmap phases.
+Requirements for conversational mode. Each maps to roadmap phases.
 
-### SDK Integration
+### Infrastructure
 
-- [x] **SDK-01**: Agent sessions use Claude Agent SDK `query()` instead of custom AgentSession/AgentClient
-- [x] **SDK-02**: Built-in tools (Read, Write, Edit, Bash, Glob, Grep) replace all 6 hand-built tools
-- [x] **SDK-03**: Permission mode `acceptEdits` auto-approves file operations without manual interception
-- [x] **SDK-04**: `disallowedTools` blocks WebSearch/WebFetch in sandbox runs
-- [x] **SDK-05**: `maxTurns` option replaces manual turn counter
-- [x] **SDK-06**: `systemPrompt` option replaces custom prompt construction
-- [x] **SDK-07**: PostToolUse hook logs every file change (Edit/Write) to audit trail
-- [x] **SDK-08**: PreToolUse hook blocks writes outside repo path and to sensitive files (.env, .git)
-- [x] **SDK-09**: `maxBudgetUsd` caps session cost as a hard USD limit
-- [x] **SDK-10**: `ClaudeCodeSession` wrapper returns `SessionResult` compatible with RetryOrchestrator interface
+- [x] **INFRA-01**: runAgent() extracted as importable function callable from REPL and one-shot paths
+- [x] **INFRA-02**: runAgent() accepts AbortSignal for graceful mid-task cancellation
 
-### Legacy Deletion
+### Intent Parsing
 
-- [x] **DEL-01**: `agent.ts` (AgentClient) deleted — replaced by Agent SDK built-in agentic loop
-- [x] **DEL-02**: `session.ts` (AgentSession) deleted — replaced by ClaudeCodeSession wrapper
-- [x] **DEL-03**: `container.ts` (ContainerManager) deleted — replaced by spawnClaudeCodeProcess
-- [x] **DEL-04**: `dockerode` dependency removed from package.json
-- [x] **DEL-05**: All tests for deleted files replaced with ClaudeCodeSession integration tests
+- [ ] **INTENT-01**: User can describe a task in natural language and get structured intent (task type, repo, dep, version)
+- [ ] **INTENT-02**: Obvious patterns (e.g. "update recharts") are resolved via fast-path heuristic without LLM call
+- [ ] **INTENT-03**: Intent parser reads package.json/pom.xml to inject repo context before parsing ambiguous input
 
-### MCP Verifier
+### CLI Modes
 
-- [x] **MCP-01**: In-process MCP server wraps compositeVerifier as `mcp__verifier__verify` tool
-- [x] **MCP-02**: Agent can call verify tool mid-session to self-check before stopping
-- [x] **MCP-03**: MCP server uses `createSdkMcpServer()` — no external process or HTTP server
+- [ ] **CLI-01**: User can run a single task via positional arg (bg-agent 'update recharts') and exit
+- [ ] **CLI-02**: User can start interactive REPL session with bg-agent (no args)
+- [ ] **CLI-03**: User sees parsed intent and proposed plan before execution, can confirm or redirect
 
-### Container Strategy
+### Project Registry
 
-- [x] **CTR-01**: Dockerfile runs Claude Agent SDK (Claude Code) inside Docker container
-- [x] **CTR-02**: `spawnClaudeCodeProcess` pipes stdio between host orchestrator and container
-- [x] **CTR-03**: Container maintains network isolation equivalent to v1.x `NetworkMode: none`
-- [x] **CTR-04**: Container runs as non-root user with minimal capabilities; API key injected at runtime via `-e` (not baked into image; host-side proxy deferred to v2.1)
+- [x] **REG-01**: User can register and resolve project short names to repo paths
+- [x] **REG-02**: Terminal sessions auto-register cwd into project registry on first use
+
+### Multi-Turn Sessions
+
+- [ ] **SESS-01**: REPL session maintains context from prior tasks for follow-up disambiguation
 
 ## Future Requirements
 
-Deferred to v2.1+. Tracked but not in current roadmap.
+Deferred to v2.2+.
 
-### Enhanced Capabilities
+### Multi-Turn Enhancement
 
-- **ENH-01**: WebSearch enabled for non-sandboxed runs (changelog lookups during dependency updates)
-- **ENH-02**: Subagent support (Agent tool) for parallel subtask execution
-- **ENH-03**: File checkpointing with `enableFileCheckpointing` and `rewindFiles()`
-- **ENH-04**: Effort control (`effort: 'low' | 'medium' | 'high'`) per task type
-- **ENH-05**: Custom verifier plugins (from v1.x backlog)
-- **ENH-06**: Cost per run metric tracking (from v1.x backlog)
+- **SESS-02**: Follow-up tasks can explicitly reference previous task results ("fix the errors from that")
+
+### Advanced CLI
+
+- **CLI-04**: Tab completion for project names and common task patterns
+- **CLI-05**: Command history persistence across REPL sessions
+
+### Integrations
+
+- **INTG-01**: Slack bot interface using same intent parser and project registry
+- **INTG-02**: --yes flag to auto-proceed for high-confidence parses (CI/scripting)
 
 ## Out of Scope
 
-Explicitly excluded. Documented to prevent scope creep.
-
 | Feature | Reason |
 |---------|--------|
-| `bypassPermissions` mode | Grants full system access; `acceptEdits` + `disallowedTools` is safer |
-| Session resume in retry loop | Context accumulation causes scope drift; fresh session per retry is correct pattern |
-| AskUserQuestion in batch mode | Blocks background execution; agent must work autonomously |
-| Stop hook for retry logic | Creates infinite loop risk; RetryOrchestrator is cleaner boundary |
-| `settingSources: ["user"]` | Imports operator's personal config into agent; breaks isolation |
-| Full `@anthropic-ai/sdk` removal | LLM Judge still needs it for structured output; keep for judge only |
-| Network proxy architecture | Complex Unix socket proxy; defer if simpler Docker networking suffices |
+| Shared workspace across multi-turn tasks | Breaks one-container-per-task isolation invariant |
+| Auto-execute without confirmation | Removes human-in-the-loop trust model |
+| Persistent cross-session context | Stale context causes misparses — sessions reset on restart |
+| Custom verifier plugins | Deferred from v2.0, not related to conversational mode |
+| Real-time streaming UI | CLI output sufficient for v2.1 |
 
 ## Traceability
 
@@ -74,34 +67,23 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SDK-01 | Phase 10 | Complete |
-| SDK-02 | Phase 10 | Complete |
-| SDK-03 | Phase 10 | Complete |
-| SDK-04 | Phase 10 | Complete |
-| SDK-05 | Phase 10 | Complete |
-| SDK-06 | Phase 10 | Complete |
-| SDK-07 | Phase 10 | Complete |
-| SDK-08 | Phase 10 | Complete |
-| SDK-09 | Phase 10 | Complete |
-| SDK-10 | Phase 10 | Complete |
-| DEL-01 | Phase 11 | Complete |
-| DEL-02 | Phase 11 | Complete |
-| DEL-03 | Phase 11 | Complete |
-| DEL-04 | Phase 11 | Complete |
-| DEL-05 | Phase 11 | Complete |
-| MCP-01 | Phase 12 | Complete |
-| MCP-02 | Phase 12 | Complete |
-| MCP-03 | Phase 12 | Complete |
-| CTR-01 | Phase 13 | Complete |
-| CTR-02 | Phase 13 | Complete |
-| CTR-03 | Phase 13 | Complete |
-| CTR-04 | Phase 13 | Complete |
+| INFRA-01 | Phase 14 | Complete |
+| INFRA-02 | Phase 14 | Complete |
+| REG-01 | Phase 14 | Complete |
+| REG-02 | Phase 14 | Complete |
+| INTENT-01 | Phase 15 | Pending |
+| INTENT-02 | Phase 15 | Pending |
+| INTENT-03 | Phase 15 | Pending |
+| CLI-01 | Phase 15 | Pending |
+| CLI-03 | Phase 15 | Pending |
+| CLI-02 | Phase 16 | Pending |
+| SESS-01 | Phase 17 | Pending |
 
 **Coverage:**
-- v2.0 requirements: 22 total
-- Mapped to phases: 22
-- Unmapped: 0 ✓
+- v2.1 requirements: 11 total
+- Mapped to phases: 11
+- Unmapped: 0
 
 ---
-*Requirements defined: 2026-03-16*
-*Last updated: 2026-03-16 after roadmap creation*
+*Requirements defined: 2026-03-19*
+*Last updated: 2026-03-19 after roadmap creation*

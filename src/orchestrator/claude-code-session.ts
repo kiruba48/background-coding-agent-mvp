@@ -234,8 +234,9 @@ export class ClaudeCodeSession {
    *
    * @param userMessage - The end-state prompt describing the desired outcome
    * @param logger - Optional Pino logger for structured logging and audit events
+   * @param signal - Optional AbortSignal for graceful cancellation
    */
-  async run(userMessage: string, logger?: pino.Logger): Promise<SessionResult> {
+  async run(userMessage: string, logger?: pino.Logger, signal?: AbortSignal): Promise<SessionResult> {
     const log = logger ?? pino({ level: 'silent' });
     const sessionId = crypto.randomUUID();
     const containerName = `agent-${sessionId}`;
@@ -245,6 +246,19 @@ export class ClaudeCodeSession {
 
     this.abortController = new AbortController();
 
+    // Fast-path: if external signal is already aborted, return immediately
+    if (signal?.aborted) {
+      this.abortController = null;
+      return {
+        sessionId,
+        status: 'cancelled' as const,
+        toolCallCount: 0,
+        duration: 0,
+        finalResponse: '',
+        error: 'Cancelled before start',
+      };
+    }
+
     // Timeout guard — aborts SDK query when timeoutMs elapses
     const timeoutMs = this.config.timeoutMs ?? 300_000;
     let timedOut = false;
@@ -253,6 +267,33 @@ export class ClaudeCodeSession {
       log.warn({ sessionId, toolCallCount: toolCallCounter.count }, 'Session timeout reached');
       this.abortController?.abort();
     }, timeoutMs);
+
+    // Track whether the session has exited (to avoid redundant docker kill in grace handler)
+    let sessionSettled = false;
+    let graceTimerHandle: ReturnType<typeof setTimeout> | undefined;
+
+    // Thread external AbortSignal: signal SDK abort, then start a 5-second grace period
+    // before calling docker kill (in case SDK abort doesn't cause session to exit cleanly)
+    if (signal) {
+      signal.addEventListener('abort', () => {
+        // Step 1: signal abort to SDK
+        this.abortController?.abort();
+
+        // Step 2: 5-second grace period — if session hasn't exited, force-kill container
+        // Per locked decision: "signal abort to SDK, wait 5s for graceful shutdown, then docker kill"
+        if (!sessionSettled) {
+          graceTimerHandle = setTimeout(async () => {
+            if (!sessionSettled) {
+              try {
+                await execFileAsync('docker', ['kill', containerName], { timeout: 5000 });
+              } catch {
+                // Container may have already exited — ignore
+              }
+            }
+          }, 5000);
+        }
+      }, { once: true });
+    }
 
     // Inside Docker, the workspace is mounted at /workspace
     const containerWorkspaceDir = '/workspace';
@@ -336,6 +377,17 @@ export class ClaudeCodeSession {
       return mapSDKResult(finalResult, sessionId, toolCallCounter.count, Date.now() - startTime, log);
 
     } catch (err) {
+      // Check external signal BEFORE timedOut — cancellation takes priority
+      if (signal?.aborted) {
+        return {
+          sessionId,
+          status: 'cancelled',
+          toolCallCount: toolCallCounter.count,
+          duration: Date.now() - startTime,
+          finalResponse: '',
+          error: 'Session cancelled via AbortSignal',
+        };
+      }
       if (timedOut) {
         return {
           sessionId,
@@ -357,13 +409,16 @@ export class ClaudeCodeSession {
         error: errMsg,
       };
     } finally {
+      // Mark session as settled so grace period handler skips redundant docker kill
+      sessionSettled = true;
       clearTimeout(timeoutHandle);
+      if (graceTimerHandle) clearTimeout(graceTimerHandle);
       // Close generator to prevent subprocess leaks (Pitfall 3)
       if (queryGen) {
         try { await queryGen.return(undefined); } catch {}
       }
       this.abortController = null;
-      // Docker kill fallback — ensure no zombie containers
+      // Docker kill fallback — ensure no zombie containers (always runs)
       try {
         await execFileAsync('docker', ['kill', containerName], { timeout: 5000 });
       } catch {

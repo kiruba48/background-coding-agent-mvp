@@ -6,6 +6,7 @@ export interface SessionConfig {
   turnLimit?: number;    // default: 10
   timeoutMs?: number;    // default: 300000 (5 minutes)
   logger?: pino.Logger;
+  signal?: AbortSignal;  // external cancellation signal
 }
 
 /**
@@ -13,7 +14,7 @@ export interface SessionConfig {
  */
 export interface SessionResult {
   sessionId: string;
-  status: 'success' | 'failed' | 'timeout' | 'turn_limit';
+  status: 'success' | 'failed' | 'timeout' | 'turn_limit' | 'cancelled';
   toolCallCount: number;
   duration: number;      // milliseconds
   finalResponse: string; // Claude's final text response
@@ -70,7 +71,7 @@ export interface RetryConfig {
  * Result from a full retry-orchestrated run (may include multiple session attempts).
  */
 export interface RetryResult {
-  finalStatus: 'success' | 'failed' | 'timeout' | 'turn_limit' | 'max_retries_exhausted' | 'vetoed';
+  finalStatus: 'success' | 'failed' | 'timeout' | 'turn_limit' | 'max_retries_exhausted' | 'vetoed' | 'cancelled';
   attempts: number;           // 1-indexed, always >= 1
   sessionResults: SessionResult[];
   verificationResults: VerificationResult[];

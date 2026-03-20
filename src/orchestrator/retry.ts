@@ -1,8 +1,12 @@
 import pino from 'pino';
+import { promisify } from 'node:util';
+import { execFile } from 'node:child_process';
 import { type SessionConfig, SessionResult, RetryConfig, RetryResult, VerificationResult, JudgeResult } from '../types.js';
 import { ClaudeCodeSession } from './claude-code-session.js';
 import { captureBaselineSha } from './judge.js';
 import { ErrorSummarizer } from './summarizer.js';
+
+const execFileAsync = promisify(execFile);
 
 /**
  * RetryOrchestrator wraps ClaudeCodeSession in an outer retry loop.
@@ -52,11 +56,22 @@ export class RetryOrchestrator {
     const verificationResults: VerificationResult[] = [];
     const judgeResults: JudgeResult[] = [];
 
+    // Fast-path: if signal is already aborted before any work starts
+    if (this.config.signal?.aborted) {
+      return { finalStatus: 'cancelled', attempts: 0, sessionResults, verificationResults, judgeResults };
+    }
+
     // Capture HEAD SHA before agent runs so the Judge diffs against the exact
     // pre-agent state — prevents false vetoes from prior commits in the repo.
     const baselineSha = await captureBaselineSha(this.config.workspaceDir);
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      // Check signal at start of each loop iteration
+      if (this.config.signal?.aborted) {
+        await this.resetWorkspace(this.config.workspaceDir, baselineSha, logger);
+        return { finalStatus: 'cancelled', attempts: attempt - 1, sessionResults, verificationResults, judgeResults };
+      }
+
       logger?.info({ attempt, maxRetries }, 'Starting retry attempt');
 
       // Build message: attempt 1 uses originalTask as-is, subsequent attempts
@@ -74,7 +89,7 @@ export class RetryOrchestrator {
       let sessionResult: SessionResult;
       try {
         await session.start();
-        sessionResult = await session.run(message, logger);
+        sessionResult = await session.run(message, logger, this.config.signal);
       } finally {
         // Always clean up session, even on error (including start() failures)
         await session.stop();
@@ -82,6 +97,18 @@ export class RetryOrchestrator {
       }
 
       sessionResults.push(sessionResult);
+
+      // Cancellation: reset workspace and return immediately
+      if (sessionResult.status === 'cancelled') {
+        await this.resetWorkspace(this.config.workspaceDir, baselineSha, logger);
+        return {
+          finalStatus: 'cancelled',
+          attempts: attempt,
+          sessionResults,
+          verificationResults,
+          judgeResults,
+        };
+      }
 
       // Session-level failures are terminal — do NOT retry.
       // timeout: task is too slow for current settings
@@ -243,6 +270,20 @@ export class RetryOrchestrator {
       judgeResults,
       error: `Verification still failing after ${maxRetries} attempts`,
     };
+  }
+
+  /**
+   * Reset the workspace to the baseline SHA on cancellation.
+   * Best-effort: errors are caught and ignored to not block cancellation flow.
+   */
+  private async resetWorkspace(workspaceDir: string, baselineSha: string | undefined, logger?: pino.Logger): Promise<void> {
+    if (!baselineSha) return;
+    try {
+      await execFileAsync('git', ['reset', '--hard', baselineSha], { cwd: workspaceDir, timeout: 10_000 });
+    } catch (err) {
+      // Best-effort reset — warn but don't throw (workspace may retain agent changes)
+      logger?.warn({ err, workspaceDir, baselineSha }, 'Failed to reset workspace after cancellation — agent changes may remain');
+    }
   }
 
   /**

@@ -1,7 +1,10 @@
 import { Command } from 'commander';
 import pc from 'picocolors';
 import { promises as fs } from 'fs';
-import { runAgent } from './commands/run.js';
+import { runCommand } from './commands/run.js';
+import { createProjectsCommand } from './commands/projects.js';
+import { autoRegisterCwd } from './auto-register.js';
+import { ProjectRegistry } from '../agent/registry.js';
 
 const program = new Command();
 
@@ -96,8 +99,41 @@ program
       }
     }
 
-    // Run agent with validated options
-    const exitCode = await runAgent({
+    // Auto-register the target repo as a project (not cwd — user may run from agent's own directory)
+    const registry = new ProjectRegistry();
+    const resolvedRepo = (await import('node:path')).resolve(options.repo);
+    await autoRegisterCwd(registry, resolvedRepo);
+
+    // Create AbortController at CLI level for signal handling
+    const abortController = new AbortController();
+
+    // Track run promise for clean shutdown
+    let runPromise: Promise<number> | null = null;
+
+    // Signal handlers live here at the CLI entry point — not in library code.
+    // Use process.on (not once) with a guard flag so double-signal (rapid Ctrl+C)
+    // triggers a force-exit instead of falling through to Node's default handler.
+    let shuttingDown = false;
+    const handleSignal = (code: number) => {
+      if (shuttingDown) {
+        // Second signal — force exit immediately
+        process.exit(code);
+      }
+      shuttingDown = true;
+      abortController.abort();
+      // Safety net: force exit after 10s if cleanup hangs
+      const forceTimer = setTimeout(() => process.exit(code), 10_000);
+      forceTimer.unref(); // don't block event loop from exiting naturally
+      if (runPromise) {
+        runPromise.catch(() => {}).then(() => process.exit(code));
+      } else {
+        process.exit(code);
+      }
+    };
+    process.on('SIGINT', () => handleSignal(130));
+    process.on('SIGTERM', () => handleSignal(143));
+
+    runPromise = runCommand({
       taskType: options.taskType,
       repo: options.repo,
       turnLimit,
@@ -108,9 +144,12 @@ program
       branchOverride: options.branch as string | undefined,
       dep: options.dep as string | undefined,
       targetVersion: options.targetVersion as string | undefined,
-    });
+    }, abortController.signal);
 
+    const exitCode = await runPromise;
     process.exit(exitCode);
   });
+
+program.addCommand(createProjectsCommand());
 
 program.parse();

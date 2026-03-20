@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A background coding agent platform that automates software maintenance tasks in isolated Docker containers. The agent engine (Anthropic SDK) executes in sandboxed environments with no network access, makes changes verified by a three-layer pipeline (build/test/lint + LLM Judge), and produces results for human review. v1.0 ships the complete verification architecture; next milestones add PR creation and task type implementations.
+A background coding agent platform that automates software maintenance tasks in isolated Docker containers. The Claude Agent SDK (`query()`) drives agent sessions inside Alpine containers with iptables network isolation (API-only access). Changes are verified by a three-layer pipeline (build/test/lint + MCP mid-session self-check + LLM Judge), and only verified changes produce GitHub PRs for human review.
 
 ## Core Value
 
@@ -22,29 +22,39 @@ The full verification loop must work: agent changes code, deterministic verifier
 - ✓ LLM Judge evaluates changes against original prompt for scope creep — v1.0
 - ✓ Failed verification triggers retry with summarized error context (max 3) — v1.0
 - ✓ Judge veto prevents PR creation even if deterministic checks pass — v1.0
-
 - ✓ Agent creates GitHub PR with full context (task prompt, diff, verification results, judge verdict) — v1.1
 - ✓ Agent auto-generates branch names, user can override via CLI — v1.1
 - ✓ Maven dependency update task type — user specifies dep, agent updates and adapts code — v1.1
 - ✓ npm dependency update task type — user specifies dep, agent updates and adapts code — v1.1
 - ✓ PR body flags potential breaking changes for human reviewer — v1.1
+- ✓ Claude Agent SDK `query()` replaces custom AgentSession/AgentClient — v2.0
+- ✓ 1,989 lines of legacy agent infrastructure deleted — v2.0
+- ✓ Agent SDK runs inside Docker container with iptables network isolation — v2.0
+- ✓ In-process MCP verifier server for mid-session self-correction — v2.0
 
 ### Active
 
-- [ ] Replace custom AgentSession/AgentClient with Claude Agent SDK `query()`
-- [ ] Delete legacy agent infrastructure (~1,200 lines)
-- [ ] Run Agent SDK inside Docker container for production isolation
-- [ ] Expose composite verifier as MCP server (optional, Spotify pattern)
+- [ ] Interactive REPL with freeform natural language task input
+- [ ] One-shot mode for scripts/CI (`bg-agent 'update recharts'`)
+- [ ] LLM-powered intent parser extracting task type + params from natural language
+- [ ] Context-first clarification — agent scans repo, proposes plan, user confirms/redirects
+- [ ] Project registry mapping short names → repo paths (terminal auto-registers cwd)
+- [ ] Multi-turn sessions — REPL maintains context across follow-up tasks
 
-## Current Milestone: v2.0 Claude Agent SDK Migration
+## Current Milestone: v2.1 Conversational Mode
 
-**Goal:** Replace the custom agent loop with the Claude Agent SDK — delete ~1,200 lines of hand-built agent infrastructure, gain 15+ built-in tools, auto context compression, and hooks-based safety model.
+**Goal:** Replace rigid CLI flags with a conversational interface — REPL + one-shot, natural language in, context-aware plan proposal, same verification pipeline out.
 
 **Target features:**
-- Claude Agent SDK integration (`query()` replaces AgentSession + AgentClient)
-- Legacy agent code deletion (agent.ts, session.ts, container.ts)
-- Container strategy (Agent SDK runs inside Docker for isolation)
-- MCP verifier server (optional — agent self-verifies within session)
+- Interactive REPL and one-shot CLI modes
+- LLM intent parser (natural language → structured task params)
+- Context-first clarification (scan repo → propose plan → confirm)
+- Project registry (cwd auto-register, Slack-ready)
+- Multi-turn session context
+
+## Shipped: v2.0 Claude Agent SDK Migration (2026-03-19)
+
+Replaced the custom agent loop with the Claude Agent SDK. Deleted 1,989 lines of hand-built infrastructure. Agent now runs inside Docker with iptables network isolation and can self-verify mid-session via MCP.
 
 ### Out of Scope
 
@@ -63,18 +73,15 @@ The full verification loop must work: agent changes code, deterministic verifier
 
 **Shipped v1.0** (Foundation) with 5,460 LOC TypeScript across 6 phases in 35 days.
 **Shipped v1.1** (End-to-End Pipeline) with 3 phases: GitHub PR creation, Maven dependency update, npm dependency update.
+**Shipped v2.0** (Claude Agent SDK Migration) with 4 phases in 3 days. 8,167 LOC TypeScript, 271 tests.
 
-**Tech stack:** Node.js 20, TypeScript (NodeNext), Docker (Alpine 3.18), Anthropic SDK, Commander.js, Pino, Vitest, ESLint v10.
+**Tech stack:** Node.js 20, TypeScript (NodeNext), Docker (Alpine, multi-stage), Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`), Anthropic SDK (LLM Judge only), Commander.js, Pino, Vitest, ESLint v10.
 
-**Architecture (current — v2.0 will change this):** CLI → RetryOrchestrator → AgentSession → Docker container (network-none, non-root). Agent communicates via Anthropic SDK agentic loop. Tools execute in container (read-only) or host-side (git, edit). Composite verifier (build+test+lint) feeds into retry loop. LLM Judge (Claude Haiku 4.5, structured output) evaluates scope post-verification.
+**Architecture:** CLI → RetryOrchestrator → ClaudeCodeSession (`query()`) → Docker container (iptables, non-root UID 1001). Built-in tools (Read, Write, Edit, Bash, Glob, Grep). PreToolUse hook for security, PostToolUse hook for audit. MCP verifier server for mid-session self-check. Composite verifier (build+test+lint) as outer gate. LLM Judge (Claude Haiku 4.5, structured output) evaluates scope post-verification.
 
-**Architecture (v2.0 target):** CLI → RetryOrchestrator → Claude Agent SDK `query()` → Docker container. Built-in tools (Read, Write, Edit, Bash, Glob, Grep). Hooks for verification and audit. Permission mode: acceptEdits.
+**Test suite:** 271 unit tests (Vitest), 100% passing. Integration tests require Docker + API key.
 
-**Test suite:** ~100 unit tests (Vitest), 100% passing. Integration tests require Docker + API key.
-
-**Migration reference:** See BRIEF.md for detailed analysis (Spotify's "Honk" agent evolution, what to delete/keep/modify, what we gain/lose).
-
-**Known tech debt:** CLI-05 partial (cost tracking), exit code switch missing explicit vetoed/turn_limit cases, SessionTimeoutError dead code, stale documentation field names.
+**Known tech debt:** CLI-05 partial (cost tracking), exit code switch missing explicit vetoed/turn_limit cases, SessionTimeoutError dead code, stale documentation field names, Nyquist validation drafts not fully compliant.
 
 ## Constraints
 
@@ -99,7 +106,10 @@ The full verification loop must work: agent changes code, deterministic verifier
 | Commander.js for CLI | Industry standard, automatic help generation | ✓ Good — minimal boilerplate |
 | PR description as spec | Keeps documentation with the change | ✓ Good — shipped in Phase 7 |
 | Maven first, npm later | Prove architecture with one type before extending | ✓ Good — Maven (Phase 8) proved pattern, npm (Phase 9) extended cleanly |
-| Claude Agent SDK over custom loop | Better tools, auto context compression, less code to maintain (Spotify validated this path) | — Pending (v2.0) |
+| Claude Agent SDK over custom loop | Better tools, auto context compression, less code to maintain (Spotify validated this path) | ✓ Good — 1,989 lines deleted, SDK handles tools/hooks natively |
+| iptables over NetworkMode:none | API calls need network; iptables allows Anthropic-only | ✓ Good — entrypoint resolves api.anthropic.com, blocks rest |
+| In-process MCP verifier | Agent self-checks mid-session, reduces outer retries | ✓ Good — compositeVerifier exposed as mcp__verifier__verify |
+| API key via -e flag (not proxy) | Simpler MVP; Unix socket proxy deferred to v2.1 | ✓ Good — functional, proxy adds complexity without clear need yet |
 
 ---
-*Last updated: 2026-03-16 after v2.0 milestone start*
+*Last updated: 2026-03-19 after v2.1 milestone started*
