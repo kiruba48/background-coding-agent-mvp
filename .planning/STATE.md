@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.1
 milestone_name: Conversational Mode
 status: executing
-stopped_at: "Phase 15, Plan 01 complete"
-last_updated: "2026-03-20T15:02:41Z"
-last_activity: 2026-03-20 — Phase 15 Plan 01 complete (types, fast-path, context-scanner)
+stopped_at: "Phase 15, Plan 02 complete"
+last_updated: "2026-03-20T15:27:00Z"
+last_activity: 2026-03-20 — Phase 15 Plan 02 complete (LLM parser, confirm loop, prompt sentinel handling)
 progress:
   total_phases: 4
   completed_phases: 1
   total_plans: 3
-  completed_plans: 3
-  percent: 25
+  completed_plans: 4
+  percent: 33
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-19)
 ## Current Position
 
 Phase: 15 of 17 (Intent Parser + One-Shot Mode)
-Plan: 1 of 3 in current phase
+Plan: 2 of 3 in current phase
 Status: Executing Phase 15
-Last activity: 2026-03-20 — Phase 15 Plan 01 complete (types, fast-path, context-scanner)
+Last activity: 2026-03-20 — Phase 15 Plan 02 complete (LLM parser, confirm loop, prompt sentinel handling)
 
-Progress: [██░░░░░░░░] 25% (v2.1)
+Progress: [███░░░░░░░] 33% (v2.1)
 
 ## Performance Metrics
 
@@ -61,6 +61,9 @@ Progress: [██░░░░░░░░] 25% (v2.1)
 - [Phase 15-01]: pom.xml parsing scoped to <dependency> blocks only to avoid including project's own artifactId
 - [Phase 15-01]: validateDepInManifest() in fast-path.ts (not context-scanner.ts) — serves fast-path validation before LLM fallback
 - [Phase 15-01]: detectTaskType() returns null for both-or-neither manifest case — falls through to LLM
+- [Phase 15-02]: llmParse() timeout is 15s (vs 30s in judge) — intent parsing is on the interactive path, latency matters
+- [Phase 15-02]: Non-y/n input in confirmLoop treated as inline correction (not forced 'n' + separate correction prompt)
+- [Phase 15-02]: buildPrompt defaults targetVersion to 'latest' via ?? operator — no longer throws when omitted for dep update types
 
 ### Pending Todos
 
@@ -73,7 +76,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-20T15:02:41Z
-Stopped at: Completed Phase 15, Plan 01
-Resume file: .planning/phases/15-intent-parser-one-shot-mode/15-01-SUMMARY.md
-Next action: Execute Phase 15, Plan 02 (LLM parser + confirm loop)
+Last session: 2026-03-20T15:27:00Z
+Stopped at: Completed Phase 15, Plan 02
+Resume file: .planning/phases/15-intent-parser-one-shot-mode/15-02-SUMMARY.md
+Next action: Execute Phase 15, Plan 03 (coordinator parseIntent + one-shot CLI command)

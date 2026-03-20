@@ -22,7 +22,7 @@ Requirements for conversational mode. Each maps to roadmap phases.
 
 - [ ] **CLI-01**: User can run a single task via positional arg (bg-agent 'update recharts') and exit
 - [ ] **CLI-02**: User can start interactive REPL session with bg-agent (no args)
-- [ ] **CLI-03**: User sees parsed intent and proposed plan before execution, can confirm or redirect
+- [x] **CLI-03**: User sees parsed intent and proposed plan before execution, can confirm or redirect
 
 ### Project Registry
 
@@ -75,7 +75,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INTENT-02 | Phase 15 | Complete |
 | INTENT-03 | Phase 15 | Complete |
 | CLI-01 | Phase 15 | Pending |
-| CLI-03 | Phase 15 | Pending |
+| CLI-03 | Phase 15 | Complete |
 | CLI-02 | Phase 16 | Pending |
 | SESS-01 | Phase 17 | Pending |
 
