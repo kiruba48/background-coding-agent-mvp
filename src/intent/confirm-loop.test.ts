@@ -55,6 +55,59 @@ describe('displayIntent', () => {
 
     vi.restoreAllMocks();
   });
+
+  it('shows (from session) annotation for inherited taskType', () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(' '));
+    });
+
+    displayIntent({ ...SAMPLE_INTENT, inheritedFields: new Set(['taskType'] as const) });
+
+    vi.restoreAllMocks();
+    const allOutput = logs.join('\n');
+    expect(allOutput).toContain('from session');
+  });
+
+  it('shows (from session) annotation for inherited repo', () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(' '));
+    });
+
+    displayIntent({ ...SAMPLE_INTENT, inheritedFields: new Set(['repo'] as const) });
+
+    vi.restoreAllMocks();
+    const allOutput = logs.join('\n');
+    expect(allOutput).toContain('from session');
+  });
+
+  it('shows (from session) on both task and project when both inherited', () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(' '));
+    });
+
+    displayIntent({ ...SAMPLE_INTENT, inheritedFields: new Set(['taskType', 'repo'] as const) });
+
+    vi.restoreAllMocks();
+    const allOutput = logs.join('\n');
+    const count = (allOutput.match(/from session/g) ?? []).length;
+    expect(count).toBe(2);
+  });
+
+  it('no (from session) annotation when inheritedFields is undefined', () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(' '));
+    });
+
+    displayIntent({ ...SAMPLE_INTENT });
+
+    vi.restoreAllMocks();
+    const allOutput = logs.join('\n');
+    expect(allOutput).not.toContain('from session');
+  });
 });
 
 describe('confirmLoop', () => {

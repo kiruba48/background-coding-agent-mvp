@@ -4,10 +4,13 @@ import path from 'node:path';
 import type { ResolvedIntent } from './types.js';
 
 export function displayIntent(intent: ResolvedIntent): void {
+  const fromSession = pc.dim(' (from session)');
   console.log('');
   console.log(pc.bold('  Parsed Intent:'));
-  console.log(`    Task:    ${pc.cyan(intent.taskType)}`);
-  console.log(`    Project: ${pc.cyan(path.basename(intent.repo))}`);
+  const taskSuffix = intent.inheritedFields?.has('taskType') ? fromSession : '';
+  console.log(`    Task:    ${pc.cyan(intent.taskType)}${taskSuffix}`);
+  const projSuffix = intent.inheritedFields?.has('repo') ? fromSession : '';
+  console.log(`    Project: ${pc.cyan(path.basename(intent.repo))}${projSuffix}`);
   if (intent.dep) console.log(`    Dep:     ${pc.cyan(intent.dep)}`);
   if (intent.version) console.log(`    Version: ${pc.cyan(intent.version)}`);
   if (intent.createPr) console.log(`    PR:      ${pc.cyan('yes')}`);
