@@ -4,7 +4,9 @@ import { autoRegisterCwd } from '../cli/auto-register.js';
 import { ProjectRegistry } from '../agent/registry.js';
 import { createLogger } from '../cli/utils/logger.js';
 import path from 'node:path';
-import type { ReplState, SessionCallbacks, SessionOutput } from './types.js';
+import pc from 'picocolors';
+import type { ReplState, SessionCallbacks, SessionOutput, TaskHistoryEntry } from './types.js';
+import { MAX_HISTORY_ENTRIES } from './types.js';
 
 /** Maximum input length before LLM dispatch (characters) */
 const MAX_INPUT_LENGTH = 2000;
@@ -16,6 +18,13 @@ const REPL_MAX_RETRIES = 3;
 
 export function createSessionState(): ReplState {
   return { currentProject: null, currentProjectName: null, history: [] };
+}
+
+function appendHistory(state: ReplState, entry: TaskHistoryEntry): void {
+  if (state.history.length >= MAX_HISTORY_ENTRIES) {
+    state.history.shift();
+  }
+  state.history.push(entry);
 }
 
 export async function processInput(
@@ -36,15 +45,36 @@ export async function processInput(
     return { action: 'continue' };
   }
 
+  // History command — show completed tasks
+  if (trimmed === 'history') {
+    if (state.history.length === 0) {
+      console.log(pc.dim('\n  No tasks in session history.\n'));
+    } else {
+      console.log('');
+      state.history.forEach((h, i) => {
+        const statusColor = h.status === 'success' ? pc.green : h.status === 'cancelled' ? pc.yellow : pc.red;
+        console.log(
+          `  ${pc.dim(String(i + 1).padStart(2))}. ${pc.cyan(h.taskType)} | ${h.dep ?? pc.dim('no dep')} | ${pc.dim(path.basename(h.repo))} | ${statusColor(h.status)}`
+        );
+      });
+      console.log('');
+    }
+    return { action: 'continue' };
+  }
+
   // Guard against excessively long input before LLM dispatch
   if (trimmed.length > MAX_INPUT_LENGTH) {
     return { action: 'continue', result: null };
   }
 
+  // Snapshot history at input time so follow-up context reflects pre-task state
+  const historySnapshot = [...state.history];
+
   // Step 1: Parse intent — use currentProject as repo context if available
   let intent = await parseIntent(trimmed, {
     repoPath: state.currentProject ?? undefined,
     registry,
+    history: historySnapshot,
   });
 
   // Step 2: Handle low-confidence with clarifications
@@ -57,6 +87,7 @@ export async function processInput(
     const reparsed = await parseIntent(selectedIntent, {
       repoPath: intent.repo,
       registry,
+      history: historySnapshot,
     });
     if (reparsed.confidence === 'low') {
       return { action: 'continue', result: null };
@@ -67,7 +98,7 @@ export async function processInput(
   // Step 3: Confirm loop via callback (CLI adapter owns readline)
   const confirmed = await callbacks.confirm(
     intent,
-    async (correction: string) => parseIntent(correction, { repoPath: intent.repo, registry }),
+    async (correction: string) => parseIntent(correction, { repoPath: intent.repo, registry, history: historySnapshot }),
   );
   if (!confirmed) {
     return { action: 'continue', result: null, intent };
@@ -99,10 +130,22 @@ export async function processInput(
   };
 
   callbacks.onAgentStart?.();
+  let historyStatus: TaskHistoryEntry['status'] = 'failed';
   try {
     const result = await runAgent(agentOptions, agentContext);
+    historyStatus = result.finalStatus === 'success' ? 'success' : 'failed';
     return { action: 'continue', result, intent: confirmed };
+  } catch (err) {
+    historyStatus = (err as Error).name === 'AbortError' ? 'cancelled' : 'failed';
+    throw err;
   } finally {
     callbacks.onAgentEnd?.();
+    appendHistory(state, {
+      taskType: confirmed.taskType,
+      dep: confirmed.dep ?? null,
+      version: confirmed.version ?? null,
+      repo: confirmed.repo,
+      status: historyStatus,
+    });
   }
 }

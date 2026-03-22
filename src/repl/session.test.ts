@@ -372,4 +372,187 @@ describe('src/repl/session.ts', () => {
     expect(onAgentStart).toHaveBeenCalledOnce();
     expect(onAgentEnd).toHaveBeenCalledOnce();
   });
+
+  // Test 15: createSessionState() returns state with history: []
+  it('15. createSessionState() returns state with history: []', () => {
+    const state = createSessionState();
+    expect(state.history).toEqual([]);
+  });
+
+  // Test 16: processInput appends to history after successful runAgent
+  it('16. processInput appends to history after successful runAgent', async () => {
+    const intent = makeIntent();
+    const retryResult = makeRetryResult();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(retryResult);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await processInput('update lodash', state, callbacks, registry);
+
+    expect(state.history.length).toBe(1);
+    expect(state.history[0]).toMatchObject({
+      taskType: 'npm-dependency-update',
+      dep: 'lodash',
+      repo: '/tmp/test-repo',
+      status: 'success',
+    });
+  });
+
+  // Test 17: processInput appends to history with status 'failed' when runAgent throws
+  it('17. processInput appends to history with status "failed" when runAgent throws', async () => {
+    const intent = makeIntent();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockRejectedValue(new Error('agent failed'));
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await expect(processInput('update lodash', state, callbacks, registry)).rejects.toThrow('agent failed');
+
+    expect(state.history.length).toBe(1);
+    expect(state.history[0].status).toBe('failed');
+  });
+
+  // Test 18: processInput appends to history with status 'cancelled' when runAgent throws AbortError
+  it('18. processInput appends to history with status "cancelled" when runAgent throws AbortError', async () => {
+    const intent = makeIntent();
+    mockParseIntent.mockResolvedValue(intent);
+    const err = new Error('aborted');
+    err.name = 'AbortError';
+    mockRunAgent.mockRejectedValue(err);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await expect(processInput('update lodash', state, callbacks, registry)).rejects.toThrow('aborted');
+
+    expect(state.history.length).toBe(1);
+    expect(state.history[0].status).toBe('cancelled');
+  });
+
+  // Test 19: history NOT appended when user cancels at confirm (confirm returns null)
+  it('19. history NOT appended when user cancels at confirm', async () => {
+    const intent = makeIntent();
+    mockParseIntent.mockResolvedValue(intent);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(null),
+    });
+
+    await processInput('update lodash', state, callbacks, registry);
+
+    expect(state.history.length).toBe(0);
+  });
+
+  // Test 20: history bounded to MAX_HISTORY_ENTRIES (10)
+  it('20. history bounded to MAX_HISTORY_ENTRIES (10)', async () => {
+    const { MAX_HISTORY_ENTRIES } = await import('./types.js');
+    const intent = makeIntent();
+    const retryResult = makeRetryResult();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(retryResult);
+
+    const state = createSessionState();
+    // Pre-fill history with 10 entries
+    for (let i = 0; i < MAX_HISTORY_ENTRIES; i++) {
+      state.history.push({
+        taskType: 'npm-dependency-update',
+        dep: `dep-${i}`,
+        version: 'latest',
+        repo: '/tmp/old-repo',
+        status: 'success',
+      });
+    }
+    const firstOriginalEntry = state.history[1]; // second entry becomes first after shift
+
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await processInput('update lodash', state, callbacks, registry);
+
+    expect(state.history.length).toBe(MAX_HISTORY_ENTRIES);
+    expect(state.history[0]).toEqual(firstOriginalEntry); // oldest shifted out
+    expect(state.history[MAX_HISTORY_ENTRIES - 1]).toMatchObject({
+      taskType: 'npm-dependency-update',
+      dep: 'lodash',
+      repo: '/tmp/test-repo',
+      status: 'success',
+    });
+  });
+
+  // Test 21: processInput("history") with empty history prints message and returns continue
+  it('21. processInput("history") with empty history prints message and returns continue', async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(' '));
+    });
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks();
+
+    const result = await processInput('history', state, callbacks, registry);
+
+    vi.restoreAllMocks();
+    const allOutput = logs.join('\n');
+    expect(allOutput).toContain('No tasks in session history');
+    expect(result.action).toBe('continue');
+    expect(mockParseIntent).not.toHaveBeenCalled();
+  });
+
+  // Test 22: processInput("history") with entries prints numbered list and returns continue
+  it('22. processInput("history") with entries prints numbered list and returns continue', async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(' '));
+    });
+
+    const state = createSessionState();
+    state.history = [{
+      taskType: 'npm-dependency-update',
+      dep: 'lodash',
+      version: 'latest',
+      repo: '/tmp/repo',
+      status: 'success',
+    }];
+    const callbacks = makeCallbacks();
+
+    const result = await processInput('history', state, callbacks, registry);
+
+    vi.restoreAllMocks();
+    const allOutput = logs.join('\n');
+    expect(allOutput).toContain('npm-dependency-update');
+    expect(allOutput).toContain('lodash');
+    expect(result.action).toBe('continue');
+    expect(mockParseIntent).not.toHaveBeenCalled();
+  });
+
+  // Test 23: processInput passes state.history to parseIntent
+  it('23. processInput passes state.history to parseIntent', async () => {
+    const intent = makeIntent();
+    const retryResult = makeRetryResult();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(retryResult);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await processInput('update lodash', state, callbacks, registry);
+
+    expect(mockParseIntent).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ history: [] }),
+    );
+  });
 });
