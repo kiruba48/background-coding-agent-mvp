@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { MockedFunction } from 'vitest';
 import type { FastPathResult } from './types.js';
 import type { ProjectRegistry as ProjectRegistryType } from '../agent/registry.js';
+import type { TaskHistoryEntry } from '../repl/types.js';
 
 // Mock all dependencies before importing parseIntent
 vi.mock('./fast-path.js', () => ({
@@ -144,7 +145,7 @@ describe('parseIntent coordinator', () => {
       const registry = makeRegistry();
       await parseIntent('update recharts', { repoPath: '/path', registry });
 
-      expect(mockLlmParse).toHaveBeenCalledWith('update recharts', 'package.json dependencies: react, recharts');
+      expect(mockLlmParse).toHaveBeenCalledWith('update recharts', 'package.json dependencies: react, recharts', undefined);
     });
 
     it('calls LLM when fast-path matched but detectTaskType returns null', async () => {
@@ -285,6 +286,94 @@ describe('parseIntent coordinator', () => {
       const result = await parseIntent('do something vague', { repoPath: '/path', registry });
 
       expect(result.clarifications).toBeUndefined();
+    });
+  });
+
+  describe('session history threading (multi-turn follow-up)', () => {
+    const historyEntry: TaskHistoryEntry = {
+      taskType: 'npm-dependency-update',
+      dep: 'react',
+      version: 'latest',
+      repo: '/path/to/repo',
+      status: 'success',
+    };
+
+    it('follow-up with history: inherits taskType and repo, sets inheritedFields', async () => {
+      const followUpResult: FastPathResult = { dep: 'lodash', version: 'latest', project: null, createPr: false, isFollowUp: true };
+      mockFastPathParse.mockReturnValue(followUpResult);
+      mockValidateDepInManifest.mockResolvedValue(true);
+      mockDetectTaskType.mockResolvedValue('npm-dependency-update');
+
+      const registry = makeRegistry();
+      const result = await parseIntent('also update lodash', {
+        repoPath: undefined,
+        registry,
+        history: [historyEntry],
+      });
+
+      expect(result.taskType).toBe('npm-dependency-update');
+      expect(result.dep).toBe('lodash');
+      expect(result.inheritedFields).toBeInstanceOf(Set);
+      expect(result.inheritedFields?.has('taskType')).toBe(true);
+      expect(result.inheritedFields?.has('repo')).toBe(true);
+      expect(mockLlmParse).not.toHaveBeenCalled();
+    });
+
+    it('follow-up with empty history: strips prefix and re-parses as fresh command', async () => {
+      // First call with follow-up prefix → stripped, recursive call with standard "update lodash"
+      const followUpResult: FastPathResult = { dep: 'lodash', version: 'latest', project: null, createPr: false, isFollowUp: true };
+      const standardResult: FastPathResult = { dep: 'lodash', version: 'latest', project: null, createPr: false };
+      mockFastPathParse
+        .mockReturnValueOnce(followUpResult)  // first call: "also update lodash"
+        .mockReturnValueOnce(standardResult); // second call: "update lodash" (stripped)
+      mockValidateDepInManifest.mockResolvedValue(true);
+      mockDetectTaskType.mockResolvedValue('npm-dependency-update');
+
+      const registry = makeRegistry();
+      const result = await parseIntent('also update lodash', {
+        repoPath: '/some/repo',
+        registry,
+        history: [],  // empty history
+      });
+
+      // Should have re-parsed without inheritedFields
+      expect(result.inheritedFields).toBeUndefined();
+      expect(mockLlmParse).not.toHaveBeenCalled();
+    });
+
+    it('standard input with history: does NOT set inheritedFields', async () => {
+      const standardResult: FastPathResult = { dep: 'recharts', version: 'latest', project: null, createPr: false };
+      mockFastPathParse.mockReturnValue(standardResult);
+      mockValidateDepInManifest.mockResolvedValue(true);
+      mockDetectTaskType.mockResolvedValue('npm-dependency-update');
+
+      const registry = makeRegistry();
+      const result = await parseIntent('update recharts', {
+        repoPath: '/path/to/repo',
+        registry,
+        history: [historyEntry],
+      });
+
+      expect(result.inheritedFields).toBeUndefined();
+    });
+
+    it('follow-up falls through to LLM when dep not in manifest: passes history to llmParse', async () => {
+      const followUpResult: FastPathResult = { dep: 'unknown-dep', version: 'latest', project: null, createPr: false, isFollowUp: true };
+      mockFastPathParse.mockReturnValue(followUpResult);
+      mockValidateDepInManifest.mockResolvedValue(false); // dep NOT in manifest
+      mockReadManifestDeps.mockResolvedValue('package.json dependencies: react');
+
+      const registry = makeRegistry();
+      await parseIntent('also update unknown-dep', {
+        repoPath: '/path/to/repo',
+        registry,
+        history: [historyEntry],
+      });
+
+      // LLM should be called with history
+      expect(mockLlmParse).toHaveBeenCalledOnce();
+      const llmCallArgs = mockLlmParse.mock.calls[0];
+      expect(llmCallArgs[2]).toEqual([historyEntry]);
     });
   });
 
