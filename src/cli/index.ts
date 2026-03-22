@@ -24,6 +24,16 @@ program
   .option('--dep <name>', 'Dependency to update (e.g., org.springframework:spring-core for Maven, lodash for npm)')
   .option('--target-version <version>', 'Target version for dependency update')
   .action(async (input: string | undefined, options: Record<string, unknown>) => {
+    // REPL path: no positional input and no --task-type flag.
+    // Must be checked BEFORE installing process signal handlers.
+    // The REPL manages its own SIGINT via readline — process handlers would conflict.
+    if (!input && !options.taskType) {
+      const { replCommand } = await import('./commands/repl.js');
+      await replCommand();
+      process.exit(0);
+      return;
+    }
+
     // Create AbortController at CLI level for signal handling — shared by both paths
     const abortController = new AbortController();
 

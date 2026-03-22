@@ -52,7 +52,7 @@ Full details: [v2.0-ROADMAP.md](milestones/v2.0-ROADMAP.md)
 
 - [x] **Phase 14: Infrastructure Foundation** — Extract runAgent(), wire AbortSignal, build project registry (completed 2026-03-19)
 - [x] **Phase 15: Intent Parser + One-Shot Mode** — Natural language → structured intent, fast-path heuristic, context scan, confirm flow, end-to-end one-shot (completed 2026-03-20)
-- [ ] **Phase 16: Interactive REPL** — readline loop, Ctrl+C/Ctrl+D semantics, Docker build check at startup, persistent history
+- [x] **Phase 16: Interactive REPL** — readline loop, Ctrl+C/Ctrl+D semantics, Docker build check at startup, persistent history (completed 2026-03-20)
 - [ ] **Phase 17: Multi-Turn Session Context** — In-memory session history propagated to intent parser for follow-up disambiguation
 
 ## Phase Details
@@ -100,7 +100,11 @@ Plans:
   3. Pressing Ctrl+D or typing `exit` cleanly terminates the REPL session
   4. The Docker image build check runs once at REPL startup, not before each task
   5. Command history from the session persists to disk and is available in the next session
-**Plans**: TBD
+**Plans:** 2/2 plans complete
+
+Plans:
+- [ ] 16-01-PLAN.md — REPL types, session core (processInput), and AgentContext.skipDockerChecks
+- [ ] 16-02-PLAN.md — CLI REPL adapter (readline, signals, history, banner) and CLI routing
 
 ### Phase 17: Multi-Turn Session Context
 **Goal**: Follow-up inputs within a REPL session are disambiguated using prior task history, so users can say "now do lodash too" without restating the full context
@@ -131,5 +135,5 @@ Plans:
 | 13. Container Strategy | v2.0 | 2/2 | Complete | 2026-03-19 |
 | 14. Infrastructure Foundation | v2.1 | 3/3 | Complete | 2026-03-19 |
 | 15. Intent Parser + One-Shot Mode | 3/3 | Complete    | 2026-03-20 | - |
-| 16. Interactive REPL | v2.1 | 0/? | Not started | - |
+| 16. Interactive REPL | 2/2 | Complete    | 2026-03-20 | - |
 | 17. Multi-Turn Session Context | v2.1 | 0/? | Not started | - |

@@ -8,12 +8,14 @@ describe('IntentSchema', () => {
       dep: 'recharts',
       version: 'latest',
       confidence: 'high',
+      createPr: false,
       clarifications: [],
     });
     expect(result.taskType).toBe('npm-dependency-update');
     expect(result.dep).toBe('recharts');
     expect(result.version).toBe('latest');
     expect(result.confidence).toBe('high');
+    expect(result.createPr).toBe(false);
   });
 
   it('accepts version: null', () => {
@@ -22,6 +24,7 @@ describe('IntentSchema', () => {
       dep: 'spring-core',
       version: null,
       confidence: 'low',
+      createPr: false,
       clarifications: [{ label: 'Update spring-core', intent: 'update spring-core to latest' }],
     });
     expect(result.version).toBeNull();
@@ -33,6 +36,7 @@ describe('IntentSchema', () => {
       dep: null,
       version: null,
       confidence: 'low',
+      createPr: false,
       clarifications: [],
     });
     expect(result.taskType).toBe('unknown');
@@ -46,6 +50,7 @@ describe('IntentSchema', () => {
         dep: 'recharts',
         version: '2.15.0',
         confidence: 'high',
+        createPr: false,
         clarifications: [],
       })
     ).toThrow();
@@ -58,6 +63,7 @@ describe('IntentSchema', () => {
         dep: null,
         version: null,
         confidence: 'high',
+        createPr: false,
         clarifications: [],
       })
     ).toThrow();
@@ -70,6 +76,7 @@ describe('IntentSchema', () => {
         dep: null,
         version: null,
         confidence: 'medium',
+        createPr: false,
         clarifications: [],
       })
     ).toThrow();
@@ -81,6 +88,7 @@ describe('IntentSchema', () => {
       dep: null,
       version: null,
       confidence: 'low',
+      createPr: true,
       clarifications: [
         { label: 'Update recharts', intent: 'update recharts to latest' },
         { label: 'Update react-chartjs', intent: 'update react-chartjs to latest' },
@@ -88,5 +96,6 @@ describe('IntentSchema', () => {
     });
     expect(result.clarifications).toHaveLength(2);
     expect(result.clarifications[0].label).toBe('Update recharts');
+    expect(result.createPr).toBe(true);
   });
 });

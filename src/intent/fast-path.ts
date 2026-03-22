@@ -10,16 +10,25 @@ const DEPENDENCY_PATTERNS = [
   /^(?:update|upgrade|bump)\s+(?<dep>@?[a-z0-9\-._~/]+)\s+(?:in|for)\s+(?<project>[a-zA-Z0-9._-]+)(?:\s+to\s+(?<version>[a-zA-Z0-9._\-+]+))?$/i,
 ];
 
+// Matches trailing PR-creation phrases: "and create PR", "and raise a pull request", etc.
+const PR_SUFFIX = /\s+(?:and\s+)?(?:create|raise|open|make)\s+(?:a\s+)?(?:pr|pull\s*request)\s*$/i;
+
 export function fastPathParse(input: string): FastPathResult | null {
   const trimmed = input.trim();
   if (!trimmed) return null;
+
+  // Strip PR suffix before matching dependency patterns
+  const createPr = PR_SUFFIX.test(trimmed);
+  const cleaned = createPr ? trimmed.replace(PR_SUFFIX, '') : trimmed;
+
   for (const pattern of DEPENDENCY_PATTERNS) {
-    const m = trimmed.match(pattern);
+    const m = cleaned.match(pattern);
     if (m?.groups) {
       return {
         dep: m.groups.dep,
         version: m.groups.version ?? 'latest',
         project: m.groups.project ?? null,
+        createPr,
       };
     }
   }

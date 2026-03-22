@@ -9,13 +9,15 @@ const INTENT_SYSTEM_PROMPT = `You are an intent classifier for a coding agent CL
 2. dep: the dependency name (null if not identifiable)
 3. version: ALWAYS set to 'latest' or null. You MUST NOT output a specific version number.
 4. confidence: 'high' if the intent is clear, 'low' if ambiguous
-5. clarifications: if confidence is 'low', provide 2-3 possible interpretations as {label, intent} pairs. Empty array if confidence is 'high'.
+5. createPr: true if the user asks to create/raise/open a PR or pull request, false otherwise
+6. clarifications: if confidence is 'low', provide 2-3 possible interpretations as {label, intent} pairs. Empty array if confidence is 'high'.
 
 Rules:
 - If the user mentions a dependency that exists in the manifest, set confidence to 'high'.
 - If the user's request doesn't match a dependency update pattern, set taskType to 'unknown'.
 - For unknown task types, set dep to null and confidence to 'high' (pass through as generic task).
-- NEVER set version to a specific version number. Only 'latest' or null.`;
+- NEVER set version to a specific version number. Only 'latest' or null.
+- Set createPr to true when the user says phrases like "create PR", "raise PR", "open pull request", "make a PR", "and PR", etc. Default to false if not mentioned.`;
 
 const OUTPUT_SCHEMA = {
   type: 'object' as const,
@@ -24,6 +26,7 @@ const OUTPUT_SCHEMA = {
     dep: { type: ['string', 'null'] },
     version: { type: ['string', 'null'], enum: ['latest', null] },
     confidence: { type: 'string', enum: ['high', 'low'] },
+    createPr: { type: 'boolean' },
     clarifications: {
       type: 'array',
       items: {
@@ -37,7 +40,7 @@ const OUTPUT_SCHEMA = {
       },
     },
   },
-  required: ['taskType', 'dep', 'version', 'confidence', 'clarifications'],
+  required: ['taskType', 'dep', 'version', 'confidence', 'createPr', 'clarifications'],
   additionalProperties: false,
 };
 

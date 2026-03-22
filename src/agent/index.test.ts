@@ -50,8 +50,27 @@ vi.mock('../orchestrator/pr-creator.js', () => ({
   })),
 }));
 
+// Mock child_process.execFile for host-side version resolution.
+// promisify(execFile) uses execFile[util.promisify.custom] in real Node;
+// our mock must provide [custom] so promisified calls resolve with { stdout, stderr }.
+vi.mock('node:child_process', async () => {
+  const util = await import('node:util');
+  const baseFn = vi.fn();
+  // The promisified version is what actually gets called in production code
+  const promisifiedFn = vi.fn().mockResolvedValue({ stdout: '', stderr: '' });
+  (baseFn as any)[util.promisify.custom] = promisifiedFn;
+  return { execFile: baseFn };
+});
+
+import { promisify } from 'node:util';
+import { execFile } from 'node:child_process';
 import { RetryOrchestrator } from '../orchestrator/retry.js';
+import { buildPrompt } from '../prompts/index.js';
 import { runAgent } from './index.js';
+
+// Access the promisified mock (the one actually called by execFileAsync in production)
+const mockExecFileAsync = (execFile as any)[promisify.custom] as ReturnType<typeof vi.fn>;
+const mockBuildPrompt = buildPrompt as ReturnType<typeof vi.fn>;
 
 const MockRetryOrchestrator = RetryOrchestrator as ReturnType<typeof vi.fn>;
 
@@ -74,6 +93,8 @@ function mockOrchestrator(finalStatus: string = 'success') {
 describe('src/agent/index.ts', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: promisified execFile resolves with empty output
+    mockExecFileAsync.mockResolvedValue({ stdout: '', stderr: '' });
   });
 
   // Test 1: runAgent is an exported async function
@@ -171,5 +192,82 @@ describe('src/agent/index.ts', () => {
         {} // no logger
       )
     ).resolves.toBeDefined();
+  });
+
+  describe('host-side "latest" version resolution', () => {
+    it('resolves "latest" to concrete version via npm show before building prompt', async () => {
+      mockExecFileAsync.mockResolvedValue({ stdout: '4.18.3\n', stderr: '' });
+      mockOrchestrator('success');
+
+      await runAgent({
+        taskType: 'npm-dependency-update',
+        repo: '/tmp/workspace',
+        turnLimit: 10,
+        timeoutMs: 300_000,
+        maxRetries: 3,
+        dep: 'lodash',
+        targetVersion: 'latest',
+      });
+
+      expect(mockBuildPrompt).toHaveBeenCalledWith(
+        expect.objectContaining({ targetVersion: '4.18.3' }),
+      );
+    });
+
+    it('falls back to "latest" when npm show fails', async () => {
+      mockExecFileAsync.mockRejectedValueOnce(new Error('npm ERR! 404'));
+      // Second call (npm install in preVerify) should succeed
+      mockExecFileAsync.mockResolvedValue({ stdout: '', stderr: '' });
+      mockOrchestrator('success');
+
+      await runAgent({
+        taskType: 'npm-dependency-update',
+        repo: '/tmp/workspace',
+        turnLimit: 10,
+        timeoutMs: 300_000,
+        maxRetries: 3,
+        dep: 'nonexistent-pkg',
+        targetVersion: 'latest',
+      });
+
+      expect(mockBuildPrompt).toHaveBeenCalledWith(
+        expect.objectContaining({ targetVersion: 'latest' }),
+      );
+    });
+
+    it('does not resolve version for non-npm task types', async () => {
+      mockOrchestrator('success');
+
+      await runAgent({
+        taskType: 'maven-dependency-update',
+        repo: '/tmp/workspace',
+        turnLimit: 10,
+        timeoutMs: 300_000,
+        maxRetries: 3,
+        dep: 'com.example:lib',
+        targetVersion: 'latest',
+      });
+
+      // execFileAsync should not have been called (no npm show for maven)
+      expect(mockExecFileAsync).not.toHaveBeenCalled();
+    });
+
+    it('does not resolve when targetVersion is already a concrete version', async () => {
+      mockOrchestrator('success');
+
+      await runAgent({
+        taskType: 'npm-dependency-update',
+        repo: '/tmp/workspace',
+        turnLimit: 10,
+        timeoutMs: 300_000,
+        maxRetries: 3,
+        dep: 'lodash',
+        targetVersion: '4.17.21',
+      });
+
+      expect(mockBuildPrompt).toHaveBeenCalledWith(
+        expect.objectContaining({ targetVersion: '4.17.21' }),
+      );
+    });
   });
 });

@@ -5,6 +5,7 @@ export const IntentSchema = z.object({
   dep: z.string().nullable(),
   version: z.enum(['latest']).nullable(),   // NEVER a real version — sentinel only
   confidence: z.enum(['high', 'low']),
+  createPr: z.boolean(),
   clarifications: z.array(z.object({
     label: z.string(),
     intent: z.string(),
@@ -17,6 +18,7 @@ export interface FastPathResult {
   dep: string;
   version: string;         // 'latest' sentinel or explicit version from user input
   project: string | null;  // extracted project name from "in <name>" / "for <name>"
+  createPr: boolean;       // user requested PR creation (e.g. "and create PR")
 }
 
 export interface ClarificationOption {
@@ -30,6 +32,7 @@ export interface ResolvedIntent {
   dep: string | null;
   version: string | null;   // 'latest' sentinel, explicit version, or null
   confidence: 'high' | 'low';
+  createPr?: boolean;       // user requested PR creation (e.g. "and create PR")
   description?: string;     // raw NL input when taskType is 'generic'
   clarifications?: ClarificationOption[];  // from LLM when confidence is low
 }

@@ -25,6 +25,7 @@ const VALID_RESPONSE = {
   dep: 'recharts',
   version: 'latest',
   confidence: 'high',
+  createPr: false,
   clarifications: [],
 };
 
@@ -108,6 +109,7 @@ describe('llmParse', () => {
       dep: null,
       version: null,
       confidence: 'low',
+      createPr: false,
       clarifications: [
         { label: 'Update recharts', intent: 'update recharts to latest' },
         { label: 'Update lodash', intent: 'update lodash to latest' },
