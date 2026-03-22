@@ -19,6 +19,7 @@ export interface FastPathResult {
   version: string;         // 'latest' sentinel or explicit version from user input
   project: string | null;  // extracted project name from "in <name>" / "for <name>"
   createPr: boolean;       // user requested PR creation (e.g. "and create PR")
+  isFollowUp?: boolean;    // true when detected via follow-up patterns ("also X", "X too", etc.)
 }
 
 export interface ClarificationOption {
@@ -35,4 +36,5 @@ export interface ResolvedIntent {
   createPr?: boolean;       // user requested PR creation (e.g. "and create PR")
   description?: string;     // raw NL input when taskType is 'generic'
   clarifications?: ClarificationOption[];  // from LLM when confidence is low
+  inheritedFields?: Set<'taskType' | 'repo'>; // fields inherited from session history (follow-up)
 }

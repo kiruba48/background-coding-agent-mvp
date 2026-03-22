@@ -15,7 +15,7 @@ const REPL_TIMEOUT_MS = 300_000;
 const REPL_MAX_RETRIES = 3;
 
 export function createSessionState(): ReplState {
-  return { currentProject: null, currentProjectName: null };
+  return { currentProject: null, currentProjectName: null, history: [] };
 }
 
 export async function processInput(

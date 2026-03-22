@@ -1,10 +1,23 @@
 import type { ResolvedIntent } from '../intent/types.js';
 import type { RetryResult } from '../types.js';
 
+/** A single completed task entry stored in session history. */
+export interface TaskHistoryEntry {
+  taskType: string;
+  dep: string | null;
+  version: string | null;
+  repo: string;
+  status: 'success' | 'failed' | 'cancelled';
+}
+
+/** Maximum number of history entries to retain per session. */
+export const MAX_HISTORY_ENTRIES = 10;
+
 /** Mutable state for a REPL session. Owned by the CLI adapter, passed to session core. */
 export interface ReplState {
   currentProject: string | null;   // resolved repo path from most recent task
   currentProjectName: string | null; // short name for prompt display
+  history: TaskHistoryEntry[];     // recent completed task entries for multi-turn context
 }
 
 /** Callbacks the CLI adapter provides to the session core for I/O that requires process interaction. */
