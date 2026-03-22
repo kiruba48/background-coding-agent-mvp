@@ -117,7 +117,7 @@ describe('saveHistory', () => {
 
 describe('getPrompt', () => {
   it('returns "bg> " when no project is set', () => {
-    const state: ReplState = { currentProject: null, currentProjectName: null };
+    const state: ReplState = { currentProject: null, currentProjectName: null, history: [] };
     const prompt = getPrompt(state);
     // Strip ANSI codes for comparison
     const stripped = prompt.replace(/\x1B\[[0-9;]*m/g, '');
@@ -125,7 +125,7 @@ describe('getPrompt', () => {
   });
 
   it('returns "myapp> " when currentProjectName is "myapp"', () => {
-    const state: ReplState = { currentProject: '/path/to/myapp', currentProjectName: 'myapp' };
+    const state: ReplState = { currentProject: '/path/to/myapp', currentProjectName: 'myapp', history: [] };
     const prompt = getPrompt(state);
     const stripped = prompt.replace(/\x1B\[[0-9;]*m/g, '');
     expect(stripped).toBe('myapp> ');
@@ -229,7 +229,7 @@ describe('createProgressIndicator', () => {
     progress.start();
 
     expect(writeSpy).toHaveBeenCalled();
-    const output = writeSpy.mock.calls.map(c => c[0]).join('');
+    const output = writeSpy.mock.calls.map((c: unknown[]) => c[0]).join('');
     expect(output).toContain('Resolving version');
 
     progress.stop();
@@ -242,7 +242,7 @@ describe('createProgressIndicator', () => {
 
     vi.advanceTimersByTime(3000);
 
-    const output = writeSpy.mock.calls.map(c => c[0]).join('');
+    const output = writeSpy.mock.calls.map((c: unknown[]) => c[0]).join('');
     expect(output).toContain('3s');
 
     progress.stop();
@@ -254,7 +254,7 @@ describe('createProgressIndicator', () => {
 
     vi.advanceTimersByTime(6000);
 
-    const output = writeSpy.mock.calls.map(c => c[0]).join('');
+    const output = writeSpy.mock.calls.map((c: unknown[]) => c[0]).join('');
     expect(output).toContain('Running agent');
 
     progress.stop();
@@ -267,7 +267,7 @@ describe('createProgressIndicator', () => {
 
     progress.stop();
 
-    const output = writeSpy.mock.calls.map(c => c[0]).join('');
+    const output = writeSpy.mock.calls.map((c: unknown[]) => c[0]).join('');
     // Should contain ANSI clear-line escape
     expect(output).toContain('\x1b[K');
   });
