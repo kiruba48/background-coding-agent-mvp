@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { loadHistory, saveHistory, getPrompt, renderResultBlock } from './repl.js';
+import { loadHistory, saveHistory, getPrompt, renderResultBlock, createProgressIndicator } from './repl.js';
 import type { ReplState } from '../../repl/types.js';
 import type { RetryResult } from '../../types.js';
 
@@ -12,6 +12,11 @@ vi.mock('node:fs', async (importOriginal) => {
     readFileSync: vi.fn(),
     writeFileSync: vi.fn(),
     mkdirSync: vi.fn(),
+    lstatSync: vi.fn().mockImplementation(() => {
+      const err = new Error('ENOENT') as NodeJS.ErrnoException;
+      err.code = 'ENOENT';
+      throw err;
+    }),
   };
 });
 
@@ -66,18 +71,18 @@ describe('saveHistory', () => {
     vi.resetAllMocks();
   });
 
-  it('creates directory with recursive option', async () => {
+  it('creates directory with recursive option and 0o700 mode', async () => {
     const { mkdirSync } = await import('node:fs');
 
     saveHistory(['cmd1', 'cmd2']);
 
     expect(vi.mocked(mkdirSync)).toHaveBeenCalledWith(
       expect.stringContaining('.config'),
-      { recursive: true },
+      { recursive: true, mode: 0o700 },
     );
   });
 
-  it('writes history lines joined by newline', async () => {
+  it('writes history lines joined by newline with 0o600 mode', async () => {
     const { writeFileSync } = await import('node:fs');
 
     saveHistory(['update lodash', 'fix tests']);
@@ -85,7 +90,17 @@ describe('saveHistory', () => {
     expect(vi.mocked(writeFileSync)).toHaveBeenCalledWith(
       expect.stringContaining('history'),
       'update lodash\nfix tests',
+      { mode: 0o600 },
     );
+  });
+
+  it('skips write when history file is a symlink', async () => {
+    const { writeFileSync, lstatSync } = await import('node:fs');
+    vi.mocked(lstatSync).mockReturnValue({ isSymbolicLink: () => true } as any);
+
+    saveHistory(['cmd1']);
+
+    expect(vi.mocked(writeFileSync)).not.toHaveBeenCalled();
   });
 
   it('does not throw when write fails (non-fatal)', async () => {
@@ -191,5 +206,69 @@ describe('renderResultBlock', () => {
     renderResultBlock(result);
     const allOutput = logSpy.mock.calls.flat().join('\n');
     expect(allOutput).toContain('APPROVE');
+  });
+});
+
+// ─── createProgressIndicator ─────────────────────────────────────────────────
+
+describe('createProgressIndicator', () => {
+  let writeSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    writeSpy.mockRestore();
+  });
+
+  it('writes status line on start', () => {
+    const progress = createProgressIndicator();
+    progress.start();
+
+    expect(writeSpy).toHaveBeenCalled();
+    const output = writeSpy.mock.calls.map(c => c[0]).join('');
+    expect(output).toContain('Resolving version');
+
+    progress.stop();
+  });
+
+  it('updates elapsed time on interval tick', () => {
+    const progress = createProgressIndicator();
+    progress.start();
+    writeSpy.mockClear();
+
+    vi.advanceTimersByTime(3000);
+
+    const output = writeSpy.mock.calls.map(c => c[0]).join('');
+    expect(output).toContain('3s');
+
+    progress.stop();
+  });
+
+  it('advances phase label after 5 seconds', () => {
+    const progress = createProgressIndicator();
+    progress.start();
+
+    vi.advanceTimersByTime(6000);
+
+    const output = writeSpy.mock.calls.map(c => c[0]).join('');
+    expect(output).toContain('Running agent');
+
+    progress.stop();
+  });
+
+  it('clears line on stop', () => {
+    const progress = createProgressIndicator();
+    progress.start();
+    writeSpy.mockClear();
+
+    progress.stop();
+
+    const output = writeSpy.mock.calls.map(c => c[0]).join('');
+    // Should contain ANSI clear-line escape
+    expect(output).toContain('\x1b[K');
   });
 });

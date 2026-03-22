@@ -61,13 +61,14 @@ describe('parseIntent coordinator', () => {
       dep: 'recharts',
       version: 'latest',
       confidence: 'high',
+      createPr: false,
       clarifications: [],
     });
   });
 
   describe('fast-path success — no LLM call', () => {
     it('returns high confidence result via fast-path without calling LLM', async () => {
-      const fastResult: FastPathResult = { dep: 'recharts', version: 'latest', project: null };
+      const fastResult: FastPathResult = { dep: 'recharts', version: 'latest', project: null, createPr: false };
       mockFastPathParse.mockReturnValue(fastResult);
       mockValidateDepInManifest.mockResolvedValue(true);
       mockDetectTaskType.mockResolvedValue('npm-dependency-update');
@@ -87,7 +88,7 @@ describe('parseIntent coordinator', () => {
     });
 
     it('uses the repo path from options for manifest validation', async () => {
-      const fastResult: FastPathResult = { dep: 'recharts', version: '2.0.0', project: null };
+      const fastResult: FastPathResult = { dep: 'recharts', version: '2.0.0', project: null, createPr: false };
       mockFastPathParse.mockReturnValue(fastResult);
       mockValidateDepInManifest.mockResolvedValue(true);
       mockDetectTaskType.mockResolvedValue('npm-dependency-update');
@@ -101,7 +102,7 @@ describe('parseIntent coordinator', () => {
 
   describe('fast-path fallthrough to LLM', () => {
     it('calls LLM when dep not found in manifest', async () => {
-      const fastResult: FastPathResult = { dep: 'unknown-dep', version: 'latest', project: null };
+      const fastResult: FastPathResult = { dep: 'unknown-dep', version: 'latest', project: null, createPr: false };
       mockFastPathParse.mockReturnValue(fastResult);
       mockValidateDepInManifest.mockResolvedValue(false); // dep not in manifest
 
@@ -124,6 +125,7 @@ describe('parseIntent coordinator', () => {
           dep: 'recharts',
           version: null,
           confidence: 'high' as const,
+          createPr: false,
           clarifications: [],
         };
       });
@@ -146,7 +148,7 @@ describe('parseIntent coordinator', () => {
     });
 
     it('calls LLM when fast-path matched but detectTaskType returns null', async () => {
-      const fastResult: FastPathResult = { dep: 'recharts', version: 'latest', project: null };
+      const fastResult: FastPathResult = { dep: 'recharts', version: 'latest', project: null, createPr: false };
       mockFastPathParse.mockReturnValue(fastResult);
       mockValidateDepInManifest.mockResolvedValue(true);
       mockDetectTaskType.mockResolvedValue(null); // ambiguous — both or neither manifest
@@ -176,6 +178,7 @@ describe('parseIntent coordinator', () => {
         dep: null,
         version: null,
         confidence: 'high',
+        createPr: false,
         clarifications: [],
       });
 
@@ -195,7 +198,7 @@ describe('parseIntent coordinator', () => {
         has: vi.fn().mockReturnValue(true),
       });
 
-      const fastResult: FastPathResult = { dep: 'recharts', version: 'latest', project: 'myapp' };
+      const fastResult: FastPathResult = { dep: 'recharts', version: 'latest', project: 'myapp', createPr: false };
       mockFastPathParse.mockReturnValue(fastResult);
       mockValidateDepInManifest.mockResolvedValue(true);
       mockDetectTaskType.mockResolvedValue('npm-dependency-update');
@@ -212,7 +215,7 @@ describe('parseIntent coordinator', () => {
         resolve: vi.fn().mockReturnValue('/from/registry'),
       });
 
-      const fastResult: FastPathResult = { dep: 'recharts', version: 'latest', project: 'myapp' };
+      const fastResult: FastPathResult = { dep: 'recharts', version: 'latest', project: 'myapp', createPr: false };
       mockFastPathParse.mockReturnValue(fastResult);
       mockValidateDepInManifest.mockResolvedValue(true);
       mockDetectTaskType.mockResolvedValue('npm-dependency-update');
@@ -232,6 +235,7 @@ describe('parseIntent coordinator', () => {
         dep: 'recharts',
         version: null,
         confidence: 'low',
+        createPr: false,
         clarifications: [
           { label: 'Update recharts to latest', intent: 'update recharts' },
           { label: 'Update react-charts', intent: 'update react-charts' },
@@ -255,6 +259,7 @@ describe('parseIntent coordinator', () => {
         dep: 'recharts',
         version: 'latest',
         confidence: 'high',
+        createPr: false,
         clarifications: [],
       });
 
@@ -272,6 +277,7 @@ describe('parseIntent coordinator', () => {
         dep: null,
         version: null,
         confidence: 'low',
+        createPr: false,
         clarifications: [], // empty
       });
 
@@ -290,7 +296,7 @@ describe('parseIntent coordinator', () => {
         return true;
       });
 
-      const fastResult: FastPathResult = { dep: 'recharts', version: 'latest', project: null };
+      const fastResult: FastPathResult = { dep: 'recharts', version: 'latest', project: null, createPr: false };
       mockFastPathParse.mockReturnValue(fastResult);
       mockDetectTaskType.mockResolvedValue('npm-dependency-update');
 

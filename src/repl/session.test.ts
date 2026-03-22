@@ -205,8 +205,8 @@ describe('src/repl/session.ts', () => {
     expect(mockRunAgent).not.toHaveBeenCalled();
   });
 
-  // Test 7: processInput updates state.currentProject when task resolves a repo path
-  it('7. processInput updates state.currentProject with resolved repo path', async () => {
+  // Test 7: processInput updates state.currentProject AFTER confirmation
+  it('7. processInput updates state.currentProject after confirmation, not before', async () => {
     const intent = makeIntent({ repo: '/home/user/my-project' });
     const retryResult = makeRetryResult();
     mockParseIntent.mockResolvedValue(intent);
@@ -216,13 +216,34 @@ describe('src/repl/session.ts', () => {
     expect(state.currentProject).toBeNull();
 
     const callbacks = makeCallbacks({
-      confirm: vi.fn().mockResolvedValue(intent),
+      confirm: vi.fn().mockImplementation(async () => {
+        // State should NOT be updated yet during confirmation
+        expect(state.currentProject).toBeNull();
+        return intent;
+      }),
     });
 
     await processInput('update lodash', state, callbacks, registry);
 
+    // State updated after confirm returns
     expect(state.currentProject).toBe('/home/user/my-project');
     expect(state.currentProjectName).toBe('my-project');
+  });
+
+  // Test 7b: state not updated when user cancels at confirm
+  it('7b. state not updated when user cancels at confirm', async () => {
+    const intent = makeIntent({ repo: '/home/user/my-project' });
+    mockParseIntent.mockResolvedValue(intent);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(null),
+    });
+
+    await processInput('update lodash', state, callbacks, registry);
+
+    expect(state.currentProject).toBeNull();
+    expect(mockRunAgent).not.toHaveBeenCalled();
   });
 
   // Test 8: processInput passes skipDockerChecks: true to runAgent context
@@ -270,5 +291,85 @@ describe('src/repl/session.ts', () => {
     const state = createSessionState();
     expect(state.currentProject).toBeNull();
     expect(state.currentProjectName).toBeNull();
+  });
+
+  // Test 11: input exceeding MAX_INPUT_LENGTH is rejected without LLM dispatch
+  it('11. rejects input exceeding max length without calling parseIntent', async () => {
+    const state = createSessionState();
+    const callbacks = makeCallbacks();
+    const longInput = 'a'.repeat(2001);
+
+    const output = await processInput(longInput, state, callbacks, registry);
+
+    expect(output.action).toBe('continue');
+    expect(output.result).toBeNull();
+    expect(mockParseIntent).not.toHaveBeenCalled();
+  });
+
+  // Test 12: clarify re-parse that returns low confidence bails out
+  it('12. clarify re-parse returning low confidence bails out gracefully', async () => {
+    const lowIntent = makeIntent({
+      confidence: 'low',
+      clarifications: [
+        { label: 'Update lodash', intent: 'update lodash' },
+      ],
+    });
+    const stillLow = makeIntent({ confidence: 'low' });
+
+    mockParseIntent
+      .mockResolvedValueOnce(lowIntent)
+      .mockResolvedValueOnce(stillLow);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      clarify: vi.fn().mockResolvedValue('update lodash'),
+    });
+
+    const output = await processInput('update something', state, callbacks, registry);
+
+    expect(output.action).toBe('continue');
+    expect(output.result).toBeNull();
+    expect(callbacks.confirm).not.toHaveBeenCalled();
+    expect(mockRunAgent).not.toHaveBeenCalled();
+  });
+
+  it('13. calls onAgentStart before runAgent and onAgentEnd after', async () => {
+    const intent = makeIntent();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(makeRetryResult());
+
+    const callOrder: string[] = [];
+    const onAgentStart = vi.fn(() => callOrder.push('start'));
+    const onAgentEnd = vi.fn(() => callOrder.push('end'));
+    mockRunAgent.mockImplementation(async () => {
+      callOrder.push('runAgent');
+      return makeRetryResult();
+    });
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({ onAgentStart, onAgentEnd });
+
+    await processInput('update lodash', state, callbacks, registry);
+
+    expect(onAgentStart).toHaveBeenCalledOnce();
+    expect(onAgentEnd).toHaveBeenCalledOnce();
+    expect(callOrder).toEqual(['start', 'runAgent', 'end']);
+  });
+
+  it('14. calls onAgentEnd even when runAgent throws', async () => {
+    const intent = makeIntent();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockRejectedValue(new Error('agent crashed'));
+
+    const onAgentStart = vi.fn();
+    const onAgentEnd = vi.fn();
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({ onAgentStart, onAgentEnd });
+
+    await expect(processInput('update lodash', state, callbacks, registry)).rejects.toThrow('agent crashed');
+
+    expect(onAgentStart).toHaveBeenCalledOnce();
+    expect(onAgentEnd).toHaveBeenCalledOnce();
   });
 });

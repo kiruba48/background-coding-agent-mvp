@@ -391,7 +391,7 @@ describe('oneShotCommand', () => {
       MockProjectRegistryCtor.mockImplementation(makeRegistryCtor(registryInstance));
 
       // fast-path extracts project name from NL
-      mockFastPathParse.mockReturnValue({ dep: 'recharts', version: 'latest', project: 'unknownapp' });
+      mockFastPathParse.mockReturnValue({ dep: 'recharts', version: 'latest', project: 'unknownapp', createPr: false });
 
       const rl = makeRlMock(['/path/to/unknownapp']);
       mockCreateInterface.mockReturnValue(rl as any);

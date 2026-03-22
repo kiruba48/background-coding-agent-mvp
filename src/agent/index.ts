@@ -139,11 +139,32 @@ export async function runAgent(
   // Create metrics collector
   const metrics = new MetricsCollector();
 
+  // Resolve "latest" to a concrete version on the host (which has network access).
+  // The Docker agent has no network — without this it wastes 10+ turns trying npm show/curl.
+  let resolvedVersion = options.targetVersion;
+  if (options.taskType === 'npm-dependency-update' && options.dep && resolvedVersion === 'latest') {
+    childLogger.info({ dep: options.dep }, 'Resolving "latest" version on host...');
+    try {
+      const { stdout } = await execFileAsync('npm', ['show', options.dep, 'version'], {
+        timeout: 30_000,
+        maxBuffer: 1024 * 1024,
+      });
+      const version = stdout.trim();
+      if (version && /^\d+\.\d+\.\d+/.test(version)) {
+        childLogger.info({ dep: options.dep, version }, 'Resolved latest version');
+        resolvedVersion = version;
+      }
+    } catch (err: unknown) {
+      childLogger.warn({ dep: options.dep, error: (err as Error).message },
+        'Failed to resolve latest version on host — agent will attempt resolution inside Docker');
+    }
+  }
+
   // Construct prompt from task type
   const prompt = buildPrompt({
     taskType: options.taskType,
     dep: options.dep,
-    targetVersion: options.targetVersion,
+    targetVersion: resolvedVersion,
     description: options.description,
   });
 

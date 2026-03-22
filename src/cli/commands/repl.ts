@@ -1,7 +1,8 @@
 import { createInterface, type Interface } from 'node:readline/promises';
 import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, lstatSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { createSpinner } from 'nanospinner';
 import pc from 'picocolors';
 import { assertDockerRunning, ensureNetworkExists, buildImageIfNeeded } from '../docker/index.js';
@@ -10,10 +11,10 @@ import { createSessionState, processInput } from '../../repl/session.js';
 import { displayIntent } from '../../intent/confirm-loop.js';
 import type { ReplState, SessionCallbacks } from '../../repl/types.js';
 import type { RetryResult } from '../../types.js';
-import type { ResolvedIntent } from '../../intent/types.js';
 
 const HISTORY_FILE = join(homedir(), '.config', 'background-agent', 'history');
 const MAX_HISTORY = 500;
+const HISTORY_FILE_MODE = 0o600; // owner-only read/write
 
 export function loadHistory(): string[] {
   try {
@@ -32,8 +33,15 @@ export function loadHistory(): string[] {
 
 export function saveHistory(history: string[]): void {
   try {
-    mkdirSync(dirname(HISTORY_FILE), { recursive: true });
-    writeFileSync(HISTORY_FILE, history.join('\n'));
+    mkdirSync(dirname(HISTORY_FILE), { recursive: true, mode: 0o700 });
+    // Guard against symlink-based overwrites
+    try {
+      const stat = lstatSync(HISTORY_FILE);
+      if (stat.isSymbolicLink()) return;
+    } catch {
+      // File doesn't exist yet — safe to create
+    }
+    writeFileSync(HISTORY_FILE, history.join('\n'), { mode: HISTORY_FILE_MODE });
   } catch {
     // Non-fatal — history persistence failure should not crash the REPL
   }
@@ -44,7 +52,61 @@ export function getPrompt(state: ReplState): string {
   return pc.bold(`${name}> `);
 }
 
-export function renderResultBlock(result: RetryResult, _intent?: ResolvedIntent): void {
+/** Format elapsed seconds as human-friendly string (e.g. "1m 23s", "45s") */
+function formatElapsed(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return s > 0 ? `${m}m ${s}s` : `${m}m`;
+}
+
+const AGENT_PHASES = [
+  'Resolving version',
+  'Running agent',
+  'Verifying changes',
+  'Evaluating result',
+] as const;
+
+/** Creates a live progress indicator that shows elapsed time while the agent runs. */
+export function createProgressIndicator() {
+  let interval: ReturnType<typeof setInterval> | null = null;
+  let startTime = 0;
+  let phaseIndex = 0;
+
+  function render() {
+    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+
+    // Advance phase label based on elapsed time for visual feedback
+    if (elapsed >= 90 && phaseIndex < 3) phaseIndex = 3;
+    else if (elapsed >= 30 && phaseIndex < 2) phaseIndex = 2;
+    else if (elapsed >= 5 && phaseIndex < 1) phaseIndex = 1;
+
+    const phase = AGENT_PHASES[phaseIndex];
+    const line = `  ${pc.yellow('⟳')} ${pc.yellow(phase + '…')} ${pc.dim(`(${formatElapsed(elapsed)})`)}`;
+
+    // Clear current line and write status
+    process.stdout.write(`\r\x1b[K${line}`);
+  }
+
+  return {
+    start() {
+      startTime = Date.now();
+      phaseIndex = 0;
+      render();
+      interval = setInterval(render, 1000);
+    },
+    stop() {
+      if (interval) {
+        clearInterval(interval);
+        interval = null;
+      }
+      // Clear the status line
+      process.stdout.write('\r\x1b[K');
+    },
+  };
+}
+
+export function renderResultBlock(result: RetryResult): void {
   const statusColor =
     result.finalStatus === 'success'
       ? pc.green
@@ -71,6 +133,10 @@ export function renderResultBlock(result: RetryResult, _intent?: ResolvedIntent)
   console.log(`  │  ${pc.bold('Verify:')}    ${verifyResult.padEnd(28)}│`);
   console.log(`  │  ${pc.bold('Judge:')}     ${judgeVerdict.padEnd(28)}│`);
   console.log(pc.dim('  └─────────────────────────────────────────┘'));
+
+  if (result.error) {
+    console.log(pc.red(`  Error: ${result.error}`));
+  }
   console.log('');
 }
 
@@ -112,8 +178,10 @@ export async function replCommand(): Promise<void> {
   const projectCount = Object.keys(projects).length;
 
   // Startup banner
+  const require = createRequire(import.meta.url);
+  const { version } = require('../../../package.json') as { version: string };
   console.log('');
-  console.log(`  ${pc.bold('background-agent v0.1.0')}`);
+  console.log(`  ${pc.bold(`background-agent v${version}`)}`);
   console.log(`  ${pc.green('Docker: ready')} ${pc.dim('|')} Projects: ${projectCount} registered`);
   console.log(pc.dim('  Type a task in natural language, or "exit" to quit.'));
   console.log('');
@@ -156,10 +224,12 @@ export async function replCommand(): Promise<void> {
     }
   });
 
-  // Ctrl+D — clean exit
+  // Ctrl+D — clean exit (flag prevents double "Goodbye" when quit command triggers close)
+  let quitting = false;
   rl.on('close', () => {
-    console.log(pc.dim('\n  Goodbye.\n'));
-    process.exit(0);
+    if (!quitting) {
+      console.log(pc.dim('\n  Goodbye.\n'));
+    }
   });
 
   // Build SessionCallbacks using the shared readline interface
@@ -194,12 +264,9 @@ export async function replCommand(): Promise<void> {
       current = await reparse(correction);
     }
 
-    // Final display after last correction
+    // Loop exhausted via corrections — show final parsed result
     displayIntent(current);
-    const finalAnswer = await askQuestion(rl, pc.bold('  Proceed? [Y/n] '), activeQuestionControllerRef);
-    if (finalAnswer === null) return null;
-    if (finalAnswer === '' || finalAnswer.toLowerCase() === 'y') return current;
-    console.log(pc.red('\n  Please try again with a clearer command'));
+    console.log(pc.red('\n  Max corrections reached. Please try again with a clearer command.'));
     return null;
   };
 
@@ -222,6 +289,7 @@ export async function replCommand(): Promise<void> {
 
   // Main REPL loop
   const state = createSessionState();
+  const progress = createProgressIndicator();
 
   while (true) {
     rl.setPrompt(getPrompt(state));
@@ -229,30 +297,35 @@ export async function replCommand(): Promise<void> {
     if (input === null) continue; // Ctrl+C at idle — re-prompt
 
     // Create per-task AbortController
-    activeTaskController = new AbortController();
+    const taskController = new AbortController();
+    activeTaskController = taskController;
     firstSigint = false;
 
     const callbacks: SessionCallbacks = {
       confirm: confirmCb,
       clarify: clarifyCb,
-      getSignal: () => activeTaskController!.signal,
+      getSignal: () => taskController.signal,
+      onAgentStart: () => progress.start(),
+      onAgentEnd: () => progress.stop(),
     };
 
     try {
       const output = await processInput(input, state, callbacks, registry);
 
       if (output.action === 'quit') {
+        quitting = true;
         console.log(pc.dim('\n  Goodbye.\n'));
         rl.close();
         return;
       }
 
       if (output.result) {
-        renderResultBlock(output.result, output.intent);
+        renderResultBlock(output.result);
       } else if (output.result === null) {
         // User cancelled — re-prompt silently
       }
     } catch (err) {
+      progress.stop(); // Ensure progress indicator is cleared on error
       if ((err as Error).name === 'AbortError' || activeTaskController.signal.aborted) {
         const forced = (activeTaskController.signal.reason as Error | undefined)?.message === 'force';
         console.log(pc.yellow(`\n  Task cancelled${forced ? ' (forced)' : ''}.`));

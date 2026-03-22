@@ -7,37 +7,37 @@ import { fastPathParse, validateDepInManifest, detectTaskType } from './fast-pat
 describe('fastPathParse', () => {
   it('"update recharts" returns { dep: "recharts", version: "latest", project: null }', () => {
     const result = fastPathParse('update recharts');
-    expect(result).toEqual({ dep: 'recharts', version: 'latest', project: null });
+    expect(result).toEqual({ dep: 'recharts', version: 'latest', project: null, createPr: false });
   });
 
   it('"upgrade lodash" returns { dep: "lodash", version: "latest", project: null }', () => {
     const result = fastPathParse('upgrade lodash');
-    expect(result).toEqual({ dep: 'lodash', version: 'latest', project: null });
+    expect(result).toEqual({ dep: 'lodash', version: 'latest', project: null, createPr: false });
   });
 
   it('"bump @types/node" returns scoped package', () => {
     const result = fastPathParse('bump @types/node');
-    expect(result).toEqual({ dep: '@types/node', version: 'latest', project: null });
+    expect(result).toEqual({ dep: '@types/node', version: 'latest', project: null, createPr: false });
   });
 
   it('"update recharts to 2.15.0" returns explicit version', () => {
     const result = fastPathParse('update recharts to 2.15.0');
-    expect(result).toEqual({ dep: 'recharts', version: '2.15.0', project: null });
+    expect(result).toEqual({ dep: 'recharts', version: '2.15.0', project: null, createPr: false });
   });
 
   it('"update recharts in myapp" extracts project name', () => {
     const result = fastPathParse('update recharts in myapp');
-    expect(result).toEqual({ dep: 'recharts', version: 'latest', project: 'myapp' });
+    expect(result).toEqual({ dep: 'recharts', version: 'latest', project: 'myapp', createPr: false });
   });
 
   it('"update recharts for myapp" extracts project name using "for" preposition', () => {
     const result = fastPathParse('update recharts for myapp');
-    expect(result).toEqual({ dep: 'recharts', version: 'latest', project: 'myapp' });
+    expect(result).toEqual({ dep: 'recharts', version: 'latest', project: 'myapp', createPr: false });
   });
 
   it('"update recharts to 2.15.0 in myapp" returns version and project', () => {
     const result = fastPathParse('update recharts to 2.15.0 in myapp');
-    expect(result).toEqual({ dep: 'recharts', version: '2.15.0', project: 'myapp' });
+    expect(result).toEqual({ dep: 'recharts', version: '2.15.0', project: 'myapp', createPr: false });
   });
 
   it('"something completely different" returns null', () => {
@@ -54,17 +54,37 @@ describe('fastPathParse', () => {
 
   it('handles uppercase input (case insensitive)', () => {
     const result = fastPathParse('UPDATE recharts');
-    expect(result).toEqual({ dep: 'recharts', version: 'latest', project: null });
+    expect(result).toEqual({ dep: 'recharts', version: 'latest', project: null, createPr: false });
   });
 
   it('"update recharts in myapp to 2.15.0" matches reversed project-before-version order', () => {
     const result = fastPathParse('update recharts in myapp to 2.15.0');
-    expect(result).toEqual({ dep: 'recharts', version: '2.15.0', project: 'myapp' });
+    expect(result).toEqual({ dep: 'recharts', version: '2.15.0', project: 'myapp', createPr: false });
   });
 
   it('"update recharts for myapp to latest" matches reversed order with "for"', () => {
     const result = fastPathParse('update recharts for myapp to latest');
-    expect(result).toEqual({ dep: 'recharts', version: 'latest', project: 'myapp' });
+    expect(result).toEqual({ dep: 'recharts', version: 'latest', project: 'myapp', createPr: false });
+  });
+
+  it('"update lodash and create PR" sets createPr true', () => {
+    const result = fastPathParse('update lodash and create PR');
+    expect(result).toEqual({ dep: 'lodash', version: 'latest', project: null, createPr: true });
+  });
+
+  it('"update lodash in myapp and raise a pull request" sets createPr true', () => {
+    const result = fastPathParse('update lodash in myapp and raise a pull request');
+    expect(result).toEqual({ dep: 'lodash', version: 'latest', project: 'myapp', createPr: true });
+  });
+
+  it('"update lodash and open pr" sets createPr true (case insensitive)', () => {
+    const result = fastPathParse('update lodash and open pr');
+    expect(result).toEqual({ dep: 'lodash', version: 'latest', project: null, createPr: true });
+  });
+
+  it('"update lodash create PR" sets createPr true (no "and")', () => {
+    const result = fastPathParse('update lodash create PR');
+    expect(result).toEqual({ dep: 'lodash', version: 'latest', project: null, createPr: true });
   });
 });
 

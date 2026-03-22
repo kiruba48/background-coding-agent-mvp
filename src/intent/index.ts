@@ -67,6 +67,7 @@ export async function parseIntent(
           dep: fastResult.dep,
           version: fastResult.version,
           confidence: 'high',
+          createPr: fastResult.createPr || undefined,
         };
       }
     }
@@ -78,6 +79,8 @@ export async function parseIntent(
   const llmResult = await llmParse(input, manifestContext);
 
   // Step 4: Map LLM result to ResolvedIntent — pass through clarifications
+  // Merge createPr from fast-path (if it matched pattern but fell through) or LLM
+  const createPr = fastResult?.createPr || llmResult.createPr || false;
   const isGeneric = llmResult.taskType === 'unknown';
   return {
     taskType: isGeneric ? 'generic' : llmResult.taskType,
@@ -85,6 +88,7 @@ export async function parseIntent(
     dep: llmResult.dep,
     version: llmResult.version,
     confidence: llmResult.confidence,
+    createPr: createPr || undefined,
     description: isGeneric ? input : undefined,
     clarifications: llmResult.clarifications.length > 0 ? llmResult.clarifications : undefined,
   };

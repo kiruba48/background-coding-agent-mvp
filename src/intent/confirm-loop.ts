@@ -10,6 +10,7 @@ export function displayIntent(intent: ResolvedIntent): void {
   console.log(`    Project: ${pc.cyan(path.basename(intent.repo))}`);
   if (intent.dep) console.log(`    Dep:     ${pc.cyan(intent.dep)}`);
   if (intent.version) console.log(`    Version: ${pc.cyan(intent.version)}`);
+  if (intent.createPr) console.log(`    PR:      ${pc.cyan('yes')}`);
   console.log('');
 }
 
