@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { BetaMessage } from '@anthropic-ai/sdk/resources/beta/messages/messages.js';
 import { IntentSchema, type IntentResult } from './types.js';
+import type { TaskHistoryEntry } from '../repl/types.js';
 
 const MAX_INPUT_LENGTH = 500;
 
@@ -49,6 +50,14 @@ function escapeXml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+/** Build a session history XML block for the LLM prompt */
+function buildHistoryBlock(history: TaskHistoryEntry[]): string {
+  const lines = history.map((h, i) =>
+    `  ${i + 1}. ${h.taskType} | dep: ${h.dep ?? 'none'} | repo: ${h.repo} | status: ${h.status}`
+  );
+  return `<session_history>\nPrevious tasks this session (most recent last):\n${lines.join('\n')}\n</session_history>`;
+}
+
 /** Module-level client for connection reuse across calls */
 let sharedClient: Anthropic | null = null;
 function getClient(): Anthropic {
@@ -65,9 +74,16 @@ export class LlmParseError extends Error {
   }
 }
 
-export async function llmParse(input: string, manifestContext: string): Promise<IntentResult> {
+export async function llmParse(input: string, manifestContext: string, history?: TaskHistoryEntry[]): Promise<IntentResult> {
   const truncatedInput = input.length > MAX_INPUT_LENGTH ? input.slice(0, MAX_INPUT_LENGTH) : input;
   const client = getClient();
+
+  const hasHistory = history && history.length > 0;
+  const systemPrompt = hasHistory
+    ? INTENT_SYSTEM_PROMPT + '\n\nWhen the user says "also X", "now do X", "X too", or similar follow-up phrases, inherit taskType and repo from the most recent session_history entry unless the user explicitly specifies a different project.'
+    : INTENT_SYSTEM_PROMPT;
+
+  const historyBlock = hasHistory ? `\n\n${buildHistoryBlock(history)}\n` : '';
 
   let response: BetaMessage;
   try {
@@ -75,10 +91,10 @@ export async function llmParse(input: string, manifestContext: string): Promise<
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 512,
       stream: false,
-      system: INTENT_SYSTEM_PROMPT,
+      system: systemPrompt,
       messages: [{
         role: 'user',
-        content: `<manifest_context>\n${escapeXml(manifestContext)}\n</manifest_context>\n\n<user_input>${escapeXml(truncatedInput)}</user_input>`,
+        content: `<manifest_context>\n${escapeXml(manifestContext)}\n</manifest_context>${historyBlock}\n<user_input>${escapeXml(truncatedInput)}</user_input>`,
       }],
       betas: ['structured-outputs-2025-11-13'],
       output_config: { format: { type: 'json_schema', schema: OUTPUT_SCHEMA } },

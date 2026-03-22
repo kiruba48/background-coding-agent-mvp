@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { TaskHistoryEntry } from '../repl/types.js';
 
 // Shared mock for Anthropic client's beta.messages.create method
 const mockCreate = vi.fn();
@@ -143,6 +144,59 @@ describe('llmParse', () => {
     mockCreate.mockResolvedValue({ content: [{ type: 'text', text: 'not json' }] });
     await expect(llmParse('update recharts', 'deps')).rejects.toThrow(LlmParseError);
     await expect(llmParse('update recharts', 'deps')).rejects.toThrow('invalid JSON');
+  });
+
+  describe('session history injection', () => {
+    const sampleHistory: TaskHistoryEntry[] = [
+      { taskType: 'npm-dependency-update', dep: 'react', version: 'latest', repo: '/path/to/repo', status: 'success' },
+    ];
+
+    it('includes <session_history> in content when history is non-empty', async () => {
+      mockCreate.mockResolvedValue(makeResponse(VALID_RESPONSE));
+      await llmParse('update recharts', 'deps', sampleHistory);
+      const callArgs = mockCreate.mock.calls[0][0];
+      const userMessage = callArgs.messages[0].content as string;
+      expect(userMessage).toContain('<session_history>');
+    });
+
+    it('does NOT include <session_history> when history is empty', async () => {
+      mockCreate.mockResolvedValue(makeResponse(VALID_RESPONSE));
+      await llmParse('update recharts', 'deps', []);
+      const callArgs = mockCreate.mock.calls[0][0];
+      const userMessage = callArgs.messages[0].content as string;
+      expect(userMessage).not.toContain('<session_history>');
+    });
+
+    it('does NOT include <session_history> when history is undefined', async () => {
+      mockCreate.mockResolvedValue(makeResponse(VALID_RESPONSE));
+      await llmParse('update recharts', 'deps', undefined);
+      const callArgs = mockCreate.mock.calls[0][0];
+      const userMessage = callArgs.messages[0].content as string;
+      expect(userMessage).not.toContain('<session_history>');
+    });
+
+    it('includes follow-up guidance text in system prompt when history is non-empty', async () => {
+      mockCreate.mockResolvedValue(makeResponse(VALID_RESPONSE));
+      await llmParse('update recharts', 'deps', sampleHistory);
+      const callArgs = mockCreate.mock.calls[0][0];
+      expect(callArgs.system).toContain('also X');
+    });
+
+    it('does NOT include follow-up guidance text in system prompt when history is empty', async () => {
+      mockCreate.mockResolvedValue(makeResponse(VALID_RESPONSE));
+      await llmParse('update recharts', 'deps', []);
+      const callArgs = mockCreate.mock.calls[0][0];
+      expect(callArgs.system).not.toContain('also X');
+    });
+
+    it('includes task entry details in session_history block', async () => {
+      mockCreate.mockResolvedValue(makeResponse(VALID_RESPONSE));
+      await llmParse('update recharts', 'deps', sampleHistory);
+      const callArgs = mockCreate.mock.calls[0][0];
+      const userMessage = callArgs.messages[0].content as string;
+      expect(userMessage).toContain('npm-dependency-update');
+      expect(userMessage).toContain('/path/to/repo');
+    });
   });
 
   it('truncates input longer than 500 characters', async () => {

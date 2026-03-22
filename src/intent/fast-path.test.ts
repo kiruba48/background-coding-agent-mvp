@@ -88,6 +88,89 @@ describe('fastPathParse', () => {
   });
 });
 
+describe('follow-up patterns', () => {
+  it('"also update lodash" returns isFollowUp: true, dep: "lodash"', () => {
+    const result = fastPathParse('also update lodash');
+    expect(result).not.toBeNull();
+    expect(result?.isFollowUp).toBe(true);
+    expect(result?.dep).toBe('lodash');
+    expect(result?.version).toBe('latest');
+    expect(result?.project).toBeNull();
+    expect(result?.createPr).toBe(false);
+  });
+
+  it('"now do recharts" returns isFollowUp: true, dep: "recharts"', () => {
+    const result = fastPathParse('now do recharts');
+    expect(result).not.toBeNull();
+    expect(result?.isFollowUp).toBe(true);
+    expect(result?.dep).toBe('recharts');
+  });
+
+  it('"same for @types/node" returns isFollowUp: true, dep: "@types/node"', () => {
+    const result = fastPathParse('same for @types/node');
+    expect(result).not.toBeNull();
+    expect(result?.isFollowUp).toBe(true);
+    expect(result?.dep).toBe('@types/node');
+  });
+
+  it('"lodash too" returns isFollowUp: true, dep: "lodash"', () => {
+    const result = fastPathParse('lodash too');
+    expect(result).not.toBeNull();
+    expect(result?.isFollowUp).toBe(true);
+    expect(result?.dep).toBe('lodash');
+  });
+
+  it('"update lodash too" returns isFollowUp: true, dep: "lodash"', () => {
+    const result = fastPathParse('update lodash too');
+    expect(result).not.toBeNull();
+    expect(result?.isFollowUp).toBe(true);
+    expect(result?.dep).toBe('lodash');
+  });
+
+  it('"bump axios too" returns isFollowUp: true, dep: "axios"', () => {
+    const result = fastPathParse('bump axios too');
+    expect(result).not.toBeNull();
+    expect(result?.isFollowUp).toBe(true);
+    expect(result?.dep).toBe('axios');
+  });
+
+  it('"also fix the login bug" returns null (multi-word non-dep)', () => {
+    expect(fastPathParse('also fix the login bug')).toBeNull();
+  });
+
+  it('"also update the config file" returns null ("the" breaks dep character class)', () => {
+    expect(fastPathParse('also update the config file')).toBeNull();
+  });
+
+  it('"do the same for express" returns isFollowUp: true, dep: "express"', () => {
+    const result = fastPathParse('do the same for express');
+    expect(result).not.toBeNull();
+    expect(result?.isFollowUp).toBe(true);
+    expect(result?.dep).toBe('express');
+  });
+
+  it('"now bump @angular/core" returns isFollowUp: true, dep: "@angular/core"', () => {
+    const result = fastPathParse('now bump @angular/core');
+    expect(result).not.toBeNull();
+    expect(result?.isFollowUp).toBe(true);
+    expect(result?.dep).toBe('@angular/core');
+  });
+
+  it('standard "update recharts" does not set isFollowUp', () => {
+    const result = fastPathParse('update recharts');
+    expect(result).not.toBeNull();
+    expect(result?.isFollowUp).toBeFalsy();
+  });
+
+  it('"also update lodash and create PR" sets isFollowUp: true, dep: "lodash", createPr: true', () => {
+    const result = fastPathParse('also update lodash and create PR');
+    expect(result).not.toBeNull();
+    expect(result?.isFollowUp).toBe(true);
+    expect(result?.dep).toBe('lodash');
+    expect(result?.createPr).toBe(true);
+  });
+});
+
 describe('validateDepInManifest', () => {
   let tmpDir: string;
 

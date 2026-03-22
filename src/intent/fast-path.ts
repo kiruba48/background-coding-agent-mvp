@@ -3,6 +3,15 @@ import path from 'node:path';
 import type { FastPathResult } from './types.js';
 import { readPackageJson, readPomDependencies } from './manifest-utils.js';
 
+// Follow-up patterns: "also update X", "now do X", "same for X", "X too", "update X too", etc.
+// dep character class prevents false positives: "also fix the login bug" won't match
+// because "the" and spaces break the @?[a-z0-9\-._~/]+ character class
+const FOLLOW_UP_PATTERNS = [
+  /^(?:also\s+(?:update|upgrade|bump)|now\s+(?:do|update|upgrade|bump)|same\s+for|do\s+the\s+same\s+(?:for|with))\s+(?<dep>@?[a-z0-9\-._~/]+)\s*$/i,
+  /^(?:update|upgrade|bump)\s+(?<dep>@?[a-z0-9\-._~/]+)\s+too\s*$/i,
+  /^(?<dep>@?[a-z0-9\-._~/]+)\s+too\s*$/i,
+];
+
 // Patterns: "update|upgrade|bump <dep> [to <version>] [in|for <project>]"
 // Also matches reversed order: "update <dep> in <project> to <version>"
 const DEPENDENCY_PATTERNS = [
@@ -20,6 +29,20 @@ export function fastPathParse(input: string): FastPathResult | null {
   // Strip PR suffix before matching dependency patterns
   const createPr = PR_SUFFIX.test(trimmed);
   const cleaned = createPr ? trimmed.replace(PR_SUFFIX, '') : trimmed;
+
+  // Check follow-up patterns before standard dependency patterns
+  for (const pattern of FOLLOW_UP_PATTERNS) {
+    const m = cleaned.match(pattern);
+    if (m?.groups) {
+      return {
+        dep: m.groups.dep,
+        version: 'latest',
+        project: null,
+        createPr,
+        isFollowUp: true,
+      };
+    }
+  }
 
   for (const pattern of DEPENDENCY_PATTERNS) {
     const m = cleaned.match(pattern);
