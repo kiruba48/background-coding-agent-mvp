@@ -24,7 +24,7 @@ vi.mock('node:child_process', () => ({
 }));
 
 // Import AFTER mocks are set up
-import { RetryOrchestrator } from './retry.js';
+import { RetryOrchestrator, PreVerifyError } from './retry.js';
 import { ClaudeCodeSession } from './claude-code-session.js';
 
 const MockClaudeCodeSession = ClaudeCodeSession as ReturnType<typeof vi.fn>;
@@ -403,8 +403,8 @@ describe('RetryOrchestrator', () => {
     expect(preVerify).not.toHaveBeenCalled();
   });
 
-  it('17. preVerify failure returns finalStatus failed immediately (no retry)', async () => {
-    const preVerify = vi.fn().mockRejectedValue(new Error('npm install failed: invalid version'));
+  it('17. preVerify terminal failure returns finalStatus failed immediately (no retry)', async () => {
+    const preVerify = vi.fn().mockRejectedValue(new PreVerifyError('npm install failed: network timeout', false));
     const verifier = vi.fn().mockResolvedValue(makePassedVerification());
     const session = createMockSession(makeSessionResult());
     MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
@@ -419,11 +419,59 @@ describe('RetryOrchestrator', () => {
     expect(result.finalStatus).toBe('failed');
     expect(result.attempts).toBe(1);
     expect(result.error).toContain('Pre-verify failed');
-    expect(result.error).toContain('npm install failed: invalid version');
-    // Verifier must NOT have been called — preVerify failure is terminal
+    expect(result.error).toContain('npm install failed: network timeout');
+    // Verifier must NOT have been called — terminal preVerify failure
     expect(verifier).not.toHaveBeenCalled();
     // Only 1 session created (no retry)
     expect(MockClaudeCodeSession.mock.calls).toHaveLength(1);
+  });
+
+  it('17b. preVerify retryable ERESOLVE failure feeds into retry loop', async () => {
+    const preVerify = vi.fn()
+      .mockRejectedValueOnce(new PreVerifyError('npm install failed:\nnpm ERR! ERESOLVE could not resolve', true))
+      .mockResolvedValueOnce(undefined); // succeeds on second attempt
+    const verifier = vi.fn().mockResolvedValue(makePassedVerification());
+
+    const session1 = createMockSession(makeSessionResult());
+    const session2 = createMockSession(makeSessionResult());
+    MockClaudeCodeSession
+      .mockImplementationOnce(function() { return session1; })
+      .mockImplementationOnce(function() { return session2; });
+
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace' },
+      { maxRetries: 3, verifier, preVerify }
+    );
+
+    const result = await orchestrator.run('update eslint');
+
+    expect(result.finalStatus).toBe('success');
+    expect(result.attempts).toBe(2);
+    expect(preVerify).toHaveBeenCalledTimes(2);
+    expect(verifier).toHaveBeenCalledOnce();
+    expect(MockClaudeCodeSession.mock.calls).toHaveLength(2);
+    expect(result.verificationResults).toHaveLength(2);
+    expect(result.verificationResults[0].passed).toBe(false);
+    expect(result.verificationResults[0].errors[0].summary).toContain('dependency conflict');
+  });
+
+  it('17c. non-PreVerifyError in preVerify is always terminal', async () => {
+    const preVerify = vi.fn().mockRejectedValue(new Error('unexpected crash'));
+    const verifier = vi.fn().mockResolvedValue(makePassedVerification());
+    const session = createMockSession(makeSessionResult());
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
+
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace' },
+      { maxRetries: 3, verifier, preVerify }
+    );
+
+    const result = await orchestrator.run('Fix the bug');
+
+    expect(result.finalStatus).toBe('failed');
+    expect(result.attempts).toBe(1);
+    expect(result.error).toContain('unexpected crash');
+    expect(verifier).not.toHaveBeenCalled();
   });
 
   it('18. retry loop without preVerify works exactly as before (backwards compatible)', async () => {

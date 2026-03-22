@@ -5,11 +5,15 @@ import type { ProjectRegistry as ProjectRegistryType } from '../agent/registry.j
 import type { TaskHistoryEntry } from '../repl/types.js';
 
 // Mock all dependencies before importing parseIntent
-vi.mock('./fast-path.js', () => ({
-  fastPathParse: vi.fn(),
-  validateDepInManifest: vi.fn(),
-  detectTaskType: vi.fn(),
-}));
+vi.mock('./fast-path.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./fast-path.js')>();
+  return {
+    ...actual,
+    fastPathParse: vi.fn(),
+    validateDepInManifest: vi.fn(),
+    detectTaskType: vi.fn(),
+  };
+});
 
 vi.mock('./context-scanner.js', () => ({
   readManifestDeps: vi.fn(),
@@ -313,9 +317,9 @@ describe('parseIntent coordinator', () => {
 
       expect(result.taskType).toBe('npm-dependency-update');
       expect(result.dep).toBe('lodash');
-      expect(result.inheritedFields).toBeInstanceOf(Set);
-      expect(result.inheritedFields?.has('taskType')).toBe(true);
-      expect(result.inheritedFields?.has('repo')).toBe(true);
+      expect(result.inheritedFields).toEqual(['taskType', 'repo']);
+      expect(result.inheritedFields?.includes('taskType')).toBe(true);
+      expect(result.inheritedFields?.includes('repo')).toBe(true);
       expect(mockLlmParse).not.toHaveBeenCalled();
     });
 

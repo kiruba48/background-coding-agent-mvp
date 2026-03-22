@@ -9,6 +9,18 @@ import { ErrorSummarizer } from './summarizer.js';
 const execFileAsync = promisify(execFile);
 
 /**
+ * Typed error for preVerify hook failures.
+ * `retryable` = true means the agent can fix this (e.g. ERESOLVE peer dep conflict).
+ * `retryable` = false means it's terminal (e.g. network/registry down).
+ */
+export class PreVerifyError extends Error {
+  constructor(message: string, public readonly retryable: boolean) {
+    super(message);
+    this.name = 'PreVerifyError';
+  }
+}
+
+/**
  * RetryOrchestrator wraps ClaudeCodeSession in an outer retry loop.
  *
  * Handles session-level retries: when a session succeeds but verification
@@ -142,12 +154,27 @@ export class RetryOrchestrator {
       }
 
       // Run pre-verification hook (e.g., host-side npm install for lockfile regen).
-      // Runs after session succeeds and before verifier — failure is terminal (no retry).
+      // Retryable errors (ERESOLVE) feed into the retry loop; terminal errors (network) bail out.
       if (this.retryConfig.preVerify) {
         try {
           await this.retryConfig.preVerify(this.config.workspaceDir);
         } catch (err) {
-          logger?.error({ attempt, err }, 'Pre-verify hook failed');
+          const isRetryable = err instanceof PreVerifyError && err.retryable;
+          if (isRetryable) {
+            logger?.warn({ attempt }, 'Pre-verify failed with retryable error, feeding to retry loop');
+            const preVerifyVerification: VerificationResult = {
+              passed: false,
+              errors: [{
+                type: 'build',
+                summary: `npm install dependency conflict — agent must fix package.json to resolve`,
+                rawOutput: err.message,
+              }],
+              durationMs: 0,
+            };
+            verificationResults.push(preVerifyVerification);
+            continue; // next attempt with error context
+          }
+          logger?.error({ attempt, err }, 'Pre-verify hook failed (terminal)');
           return {
             finalStatus: 'failed',
             attempts: attempt,

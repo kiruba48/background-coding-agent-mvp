@@ -1,6 +1,6 @@
 import path from 'node:path';
 import pc from 'picocolors';
-import { fastPathParse, validateDepInManifest, detectTaskType } from './fast-path.js';
+import { fastPathParse, validateDepInManifest, detectTaskType, FOLLOW_UP_PREFIX, FOLLOW_UP_TOO_SUFFIX } from './fast-path.js';
 import { readManifestDeps } from './context-scanner.js';
 import { llmParse } from './llm-parser.js';
 import { ProjectRegistry } from '../agent/registry.js';
@@ -18,6 +18,7 @@ export interface ParseOptions {
   repoPath?: string;        // explicit repo path (from -r flag or CLI)
   registry?: ProjectRegistry; // for resolving project names from NL
   history?: TaskHistoryEntry[]; // recent task history for multi-turn follow-up context
+  _depth?: number;            // internal: recursion depth guard for follow-up stripping
 }
 
 /**
@@ -61,21 +62,19 @@ export async function parseIntent(
           dep: fastResult.dep,
           version: fastResult.version,
           confidence: 'high',
-          createPr: fastResult.createPr || undefined,
-          inheritedFields: new Set(['taskType', 'repo'] as const),
+          createPr: fastResult.createPr ? true : undefined,
+          inheritedFields: ['taskType', 'repo'],
         };
       }
       // dep not in manifest — fall through to LLM with history (repoPath stays as inheritedRepo)
       repoPath = resolvedRepo;
-    } else {
+    } else if (!(options._depth)) {
       // No history: graceful degradation — strip follow-up prefix and re-parse as fresh
-      const FOLLOW_UP_PREFIX = /^(?:also\s+(?:update|upgrade|bump)\s+|now\s+(?:do|update|upgrade|bump)\s+|same\s+for\s+|do\s+the\s+same\s+(?:for|with)\s+)/i;
-      const TOO_SUFFIX = /\s+too\s*$/i;
       let stripped = input.replace(FOLLOW_UP_PREFIX, '');
-      stripped = stripped.replace(TOO_SUFFIX, '');
+      stripped = stripped.replace(FOLLOW_UP_TOO_SUFFIX, '');
       if (stripped !== input) {
-        // Re-enter parseIntent with stripped input (no history to avoid recursion)
-        return parseIntent(stripped, { ...options, history: undefined });
+        // Re-enter parseIntent with stripped input (depth=1 prevents further recursion)
+        return parseIntent(stripped, { ...options, history: undefined, _depth: 1 });
       }
       // Could not strip — fall through to LLM
     }
@@ -107,7 +106,7 @@ export async function parseIntent(
           dep: fastResult.dep,
           version: fastResult.version,
           confidence: 'high',
-          createPr: fastResult.createPr || undefined,
+          createPr: fastResult.createPr ? true : undefined,
         };
       }
     }
@@ -120,7 +119,7 @@ export async function parseIntent(
 
   // Step 4: Map LLM result to ResolvedIntent — pass through clarifications
   // Merge createPr from fast-path (if it matched pattern but fell through) or LLM
-  const createPr = fastResult?.createPr || llmResult.createPr || false;
+  const createPr = fastResult?.createPr || llmResult.createPr;
   const isGeneric = llmResult.taskType === 'unknown';
   return {
     taskType: isGeneric ? 'generic' : llmResult.taskType,
@@ -128,7 +127,7 @@ export async function parseIntent(
     dep: llmResult.dep,
     version: llmResult.version,
     confidence: llmResult.confidence,
-    createPr: createPr || undefined,
+    createPr: createPr ? true : undefined,
     description: isGeneric ? input : undefined,
     clarifications: llmResult.clarifications.length > 0 ? llmResult.clarifications : undefined,
   };

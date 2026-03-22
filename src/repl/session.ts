@@ -64,6 +64,7 @@ export async function processInput(
 
   // Guard against excessively long input before LLM dispatch
   if (trimmed.length > MAX_INPUT_LENGTH) {
+    console.error(pc.yellow(`  Input too long (max ${MAX_INPUT_LENGTH} chars). Please shorten your request.`));
     return { action: 'continue', result: null };
   }
 
@@ -136,7 +137,7 @@ export async function processInput(
     historyStatus = result.finalStatus === 'success' ? 'success' : 'failed';
     return { action: 'continue', result, intent: confirmed };
   } catch (err) {
-    historyStatus = (err as Error).name === 'AbortError' ? 'cancelled' : 'failed';
+    historyStatus = err instanceof Error && err.name === 'AbortError' ? 'cancelled' : 'failed';
     throw err;
   } finally {
     callbacks.onAgentEnd?.();

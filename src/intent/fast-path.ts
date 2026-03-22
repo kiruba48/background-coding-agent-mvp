@@ -12,6 +12,11 @@ const FOLLOW_UP_PATTERNS = [
   /^(?<dep>@?[a-z0-9\-._~/]+)\s+too\s*$/i,
 ];
 
+// Stripping regexes for follow-up prefix/suffix removal in no-history fallback path.
+// Exported so parseIntent (index.ts) uses the same source of truth as detection above.
+export const FOLLOW_UP_PREFIX = /^(?:also\s+(?:update|upgrade|bump)\s+|now\s+(?:do|update|upgrade|bump)\s+|same\s+for\s+|do\s+the\s+same\s+(?:for|with)\s+)/i;
+export const FOLLOW_UP_TOO_SUFFIX = /\s+too\s*$/i;
+
 // Patterns: "update|upgrade|bump <dep> [to <version>] [in|for <project>]"
 // Also matches reversed order: "update <dep> in <project> to <version>"
 const DEPENDENCY_PATTERNS = [

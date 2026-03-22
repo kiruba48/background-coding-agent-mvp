@@ -106,7 +106,12 @@ export async function runAgent(
         } catch (err: unknown) {
           const error = err as { stdout?: string; stderr?: string };
           const output = [error.stderr ?? '', error.stdout ?? ''].join('\n').trim();
-          throw new Error(`npm install failed (agent cannot fix registry/network issues):\n${output.slice(0, 500)}`);
+          const isResolvable = output.includes('ERESOLVE') || output.includes('peer dep') || output.includes('Could not resolve');
+          const { PreVerifyError } = await import('../orchestrator/retry.js');
+          throw new PreVerifyError(
+            `npm install failed:\n${output.slice(0, 500)}`,
+            isResolvable,
+          );
         }
       }
     : undefined;

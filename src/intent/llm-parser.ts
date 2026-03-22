@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import path from 'node:path';
 import type { BetaMessage } from '@anthropic-ai/sdk/resources/beta/messages/messages.js';
 import { IntentSchema, type IntentResult } from './types.js';
 import type { TaskHistoryEntry } from '../repl/types.js';
@@ -24,8 +25,8 @@ const OUTPUT_SCHEMA = {
   type: 'object' as const,
   properties: {
     taskType: { type: 'string', enum: ['npm-dependency-update', 'maven-dependency-update', 'unknown'] },
-    dep: { type: ['string', 'null'] },
-    version: { type: ['string', 'null'], enum: ['latest', null] },
+    dep: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+    version: { anyOf: [{ type: 'string', enum: ['latest'] }, { type: 'null' }] },
     confidence: { type: 'string', enum: ['high', 'low'] },
     createPr: { type: 'boolean' },
     clarifications: {
@@ -47,13 +48,13 @@ const OUTPUT_SCHEMA = {
 
 /** Escape XML special characters to prevent prompt injection */
 function escapeXml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
 
 /** Build a session history XML block for the LLM prompt */
 function buildHistoryBlock(history: TaskHistoryEntry[]): string {
   const lines = history.map((h, i) =>
-    `  ${i + 1}. ${h.taskType} | dep: ${h.dep ?? 'none'} | repo: ${h.repo} | status: ${h.status}`
+    `  ${i + 1}. ${escapeXml(h.taskType)} | dep: ${escapeXml(h.dep ?? 'none')} | repo: ${escapeXml(path.basename(h.repo))} | status: ${escapeXml(h.status)}`
   );
   return `<session_history>\nPrevious tasks this session (most recent last):\n${lines.join('\n')}\n</session_history>`;
 }
@@ -68,8 +69,8 @@ function getClient(): Anthropic {
 }
 
 export class LlmParseError extends Error {
-  constructor(message: string, public readonly cause?: unknown) {
-    super(message);
+  constructor(message: string, cause?: unknown) {
+    super(message, { cause });
     this.name = 'LlmParseError';
   }
 }
@@ -101,8 +102,9 @@ export async function llmParse(input: string, manifestContext: string, history?:
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any) as BetaMessage;
   } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
     throw new LlmParseError(
-      'Failed to classify intent — check ANTHROPIC_API_KEY and network connectivity',
+      `Failed to classify intent: ${detail}`,
       err,
     );
   }

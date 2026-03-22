@@ -7,9 +7,9 @@ export function displayIntent(intent: ResolvedIntent): void {
   const fromSession = pc.dim(' (from session)');
   console.log('');
   console.log(pc.bold('  Parsed Intent:'));
-  const taskSuffix = intent.inheritedFields?.has('taskType') ? fromSession : '';
+  const taskSuffix = intent.inheritedFields?.includes('taskType') ? fromSession : '';
   console.log(`    Task:    ${pc.cyan(intent.taskType)}${taskSuffix}`);
-  const projSuffix = intent.inheritedFields?.has('repo') ? fromSession : '';
+  const projSuffix = intent.inheritedFields?.includes('repo') ? fromSession : '';
   console.log(`    Project: ${pc.cyan(path.basename(intent.repo))}${projSuffix}`);
   if (intent.dep) console.log(`    Dep:     ${pc.cyan(intent.dep)}`);
   if (intent.version) console.log(`    Version: ${pc.cyan(intent.version)}`);

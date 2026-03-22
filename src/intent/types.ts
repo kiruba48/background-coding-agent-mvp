@@ -36,5 +36,5 @@ export interface ResolvedIntent {
   createPr?: boolean;       // user requested PR creation (e.g. "and create PR")
   description?: string;     // raw NL input when taskType is 'generic'
   clarifications?: ClarificationOption[];  // from LLM when confidence is low
-  inheritedFields?: Set<'taskType' | 'repo'>; // fields inherited from session history (follow-up)
+  inheritedFields?: Array<'taskType' | 'repo'>; // fields inherited from session history (follow-up)
 }

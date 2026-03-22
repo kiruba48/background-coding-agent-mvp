@@ -62,7 +62,7 @@ describe('displayIntent', () => {
       logs.push(args.join(' '));
     });
 
-    displayIntent({ ...SAMPLE_INTENT, inheritedFields: new Set(['taskType'] as const) });
+    displayIntent({ ...SAMPLE_INTENT, inheritedFields: ['taskType'] });
 
     vi.restoreAllMocks();
     const allOutput = logs.join('\n');
@@ -75,7 +75,7 @@ describe('displayIntent', () => {
       logs.push(args.join(' '));
     });
 
-    displayIntent({ ...SAMPLE_INTENT, inheritedFields: new Set(['repo'] as const) });
+    displayIntent({ ...SAMPLE_INTENT, inheritedFields: ['repo'] });
 
     vi.restoreAllMocks();
     const allOutput = logs.join('\n');
@@ -88,7 +88,7 @@ describe('displayIntent', () => {
       logs.push(args.join(' '));
     });
 
-    displayIntent({ ...SAMPLE_INTENT, inheritedFields: new Set(['taskType', 'repo'] as const) });
+    displayIntent({ ...SAMPLE_INTENT, inheritedFields: ['taskType', 'repo'] });
 
     vi.restoreAllMocks();
     const allOutput = logs.join('\n');
