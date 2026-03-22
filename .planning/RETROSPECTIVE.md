@@ -123,6 +123,55 @@
 
 ---
 
+## Milestone: v2.1 — Conversational Mode
+
+**Shipped:** 2026-03-22
+**Phases:** 4 | **Plans:** 10 | **Timeline:** 4 days
+
+### What Was Built
+- runAgent() library extraction with AbortSignal threading for graceful mid-task cancellation
+- Project registry (conf@15) with CLI subcommands (list/add/remove) and auto-registration of cwd
+- Intent parser: fast-path regex for obvious dependency patterns, LLM fallback (Haiku 4.5 structured output) for ambiguous input
+- Confirm-before-execute flow with inline correction support (non-y/n input treated as redirect)
+- Context scanner reading package.json/pom.xml to inject repo context before LLM parse
+- Interactive REPL with readline, Ctrl+C cancellation (per-task, not session), persistent history, Docker pre-check
+- Multi-turn session context: bounded history injection into intent parser for follow-up disambiguation
+
+### What Worked
+- Channel-agnostic architecture: SessionCallbacks injection pattern decouples I/O from session logic — REPL, Slack, MCP adapters can share processInput()
+- Fast-path before LLM: obvious patterns (e.g., "update recharts") resolved in microseconds, no API call
+- Zod schema enforcement: version numbers never come from LLM (sentinel 'latest' or null) — prevents hallucinated versions
+- History snapshot pattern: `[...state.history]` passed to parseIntent prevents mutation leaking post-run state into mock assertions
+- Follow-up detection order: follow-up patterns checked BEFORE standard patterns in fast-path, ensuring "also update lodash" hits the right path
+
+### What Was Inefficient
+- SUMMARY frontmatter `requirements_completed` still not populated for some plans (INFRA-02, REG-01) — same gap as v1.0/v2.0
+- Cancelled task status recorded as 'failed' in session history — missing ternary branch discovered only during audit
+- `inheritedFields` documented as Set<> in plans but implemented as Array<> — doc/code divergence
+- STATE.md accumulated context grew very large (77 lines of decisions) — should be pruned during execution, not only at milestone boundary
+- No test for return-based cancellation path (only throw-based AbortError covered)
+
+### Patterns Established
+- Intent parser layering: fast-path regex → context scan → LLM fallback → confirm loop
+- Follow-up disambiguation: history injection with bounded token budget, graceful degradation when no history
+- REPL signal ownership: readline owns SIGINT in REPL mode; process signal handlers only in one-shot mode
+- Dynamic imports: `import('./commands/repl.js')` keeps REPL code out of one-shot path
+- Factory injection for test isolation: registry tests use injected createConf rather than mocking conf internals
+
+### Key Lessons
+1. Signal handling ownership must be decided early — REPL readline and process SIGINT handlers conflict if both active
+2. Dynamic imports for conditional features prevent loading unused code (nanospinner, readline) in the other path
+3. Zod schema enforcement is the right place to block LLM hallucination for specific fields (versions)
+4. Inline correction in confirm loops (treating non-y/n as redirect) is better UX than forced rejection + separate prompt
+5. STATE.md accumulated context should be pruned periodically, not only at milestone boundaries — it reached 77 lines
+
+### Cost Observations
+- Model mix: balanced profile (sonnet for execution agents, haiku for intent parsing + judge)
+- Plan execution avg: ~1 day/phase (2.5 plans/day)
+- Notable: v2.1 added 10 plans in 4 days, fastest per-phase velocity yet — intent parser and REPL were well-decomposed
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -132,6 +181,7 @@
 | v1.0 | 35 days | 6 | 15 | Initial architecture established |
 | v1.1 | 9 days | 3 | 8 | End-state prompting, task types |
 | v2.0 | 3 days | 4 | 8 | SDK migration, 1,989 lines deleted |
+| v2.1 | 4 days | 4 | 10 | Conversational interface (REPL + intent parser) |
 
 ### Cumulative Quality
 
@@ -140,6 +190,7 @@
 | v1.0 | 90 | Vitest | 5,460 |
 | v1.1 | ~120 | Vitest | ~7,060 |
 | v2.0 | 271 | Vitest | 8,167 |
+| v2.1 | 513 | Vitest | 13,780 |
 
 ### Top Lessons (Verified Across Milestones)
 
@@ -147,4 +198,5 @@
 2. Deterministic verification beats LLM-based checking for structured output (build errors, test failures)
 3. SUMMARY frontmatter `requirements_completed` must be populated during execution, not retrofitted
 4. End-state prompting outperforms step-by-step instructions for agent tasks
-5. SDK abstractions dramatically reduce per-plan execution time (2.3 → 1.1 → 0.4 days/plan)
+5. SDK abstractions dramatically reduce per-plan execution time (2.3 → 1.1 → 0.4 → 0.4 days/plan)
+6. Channel-agnostic architecture (callback injection) pays off immediately — enables multiple entry points without duplication

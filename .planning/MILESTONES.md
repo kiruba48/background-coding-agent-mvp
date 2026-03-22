@@ -1,5 +1,29 @@
 # Milestones
 
+## v2.1 Conversational Mode (Shipped: 2026-03-22)
+
+**Phases completed:** 4 phases (14-17), 10 plans
+**Timeline:** 4 days (2026-03-19 → 2026-03-22)
+**LOC:** 13,780 TypeScript (+5,861 lines) | **Commits:** 31 | **Tests:** 513 unit tests
+
+**Key accomplishments:**
+- Extracted runAgent() as importable library function with AbortSignal threading for graceful cancellation
+- Built project registry (conf@15-backed) with CLI subcommands and auto-registration of cwd
+- LLM intent parser (Haiku 4.5 structured output) with fast-path regex for obvious dependency patterns
+- Confirm-before-execute flow with inline correction support and context-first clarification
+- Interactive REPL with readline, Ctrl+C cancellation, persistent history, and one-time Docker pre-check
+- Multi-turn session context — follow-up disambiguation via bounded history injection into intent parser
+
+**Known gaps (accepted as tech debt):**
+- INFRA-02, REG-01 missing from SUMMARY frontmatter `requirements_completed` (documentation gap, not code gap)
+- `session.ts:137` — cancelled tasks recorded as 'failed' in history (missing ternary branch for 'cancelled')
+- `inheritedFields` documented as Set<> in SUMMARY but implemented as Array<> (code is consistent, doc mismatch)
+- No test for return-based `finalStatus: 'cancelled'` path (only throw-based AbortError covered)
+
+**Archives:** [v2.1-ROADMAP.md](milestones/v2.1-ROADMAP.md) | [v2.1-REQUIREMENTS.md](milestones/v2.1-REQUIREMENTS.md) | [v2.1-MILESTONE-AUDIT.md](milestones/v2.1-MILESTONE-AUDIT.md)
+
+---
+
 ## v2.0 Claude Agent SDK Migration (Shipped: 2026-03-19)
 
 **Phases completed:** 4 phases (10-13), 8 plans, ~14 tasks
