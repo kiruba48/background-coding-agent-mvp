@@ -114,7 +114,7 @@ Plans:
   1. A follow-up task in the same REPL session correctly inherits the previously resolved project and repo without the user specifying them again
   2. Session history injected into the intent parser is bounded and does not grow unboundedly within a long session
   3. Each task still runs in a fresh Docker container regardless of session history (execution isolation is preserved)
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 
 Plans:
 - [ ] 17-01-PLAN.md — Types, fast-path follow-up detection, LLM history injection, parseIntent coordinator
@@ -140,4 +140,4 @@ Plans:
 | 14. Infrastructure Foundation | v2.1 | 3/3 | Complete | 2026-03-19 |
 | 15. Intent Parser + One-Shot Mode | 3/3 | Complete    | 2026-03-20 | - |
 | 16. Interactive REPL | 2/2 | Complete    | 2026-03-20 | - |
-| 17. Multi-Turn Session Context | v2.1 | 0/2 | Not started | - |
+| 17. Multi-Turn Session Context | 1/2 | In Progress|  | - |

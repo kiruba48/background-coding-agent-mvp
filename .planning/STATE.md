@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.1
 milestone_name: Conversational Mode
 status: executing
-stopped_at: Phase 17 context gathered
-last_updated: "2026-03-22T10:53:55.080Z"
+stopped_at: Completed 17-01-PLAN.md
+last_updated: "2026-03-22T11:24:15.764Z"
 last_activity: 2026-03-20 — Phase 15 Plan 02 complete (LLM parser, confirm loop, prompt sentinel handling)
 progress:
   total_phases: 4
   completed_phases: 3
-  total_plans: 8
-  completed_plans: 8
+  total_plans: 10
+  completed_plans: 9
   percent: 33
 ---
 
@@ -71,6 +71,9 @@ Progress: [███░░░░░░░] 33% (v2.1)
 - [Phase 16-01]: skipDockerChecks: true passed by REPL session core — Docker checks run once at REPL startup by CLI adapter
 - [Phase 16-02]: REPL guard in index.ts placed BEFORE AbortController and process signal handlers — readline owns SIGINT in REPL mode
 - [Phase 16-02]: Dynamic import('./commands/repl.js') in index.ts — nanospinner and REPL code loaded only when needed
+- [Phase 17-01]: Follow-up pattern detection in fast-path.ts runs BEFORE standard DEPENDENCY_PATTERNS — ensures 'also update lodash' hits follow-up path with isFollowUp flag
+- [Phase 17-01]: Graceful degradation: follow-up with no history strips prefix and re-parses via recursive parseIntent() with history: undefined
+- [Phase 17-01]: inheritedFields: Set<'taskType' | 'repo'> on ResolvedIntent communicates to display layer which fields were inherited from history
 
 ### Pending Todos
 
@@ -83,7 +86,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-22T10:53:55.077Z
-Stopped at: Phase 17 context gathered
-Resume file: .planning/phases/17-multi-turn-session-context/17-CONTEXT.md
+Last session: 2026-03-22T11:24:15.761Z
+Stopped at: Completed 17-01-PLAN.md
+Resume file: None
 Next action: Execute Phase 15, Plan 03 (coordinator parseIntent + one-shot CLI command)

@@ -31,7 +31,7 @@ Requirements for conversational mode. Each maps to roadmap phases.
 
 ### Multi-Turn Sessions
 
-- [ ] **SESS-01**: REPL session maintains context from prior tasks for follow-up disambiguation
+- [x] **SESS-01**: REPL session maintains context from prior tasks for follow-up disambiguation
 
 ## Future Requirements
 
@@ -77,7 +77,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CLI-01 | Phase 15 | Complete |
 | CLI-03 | Phase 15 | Complete |
 | CLI-02 | Phase 16 | Complete |
-| SESS-01 | Phase 17 | Pending |
+| SESS-01 | Phase 17 | Complete |
 
 **Coverage:**
 - v2.1 requirements: 11 total
