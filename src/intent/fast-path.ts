@@ -27,9 +27,16 @@ const DEPENDENCY_PATTERNS = [
 // Matches trailing PR-creation phrases: "and create PR", "and raise a pull request", etc.
 const PR_SUFFIX = /\s+(?:and\s+)?(?:create|raise|open|make)\s+(?:a\s+)?(?:pr|pull\s*request)\s*$/i;
 
+// Verb guard: refactoring instructions must go through LLM classification,
+// not be misclassified as dependency updates by DEPENDENCY_PATTERNS.
+// Fires before PR suffix strip so "replace axios with fetch and create PR" is also blocked.
+export const REFACTORING_VERB_GUARD = /^(?:replace|rename|move|extract|migrate|rewrite)\s/i;
+
 export function fastPathParse(input: string): FastPathResult | null {
   const trimmed = input.trim();
   if (!trimmed) return null;
+
+  if (REFACTORING_VERB_GUARD.test(trimmed)) return null;
 
   // Strip PR suffix before matching dependency patterns
   const createPr = PR_SUFFIX.test(trimmed);
