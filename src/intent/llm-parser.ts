@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import path from 'node:path';
-import type { BetaMessage } from '@anthropic-ai/sdk/resources/beta/messages/messages.js';
+import type { Message } from '@anthropic-ai/sdk/resources/messages/messages.js';
 import { IntentSchema, type IntentResult } from './types.js';
 import type { TaskHistoryEntry } from '../repl/types.js';
 
@@ -91,9 +91,9 @@ export async function llmParse(input: string, manifestContext: string, history?:
 
   const historyBlock = hasHistory ? `\n\n${buildHistoryBlock(history)}\n` : '';
 
-  let response: BetaMessage;
+  let response: Message;
   try {
-    response = await client.beta.messages.create({
+    response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 512,
       stream: false,
@@ -102,10 +102,8 @@ export async function llmParse(input: string, manifestContext: string, history?:
         role: 'user',
         content: `<manifest_context>\n${escapeXml(manifestContext)}\n</manifest_context>${historyBlock}\n<user_input>${escapeXml(truncatedInput)}</user_input>`,
       }],
-      betas: ['structured-outputs-2025-11-13'],
       output_config: { format: { type: 'json_schema', schema: OUTPUT_SCHEMA } },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any) as BetaMessage;
+    });
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     throw new LlmParseError(

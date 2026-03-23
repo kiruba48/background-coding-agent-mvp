@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { TaskHistoryEntry } from '../repl/types.js';
 
-// Shared mock for Anthropic client's beta.messages.create method
+// Shared mock for Anthropic client's messages.create method
 const mockCreate = vi.fn();
 
 // Mock @anthropic-ai/sdk before importing llm-parser
@@ -9,10 +9,8 @@ vi.mock('@anthropic-ai/sdk', () => {
   return {
     default: function MockAnthropic() {
       return {
-        beta: {
-          messages: {
-            create: mockCreate,
-          },
+        messages: {
+          create: mockCreate,
         },
       };
     },
@@ -27,6 +25,7 @@ const VALID_RESPONSE = {
   version: 'latest',
   confidence: 'high',
   createPr: false,
+  taskCategory: null,
   clarifications: [],
 };
 
@@ -57,7 +56,7 @@ describe('llmParse', () => {
     await expect(llmParse('update recharts', 'package.json dependencies: recharts')).rejects.toThrow(LlmParseError);
   });
 
-  it('calls beta.messages.create with correct model', async () => {
+  it('calls messages.create with correct model', async () => {
     mockCreate.mockResolvedValue(makeResponse(VALID_RESPONSE));
     await llmParse('update recharts', 'package.json dependencies: recharts');
     expect(mockCreate).toHaveBeenCalledOnce();
@@ -65,11 +64,13 @@ describe('llmParse', () => {
     expect(callArgs.model).toBe('claude-haiku-4-5-20251001');
   });
 
-  it('calls beta.messages.create with structured-outputs beta', async () => {
+  it('calls messages.create with output_config (GA structured outputs, no betas header)', async () => {
     mockCreate.mockResolvedValue(makeResponse(VALID_RESPONSE));
     await llmParse('update recharts', 'package.json dependencies: recharts');
     const callArgs = mockCreate.mock.calls[0][0];
-    expect(callArgs.betas).toContain('structured-outputs-2025-11-13');
+    expect(callArgs.betas).toBeUndefined();
+    expect(callArgs.output_config).toBeDefined();
+    expect(callArgs.output_config.format.type).toBe('json_schema');
   });
 
   it('escapes XML special characters in user input to prevent prompt injection', async () => {
@@ -98,7 +99,7 @@ describe('llmParse', () => {
   });
 
   it('accepts null version in response', async () => {
-    const nullVersionResponse = { ...VALID_RESPONSE, version: null, dep: null };
+    const nullVersionResponse = { ...VALID_RESPONSE, version: null, dep: null, taskCategory: null };
     mockCreate.mockResolvedValue(makeResponse(nullVersionResponse));
     const result = await llmParse('do some refactoring', 'No manifest found');
     expect(result.version).toBeNull();
@@ -111,6 +112,7 @@ describe('llmParse', () => {
       version: null,
       confidence: 'low',
       createPr: false,
+      taskCategory: null,
       clarifications: [
         { label: 'Update recharts', intent: 'update recharts to latest' },
         { label: 'Update lodash', intent: 'update lodash to latest' },
