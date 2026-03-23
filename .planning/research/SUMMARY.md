@@ -1,17 +1,17 @@
 # Project Research Summary
 
-**Project:** background-coding-agent v2.1 — Conversational Mode
-**Domain:** Conversational agent interface (REPL + intent parser + project registry + multi-turn sessions) layered onto an existing CLI-based coding agent platform
-**Researched:** 2026-03-19
+**Project:** background-coding-agent v2.2 — Generic Deterministic Task Support
+**Domain:** Agentic coding pipeline — extending structured dependency-update tasks to arbitrary explicit code change instructions
+**Researched:** 2026-03-23
 **Confidence:** HIGH
 
 ## Executive Summary
 
-The v2.1 milestone adds a conversational input layer to a fully-functioning v2.0 system. The correct framing is an **input normalization gateway**: natural language and explicit flags both converge on the same `RunOptions` struct before reaching `runAgent()`. Everything from `RetryOrchestrator` down — Docker isolation, verification pipeline, LLM Judge, PR creation — is untouched. The risk surface is entirely in the new input layer, and the key architectural constraint is that these components must never reach into the execution layer.
+The v2.2 milestone is an incremental extension of a fully operational v2.1 system. The entire execution layer (RetryOrchestrator, ClaudeCodeSession, compositeVerifier, LLM Judge, GitHubPRCreator) remains unchanged. All v2.2 changes are confined to the input-to-prompt path: adding a `generic` task type to the intent schema, replacing the one-liner stub in `buildPrompt()` with a proper `buildGenericPrompt()` function, and adding a `taskCategory` field to improve the confirmation display. No new npm packages are required. The work is pure TypeScript logic changes to existing modules. One required migration accompanies this work: the intent parser currently uses the deprecated beta structured outputs API and must be moved to the GA `client.messages.create()` with `output_config.format` before v2.2 ships.
 
-The recommended approach is four sequential components built in dependency order: (1) project registry and `runAgent()` extraction (pure infrastructure, no LLM), (2) intent parser using `@anthropic-ai/sdk` structured output with a Haiku model for single-turn JSON extraction, (3) REPL loop with `node:readline` and clarification flow, and (4) multi-turn session context propagation. New dependencies are minimal: `conf` for the project registry and `zod` for the intent schema; the REPL uses the built-in `node:readline`. One new binary (`bg-agent`) coexists alongside the existing `background-agent` binary — no existing CLI consumers are broken.
+The recommended approach is strict adherence to the existing end-state prompting discipline (established in TASK-04 / Spotify research) applied to generic tasks. The core insight is that generic tasks fail not because of execution infrastructure gaps, but because of thin prompts with no scope constraints. A `buildGenericPrompt()` that wraps the user's verbatim instruction with an explicit SCOPE block and end-state success criteria gives the agent the same bounding that the Maven/npm prompt builders provide for dependency updates. The LLM Judge already handles arbitrary diffs against arbitrary task descriptions and requires no structural changes — only a prompt enrichment to reduce false-veto rate on refactoring diffs. The compositeVerifier already skips gracefully on missing build configs, which is sufficient for most config-only changes without adding a new verification path, though config-only detection with syntax-only verification is needed to prevent pre-existing lint violations from being treated as agent-introduced errors.
 
-The dominant risks are security (prompt injection via repo files into the planning context) and correctness (version hallucination by the intent parser). Both must be prevented at the point of initial implementation, not retrofitted. Secondary risks are operational: SIGINT handler conflicts between the REPL and `runAgent()`, registry file corruption from concurrent writes, and backward compatibility breakage for existing CI scripts using explicit flags. All nine identified critical pitfalls have clear prevention strategies documented in PITFALLS.md.
+The primary risks are all prompt and wiring risks, not architectural ones. The top three: (1) the thin generic stub producing unbounded agent behavior — prevented by scope fencing in `buildGenericPrompt()`; (2) the fast-path regex misclassifying refactoring instructions (e.g., "replace axios with fetch") as dependency updates — prevented by adding a refactoring verb guard before dep-name matching; and (3) retry messages losing the scope constraint when `originalTask` is set to raw user description instead of the full expanded prompt — prevented by passing the output of `buildPrompt()` as `originalTask`, not the user's `description` field. All three must be addressed in the initial implementation, not retrofitted after the fact.
 
 ---
 
@@ -19,133 +19,133 @@ The dominant risks are security (prompt injection via repo files into the planni
 
 ### Recommended Stack
 
-The v2.1 stack additions are minimal by design. `node:readline` (built-in, zero dependency) handles the interactive REPL loop with history, tab completion, and signal events. `conf@^15.1.0` handles the project registry as an OS-native config file (ESM-native, TypeScript declarations, atomic writes, correct platform paths on macOS and Linux). `zod@^4.3.6` provides the intent schema and native `z.toJSONSchema()` for the structured output call — the Agent SDK already accepts Zod 4 as a peer dep. All agent execution uses the existing `@anthropic-ai/claude-agent-sdk` and `@anthropic-ai/sdk` already installed as production dependencies.
+No new packages are needed for v2.2. The existing stack — `@anthropic-ai/sdk@^0.80.0`, `@anthropic-ai/claude-agent-sdk@^0.2.81`, Zod 4, simple-git, Vitest, ESLint v10 — covers all requirements. The only mandatory change is migrating from the deprecated beta structured outputs API (`client.beta.messages.create()` with `betas: ['structured-outputs-2025-11-13']`) to the GA `client.messages.create()` with `output_config.format`. The beta endpoint removal timeline is unannounced but confirmed deprecated, and the v2.2 schema expansion is a natural forcing function for this migration.
 
 **Core technologies:**
-- `node:readline` (built-in): Interactive REPL — zero dependency, stable in Node.js 20, supports persistent history via `'history'` event
-- `conf@^15.1.0`: Project registry persistence — ESM-native, atomic writes, correct OS config dirs, direct successor to configstore
-- `zod@^4.3.6`: Intent parser schema — `z.toJSONSchema()` built-in eliminates need for a separate converter; compatible with Agent SDK
-- `@anthropic-ai/sdk` (already installed): Intent parsing via single-turn structured output — `messages.create()` with `output_config.format`; NOT `query()`, which is for multi-turn agentic loops
-- `@anthropic-ai/claude-agent-sdk` (already installed): Multi-turn session context via `resume: sessionId` option on `query()`
+- `@anthropic-ai/sdk@^0.80.0`: Intent parsing via GA structured outputs — no beta header, `output_config.format`
+- `@anthropic-ai/claude-agent-sdk@^0.2.81`: Agent execution via `query()` — unchanged for generic tasks
+- `Zod 4`: `IntentSchema` extension — `description: z.string().nullable()` and `taskCategory: z.enum([...]).optional()` are additive and backward compatible
+- `claude-haiku-4-5-20251001`: Intent parsing model — fastest/cheapest; correct for the 15s interactive path; Haiku 3 retiring April 19, 2026 (project already on Haiku 4.5)
+- `path.extname()` + `git diff --name-only`: Config-only change detection — already available via `simple-git` and Node built-ins
 
-**Version constraints:** `conf@^15` requires Node.js 20+, which matches the project baseline exactly.
+**What NOT to add:** No AST parsers (tree-sitter, `@typescript-eslint/parser`), no LangChain, no `js-yaml`/`jsonschema` for config validation, no task queue systems. All are over-engineering for changes that the existing LLM Judge and compositeVerifier already handle.
 
 ### Expected Features
 
-All new features are additive. The explicit-flag CLI (`--task-type`, `--dep`, `--target-version`, `--repo`) must remain fully functional in v2.1 — this is a hard compatibility requirement, not a nice-to-have.
+**Must have (table stakes — v2.2 launch):**
+- Generic intent class — intent parser outputs `{taskType: 'generic', description: string}` for non-dep-update instructions; fast-path regex still fires first; `generic` is an explicit valid output, distinct from `unknown` (error/ambiguous)
+- Generic task executor with scope constraint — `buildGenericPrompt()` wraps user instruction with SCOPE block and end-state success criteria; routes through existing RetryOrchestrator unchanged
+- Zero-diff detection — after agent run, inspect diff size before calling composite verifier; if empty, emit `zero_diff` terminal state with clear user message; do not create PR
+- Change-type-aware verification — post-run file extension inspection; config/data only (.json, .yaml, .toml, .env, etc.) applies syntax-only check; any source file triggers full composite verifier
+- LLM Judge routing verified — integration test confirms generic tasks reach the same judge path as dep-update tasks; no new judge infrastructure
 
-**Must have (P1 — v2.1 launch):**
-- LLM intent parser — extracts `{taskType, dep, targetVersion, repo}` with `confidence` and `clarification_needed` fields; rejects hallucinated versions by design
-- One-shot natural language mode — positional arg detected → parse → confirm → run existing pipeline
-- Interactive REPL — `node:readline` loop, Ctrl+C cancels current run (not REPL), Ctrl+D/`exit` quits
-- Echo confirmed plan — print parsed intent before any agent run; always prompt `Proceed? [Y/n]`
-- Project registry — auto-register cwd (only if `.git` or build manifest present), `--project name` flag for short-name routing
-- Graceful ambiguity handling — when `clarification_needed: true`, ask exactly one targeted question
+**Should have (competitive differentiators):**
+- `taskCategory` field in IntentSchema (`code-change` / `config-change` / `dependency-update`) — improves confirmation display ("generic change (code-change)" vs "generic task"); optional and additive; does not affect execution logic
+- Structured outputs API migration off beta header — reduces risk of breaking change when Anthropic removes deprecated endpoint
+- Scope warning in confirm loop for unbounded task language ("all", "every", "everywhere") — prevents turn limit exhaustion on large-surface tasks
+- Judge prompt enrichment for generic tasks — adds preamble: test file changes that exercise renamed/moved code are always in scope; reduces false-veto rate on correct refactoring diffs
 
-**Should have (P2 — after P1 validated):**
-- Context-first repo scan — read `package.json`/`pom.xml` before parsing to surface current versions; reduces clarification turns
-- Persistent REPL history — `~/.bg-agent-history`, 1,000-entry cap
-- Multi-turn session context — last 5 parsed intents injected into intent parser; in-memory only, bounded by token cap
-- `--print` non-interactive flag — suppresses confirm prompt, outputs structured JSON for CI scripting
-
-**Defer (P3 — v2+):**
-- Confidence auto-proceed (`--yes`) — defer until confirm step is proven to be main friction
-- Slack/webhook trigger — separate product domain; architecture must not block it
-- Multi-dep batch mode — defer until focus model is proven insufficient
-- Cross-session persistent context — staleness risk outweighs benefit
+**Defer (v2.3+):**
+- Multi-file migration support — ~41% pass rate on SWE-bench; partial migrations leave repo in broken state; requires a scoped planning phase before execution
+- Task discovery mode ("find places that need this change") — changes the agent's contract from "apply instruction" to "decide what needs changing"; LLM Judge cannot validate agent-defined scope
+- Custom verifier profiles per file type — 80% of the value is covered by the change-type-aware verifier already planned for v2.2
 
 ### Architecture Approach
 
-v2.1 adds a new `src/cli/repl/` module and a new `bin/bg-agent` entry point that produce `RunOptions` objects and call the already-stable `runAgent()` function. The execution layer (`RetryOrchestrator`, `ClaudeCodeSession`, `compositeVerifier`, `llmJudge`, Docker, MCP verifier server) is entirely unchanged. The only modifications to existing files are: extracting `runAgent()` from Commander's action handler so it is importable, adding a `freeform` task type to `prompts/index.ts`, extending `types.ts` with `ParsedIntent`/`RegistryEntry`/`SessionContextState`, and adding an optional `signal?: AbortSignal` to `RunOptions` for REPL-controlled cancellation.
+The v2.2 architecture is a confined additive extension. The execution layer is entirely unchanged. All changes live in two layers: the input layer (intent schema + LLM parser gain `taskCategory`; confirm loop display updated cosmetically) and the prompt layer (new `src/prompts/generic.ts` replaces the `default` branch stub in `buildPrompt()`). The critical invariant: `originalTask` passed to `RetryOrchestrator.run()` must be the full expanded prompt from `buildPrompt()`, not the raw user description — otherwise retry attempts lose the scope constraint and attempt 2 drifts wider than attempt 1.
 
-**Major components (all new):**
-1. `InputRouter` (`src/cli/repl/input-router.ts`) — detects one-shot vs. REPL mode from argv; drives REPL read/run/print loop
-2. `IntentParser` (`src/cli/repl/intent-parser.ts`) — single structured-output `messages.create()` call; Haiku 4.5; returns `ParsedIntent`; never outputs specific version numbers
-3. `ProjectRegistry` (`src/cli/registry/project-registry.ts`) — reads/writes `conf`-managed JSON; validates directories before registration; atomic writes via `conf`
-4. `ContextScanner` (`src/cli/repl/context-scanner.ts`) — extracts structured facts from `package.json`/`pom.xml`; feeds intent parser; never dumps raw file content into prompts
-5. `ClarificationLoop` (`src/cli/repl/clarification-loop.ts`) — displays plan, waits for confirmation or targeted clarification question
-6. `SessionContext` (`src/cli/repl/session-context.ts`) — in-memory multi-turn state; bounded history (token cap); cleared on process exit
+**Major components:**
+1. `src/prompts/generic.ts` (NEW) — `buildGenericPrompt(description: string): string`; wraps user instruction with SCOPE block ("Do not modify files unrelated to the task...") and end-state success criteria following the Maven/npm builder pattern
+2. `src/intent/types.ts` (MODIFIED) — adds optional `taskCategory` to `IntentSchema`/`ResolvedIntent`; adds `description: z.string().nullable()` for generic tasks; additive Zod changes, backward compatible
+3. `src/intent/llm-parser.ts` (MODIFIED) — migrates from beta to GA structured outputs API; adds `taskCategory` to `OUTPUT_SCHEMA` and one sentence to system prompt
+4. `src/prompts/index.ts` (MODIFIED) — adds `case 'generic'` dispatching to `buildGenericPrompt()`; removes one-liner stub
+5. `src/intent/confirm-loop.ts` (MODIFIED) — cosmetic only: displays `taskCategory` label for generic tasks
 
-**Patterns to follow:**
-- Intent parser as thin API wrapper (single call, not `query()`) — same pattern as existing LLM Judge
-- Input normalization gateway — all paths produce `RunOptions` before reaching `runAgent()`
-- REPL owns signal handling — `runAgent()` accepts `AbortSignal`, never registers `process.once('SIGINT')` when called from REPL mode
-- Fresh workspace per task — `SessionContext` persists user-level state; each task still gets a new Docker container and git clone
+**Build order (strict):** Phase 1: `buildGenericPrompt()` + prompt dispatch (pure function, testable in isolation). Phase 2: intent schema + `taskCategory` field (additive). Phase 3: confirm loop display + end-to-end integration test (quality gate for milestone). No phase should require changes to `retry.ts`, `claude-code-session.ts`, or `verifier.ts` — if it does, the design has gone wrong.
+
+**Key architectural patterns to enforce:**
+- End-state prompting: description verbatim as task statement, never paraphrased
+- Additive schema extensions: new fields are always optional/nullable; existing callers require no changes
+- Verifier remains build-system agnostic: never route by task type; always detect by build system presence
+- No hardcoded task-type handlers per category: one `generic` type with one `buildGenericPrompt()` covers all
 
 ### Critical Pitfalls
 
-1. **Intent parser hallucinating version numbers** — The parser must output `"latest"` or `null` for versions, never a specific version string. Version resolution happens downstream via `npm view` or `mvn dependency:get`, not in the LLM call. Enforce this in the Zod schema.
+1. **Thin generic prompt produces unbounded agent behavior** — The current `default` branch in `buildPrompt()` is just `"You are a coding agent. Your task: ${description}. Work in the current directory."` with no scope fence. The agent sprawls: 15-line rename becomes a 400-line PR across 20 files. Prevention: `buildGenericPrompt()` must always emit an explicit SCOPE block around the user's description. Unit test must assert scope constraint prose is present in every output.
 
-2. **Prompt injection via repo file content** — Context-first repo scan must never dump raw file content into the planning prompt. All repo content must be inside XML-delimited quarantine sections with an explicit system instruction to treat it as untrusted data. Extract structured facts (dep names, current versions) rather than raw file text.
+2. **Fast-path misclassifies refactoring instructions as dependency updates** — "replace axios with fetch" matches the dep-name fast-path (`dep: "axios"`, `taskType: 'npm-dependency-update'`). The agent removes `axios` from `package.json` instead of replacing call sites. Prevention: add a refactoring verb guard (`replace`, `rename`, `move`, `extract`, `migrate`, `rewrite`) before dep-name matching; route to LLM parser if verb is detected. Add explicit test cases in `fast-path.test.ts`.
 
-3. **Multi-turn stale workspace across tasks** — The REPL session context (user conversation history) must not be conflated with the execution workspace. Each REPL task that calls `runAgent()` gets a fresh Docker container and `git clone`. Session context is passed as prompt text, not as shared filesystem state.
+3. **Retry message loses scope constraint** — `RetryOrchestrator.run()` receives `originalTask` from the raw user `description`, not the full expanded prompt. Retry attempt 2 has no SCOPE block and drifts wider. Prevention: `originalTask` must be the output of `buildPrompt()` — store as `expandedPrompt` at task start and pass that. Assert in `retry.test.ts` that retry message contains scope constraint text.
 
-4. **SIGINT handler conflict** — `runAgent()` currently uses `process.once('SIGINT')` which is consumed after the first call. In REPL mode `runAgent()` is called multiple times. Fix: add `signal?: AbortSignal` to `RunOptions`; the REPL owns signal handling and calls `abortController.abort()`. Must be resolved in Phase 14 before any agent runs from the REPL.
+4. **LLM Judge false-vetoes correct refactoring diffs** — Judge prompt is calibrated for dep-update diffsets. For a method rename, the Judge may veto test file changes as "outside stated scope" even when they are clearly required updates. Prevention: add generic-task preamble to judge prompt ("For refactoring tasks, test updates that directly exercise the changed symbol are always in scope"). Run fixture tests before shipping.
 
-5. **Backward compatibility breakage** — The explicit-flag CLI must work identically in v2.1. A compatibility test using the v2.0 flag syntax must be a required pass criterion for the REPL/one-shot phase.
+5. **Config-change tasks trigger pre-existing lint violations as retryable errors** — Adding `"no-console": "error"` to `.eslintrc` causes the verifier to report 200 new violations; agent retries by removing all `console.log` calls across the repo — massive unintended side effect. Prevention: config-only detection (all changed files are config extensions) must route to syntax-only verification, not the full composite verifier pipeline.
 
 ---
 
 ## Implications for Roadmap
 
-Based on the dependency graph in ARCHITECTURE.md and the pitfall-to-phase mapping in PITFALLS.md, four phases are indicated in strict dependency order. Phase numbers continue from v2.0's Phase 13.
+Based on combined research, the following phase structure is recommended. The dependency order is driven by: (a) `buildGenericPrompt()` is a pure function with no runtime dependencies — testable first; (b) the intent schema change is additive and independent; (c) the end-to-end integration test is the milestone quality gate and comes last.
 
-### Phase 14: Infrastructure Foundation — Registry + runAgent() Extraction
+### Phase 1: Intent Parser — Generic Type, taskCategory, and Structured Outputs Migration
 
-**Rationale:** `runAgent()` must be importable before any new entry point can call it — this is the hard prerequisite for all subsequent phases. Project registry has no LLM dependency and can be fully tested in isolation. The SIGINT refactor (`AbortSignal`) must happen here before any agent runs from the REPL, because retrofitting it after Phase 16 exists is structurally risky.
+**Rationale:** Everything in v2.2 depends on the parser producing a valid `generic` intent. The structured outputs migration from beta to GA must happen before schema expansion — combining them reduces risk and eliminates the `any` cast. Fast-path disambiguation guard prevents the misclassification pitfall before the first generic task is executed.
+**Delivers:** Parser produces `{taskType: 'generic', description: string, taskCategory?: 'code-change' | 'config-change' | 'dependency-update'}` for non-dep-update instructions; `description: z.string().nullable()` added to IntentSchema; fast-path gains refactoring verb guard; `client.messages.create()` with GA `output_config.format` replaces beta API.
+**Addresses:** Generic intent class (table stakes), structured outputs tech debt.
+**Avoids:** Pitfall 4 (fast-path misclassification), deprecated API breakage.
+**Research flag:** Standard patterns — official Anthropic GA docs are high-confidence; additive Zod extension is well-understood. Skip research-phase.
 
-**Delivers:** `src/cli/registry/project-registry.ts` (with `conf`, atomic writes, `.git` validation guard); `runAgent()` extracted as importable function; `AbortSignal` wired into `RunOptions`; `bin/bg-agent` stub entry point; updated `types.ts` with `ParsedIntent`, `RegistryEntry`, `SessionContextState`.
+### Phase 2: Generic Prompt Builder
 
-**Addresses:** Project registry (P1); `--project` flag; one-shot mode infrastructure
+**Rationale:** The prompt builder is the highest-impact change for correctness. It can be built and fully unit-tested before any other v2.2 work lands. Scope fencing must be in the initial implementation — not added after an incident with a runaway generic task. The retry `originalTask` wiring is also resolved here to prevent scope loss on retry.
+**Delivers:** `src/prompts/generic.ts` with `buildGenericPrompt(description: string): string` following the Maven/npm end-state pattern; `buildPrompt()` dispatch wired with `case 'generic'`; `originalTask` wired to full expanded prompt in RetryOrchestrator call site; unit tests assert scope constraint prose in all outputs and that retry message contains scope fence text.
+**Addresses:** Generic task executor with scope constraint (table stakes).
+**Avoids:** Pitfall 1 (thin prompt, unbounded behavior), Pitfall 7 (retry scope loss).
+**Research flag:** Standard patterns — same template as `maven.ts`/`npm.ts`; pure TypeScript function. Skip research-phase.
 
-**Avoids:** Registry file corruption (atomic writes from day one); SIGINT handler conflict (AbortSignal designed in before REPL exists); bad auto-registration of non-project directories (`.git` guard in registry)
+### Phase 3: Change-Type-Aware Verification and Zero-Diff Detection
 
-### Phase 15: Intent Parser + One-Shot Mode
+**Rationale:** Must be built before the first config-change task runs. Zero-diff detection must gate the verifier before build/test run on an empty diff. Config-only verification failure (Pitfall 3) is a high-recovery-cost incident — builds must be protected from it from day one.
+**Delivers:** Post-run `git diff --name-only` inspection classifying changes as `config-only` or `code`; `zero_diff` terminal state with clear user message (no PR created); config-only path applies JSON/YAML syntax check only; code-change path runs full composite verifier unchanged.
+**Addresses:** Zero-diff detection (table stakes), change-type-aware verification (table stakes).
+**Avoids:** Pitfall 3 (config change triggers pre-existing lint failures as retryable errors), Pitfall 6 (MCP mid-session verifier running irrelevant build systems — partially mitigated; full fix is in Phase 4).
+**Research flag:** The MCP mid-session verifier `changedFiles` hint (Pitfall 6) is a design gap: how to pass file-extension hints through the MCP protocol boundary without a schema change is unresolved. Targeted investigation needed during this phase's planning.
 
-**Rationale:** Intent parser is the critical path dependency for REPL, one-shot mode, and context scan (FEATURES.md dependency graph). Building and unit-testing the parser before the REPL means confidence in the parsing logic is established first. One-shot mode (`bg-agent 'update recharts to 2.7.0'`) becomes fully functional at the end of this phase.
+### Phase 4: LLM Judge Calibration, Confirm Loop, and MCP Verifier Scope
 
-**Delivers:** `src/cli/repl/intent-parser.ts` (Haiku structured output, version sentinel enforcement, fast-path for explicit flags); `src/cli/repl/context-scanner.ts` (structured fact extraction, quarantine delimiters, `.env` exclusion); `InputRouter` one-shot path; `ClarificationLoop` (plan echo + confirm prompt); end-to-end one-shot workflow working.
+**Rationale:** Judge prompt enrichment and confirm loop changes are independent of execution but must land before the integration test. The MCP mid-session verifier scope issue (Pitfall 6) belongs here as the full resolution to what Phase 3 partially addressed.
+**Delivers:** Judge prompt updated with generic-task preamble (test updates for renamed/moved code are always in scope); confirm loop shows `taskCategory` label for generic tasks; scope warning printed for unbounded task language ("all", "every", "everywhere"); MCP verifier inspects `git diff` at call time to skip inapplicable build systems.
+**Addresses:** Instruction enrichment / confirm display (differentiator), turn limit warning (differentiator), LLM Judge calibration for generic tasks.
+**Avoids:** Pitfall 2 (Judge false-veto), Pitfall 5 (turn limit exhaustion on large-scope tasks), Pitfall 6 (MCP runs irrelevant build systems).
+**Research flag:** Judge prompt changes are prompt engineering only — standard patterns. MCP verifier scope resolution depends on codebase-specific MCP protocol details; inspect `src/mcp/` during planning.
 
-**Addresses:** LLM intent parser (P1); one-shot natural language mode (P1); echo confirmed plan (P1); graceful ambiguity handling (P1); context-first repo scan (P2)
+### Phase 5: End-to-End Integration, Security Hardening, and Quality Gate
 
-**Avoids:** Version hallucination (Zod schema enforces sentinel values — `"latest"` or `null`, never specific versions); prompt injection (quarantine delimiters in initial implementation, not as hardening); token cost inflation (fast-path bypasses LLM for explicit flag input)
-
-### Phase 16: Interactive REPL Loop + Session State
-
-**Rationale:** Requires Phase 15's intent parser and Phase 14's `runAgent()` extraction. REPL loop is straightforward once these exist — it is the read/run/print wrapper around already-working components. Docker image build check should be moved to REPL startup here (not per-task) to avoid a perceptible pause on every command.
-
-**Delivers:** `src/cli/repl/input-router.ts` REPL mode (readline loop, Ctrl+C/Ctrl+D semantics, spinner feedback during Docker and context scan); `src/cli/repl/session-context.ts` (in-memory state, resolved project, task history); `bg-agent` with no args opens interactive prompt; persistent readline history; Docker build check moved to REPL startup.
-
-**Addresses:** Interactive REPL (P1); persistent REPL history (P2); status feedback during execution (table stakes); clear exit semantics (table stakes)
-
-**Avoids:** SIGINT conflict (AbortSignal from Phase 14 consumed here); Docker build check per task (moved to startup); UX freeze with no feedback during long operations
-
-### Phase 17: Multi-Turn Session Context Propagation
-
-**Rationale:** Requires a stable REPL (Phase 16). Multi-turn context is a pure enhancement — it only changes what is passed to the intent parser for disambiguation of follow-up inputs. Bounded history and token cap must be in the initial design to avoid context window overflow in long sessions (Pitfall 8).
-
-**Delivers:** `SessionContext` history accumulation with sliding window (last N tasks as structured facts); hard token budget enforced before each intent parser call; rolling summary for older turns; follow-up inputs like "now do lodash too" correctly inherit project context without sharing execution workspace.
-
-**Addresses:** Multi-turn session context (P2)
-
-**Avoids:** Context window overflow (hard token cap — suggested 2,000 tokens for history, to be validated during planning); stale workspace contamination (fresh container per task confirmed as session invariant)
+**Rationale:** Integration test is the milestone quality gate and cannot run until Phases 1–4 are complete. Security hardening (PreToolUse block-list, `description` sanitization) belongs here as a ship-blocking requirement, not optional polish.
+**Delivers:** Full pipeline integration test for both code-change and config-change generic tasks (NL input → intent parse → confirm → agent session → verifier → judge → result); PreToolUse block-list for `.github/workflows`, `.env`, `CODEOWNERS`; `description` field length limit and XML escaping; `zero_diff` as distinct session history state (separate from `failed`).
+**Addresses:** LLM Judge routing verified (table stakes), security block-list, `zero_diff` as distinct state (P2).
+**Avoids:** Security mistakes (generic scope enabling `.env` reads, workflow file modifications), silent false success from empty diffs not being tracked distinctly.
+**Research flag:** Security patterns are well-documented (OWASP MCP Top 10 MCP02:2025). Standard patterns — skip research-phase.
 
 ### Phase Ordering Rationale
 
-- Phase 14 before all others: `runAgent()` exportability is a compile-time dependency, and the `AbortSignal` refactor cannot safely be added after REPL code exists.
-- Phase 15 before Phase 16: the REPL loop has no value without an intent parser to dispatch tasks.
-- Phase 16 before Phase 17: multi-turn context requires a running REPL session to accumulate history.
-- `ContextScanner` is bundled into Phase 15 (not a separate phase) because it shares a data contract with `IntentParser` and the injection-quarantine requirement applies to both simultaneously.
+- Phase 1 first: Parser must produce `generic` before prompt builder can be tested end-to-end (though the builder can be unit-tested in isolation from Phase 1).
+- Phase 2 before Phase 5: The prompt builder is the core output; the integration test validates it.
+- Phase 3 before Phase 5: Change-type-aware verification must exist before the integration test validates it.
+- Phase 4 can overlap with Phase 3: Judge prompt and confirm loop changes are independent of the verification strategy; can be built in parallel if resourcing allows.
+- Phase 5 last: Quality gate for everything above.
+- No phase touches `retry.ts`, `claude-code-session.ts`, `verifier.ts`, `judge.ts`, or `pr-creator.ts` structurally — only `judge.ts` receives a prompt-text update.
 
 ### Research Flags
 
 Phases likely needing deeper research during planning:
-- **Phase 17 (Multi-Turn Sessions):** Context bounding strategies and token budget sizing for bounded history are under-documented in the research. Recommend `/gsd:research-phase` to validate the sliding window approach and the 2,000-token history cap before implementation.
+- **Phase 3 (MCP verifier scope):** Passing `changedFiles` hints through the MCP protocol boundary without a schema change is the one genuine design gap in the research. Inspect `src/mcp/` during planning to determine whether a `changedFiles` param can be added to the existing `verify` tool schema or whether an alternative mechanism (e.g., reading `git diff` server-side at verify call time) is cleaner.
 
 Phases with standard patterns (skip research-phase):
-- **Phase 14 (Infrastructure):** `conf` and `runAgent()` refactoring are well-documented at HIGH confidence. `AbortSignal` is a standard Node.js pattern.
-- **Phase 15 (Intent Parser):** STACK.md fully documents `output_config.format` from official Anthropic docs. The intent parser pattern mirrors the existing LLM Judge (`orchestrator/judge.ts`) — same model, same SDK, same structured-output approach.
-- **Phase 16 (REPL):** `node:readline` is documented at HIGH confidence. REPL loop is a standard read/run/print pattern with no novel integrations.
+- **Phase 1:** API migration is covered by official Anthropic GA structured outputs docs at HIGH confidence; additive Zod schema extension is a well-understood pattern.
+- **Phase 2:** `buildGenericPrompt()` follows the exact same template as `maven.ts` and `npm.ts`; the scope block structure and end-state assertion pattern are directly transferable.
+- **Phase 4:** All changes are prompt engineering or display-only cosmetic changes; no new infrastructure.
+- **Phase 5:** Integration test patterns are established in the existing test suite; security block-list patterns from OWASP MCP Top 10.
 
 ---
 
@@ -153,43 +153,46 @@ Phases with standard patterns (skip research-phase):
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | All sources are official Anthropic docs, official Node.js docs, and live npm registry data verified 2026-03-19 |
-| Features | HIGH | Table stakes verified against established CLI tools (Claude Code, aider, Deep Agents); differentiators validated by Anthropic engineering blog and research papers (clarification reduces errors 27%) |
-| Architecture | HIGH | Integration analysis based on first-party codebase (`src/`) and official Agent SDK docs; specific file and function names are verified against existing v2.0 code |
-| Pitfalls | HIGH | Critical pitfalls sourced from OWASP 2025, CVE records, quantified hallucination research (arXiv 2406.10279, 5.2% commercial LLM hallucination rate), and first-party code analysis |
+| Stack | HIGH | All packages verified against live npm registry and official Anthropic docs on 2026-03-23; no new packages required; GA structured outputs API confirmed with official docs |
+| Features | HIGH (core), MEDIUM (edge cases) | Core patterns verified against Anthropic best practices docs and SWE-bench data; LLM Judge false-veto rate for generic tasks on this specific judge prompt is untested — probabilistic |
+| Architecture | HIGH | First-party codebase analysis; all integration points directly verified in source; component boundaries, build order, and unchanged-layer scope are confirmed, not inferred |
+| Pitfalls | HIGH | Derived from direct v2.1 codebase analysis + IEEE TSE 2025 LLM-as-judge research + OWASP MCP Top 10 2025; all critical pitfalls have specific file-level prevention strategies |
 
 **Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **Multi-turn context token budgeting:** The 2,000-token cap for history is a suggested heuristic in PITFALLS.md, not a validated figure. Validate during Phase 17 planning with actual intent parser prompt sizes to set the correct cap.
-- **`npm view` / `mvn dependency:get` version resolution:** PITFALLS.md recommends resolving `"latest"` sentinel to an actual version via registry lookup before passing to the agent. The exact integration point (inside `ContextScanner`, inside `IntentParser`, or a separate resolver step in `InputRouter`) is unspecified in ARCHITECTURE.md and should be resolved during Phase 15 planning.
-- **`--print` JSON output schema:** FEATURES.md lists `--print` as P2 but does not define the exact JSON schema for structured output. Define during Phase 15 or 16 planning to avoid exit-code and output-format drift between one-shot and REPL paths.
-- **`promptOverride` for freeform tasks:** ARCHITECTURE.md introduces `promptOverride?: string` on `RunOptions` for tasks that do not fit existing task types. The prompt builder for freeform tasks is unspecified. Confirm scope during Phase 15 planning — freeform task support may be out of v2.1 scope.
+- **LLM Judge false-veto rate for generic tasks:** Research documents the risk and the mitigation (judge prompt enrichment), but the actual false-veto rate against this codebase's specific judge prompt is unknown until tested with real generic task fixtures. Address during Phase 4 execution with fixture-based evaluation before shipping.
+- **Turn limit calibration for generic tasks:** The 10-turn limit was calibrated for dependency updates. Whether it is adequate for typical generic tasks (method rename, single-module config change) is untested. Monitor during Phase 5 integration tests; adjust if needed.
+- **MCP mid-session verifier `changedFiles` hint:** Pitfall 6 identifies that the MCP verifier runs Maven on TypeScript-only changes. The exact mechanism for passing file-extension hints through the MCP protocol boundary without a breaking schema change is unresolved. This is the only genuine design gap — resolve during Phase 3 planning by inspecting `src/mcp/` tool definitions.
 
 ---
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- [Anthropic Agent SDK — TypeScript Reference](https://platform.claude.com/docs/en/agent-sdk/typescript) — `Options` type, `continue`/`resume`/`session_id`
-- [Anthropic Agent SDK — Work with Sessions](https://platform.claude.com/docs/en/agent-sdk/sessions) — session file location, `listSessions()`
-- [Anthropic Agent SDK — Structured Outputs](https://platform.claude.com/docs/en/agent-sdk/structured-outputs) — `outputFormat`, `structured_output` on result
-- [Claude API — Structured Outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs) — `output_config.format`, no beta header required
-- [Node.js v20 Readline API](https://nodejs.org/api/readline.html) — `createInterface` options, `'history'` event, SIGINT handling patterns
-- [conf GitHub README](https://github.com/sindresorhus/conf) — API, TypeScript generics, atomic writes, platform-specific config paths
-- [OWASP Top 10 for LLM Applications 2025 — LLM01 Prompt Injection](https://genai.owasp.org/llmrisk/llm01-prompt-injection/)
-- [Package Hallucinations by Code Generating LLMs (arXiv 2406.10279)](https://arxiv.org/abs/2406.10279) — 5.2% hallucination rate for commercial LLMs; version numbers more hallucinated than names
-- [Indirect Prompt Injection via GitHub README (EMNLP 2025)](https://aclanthology.org/2025.emnlp-demos.55.pdf) — CVE-2025-54135/54136; repo scan injection attack
-- Existing codebase `src/` — first-party analysis of `run.ts`, `types.ts`, `retry.ts`, `judge.ts` (v2.0)
+- [Anthropic Structured Outputs GA docs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs) — `output_config.format`, no beta header, GA on Haiku 4.5+
+- [Anthropic Models Overview](https://platform.claude.com/docs/en/about-claude/models/overview) — `claude-haiku-4-5-20251001` as current fastest; Haiku 3 retirement April 19, 2026
+- [Anthropic Structured Outputs blog post](https://claude.com/blog/structured-outputs-on-the-claude-developer-platform) — GA announcement, `output_config.format` replaces `output_format`
+- [OWASP MCP Top 10: MCP02:2025 — Privilege Escalation via Scope Creep](https://owasp.org/www-project-mcp-top-10/2025/MCP02-2025%E2%80%93Privilege-Escalation-via-Scope-Creep) — scope creep security patterns in agentic systems
+- [On the Effectiveness of LLM-as-a-Judge for Code Evaluation (IEEE TSE 2025)](https://www.computer.org/csdl/journal/ts/2025/08/11071936/2851vlBjr9e) — Judge false positive/negative rates
+- `src/prompts/index.ts`, `src/prompts/maven.ts`, `src/prompts/npm.ts` — end-state prompt pattern to follow
+- `src/intent/types.ts`, `src/intent/llm-parser.ts`, `src/intent/fast-path.ts`, `src/intent/index.ts` — integration point verification
+- `src/orchestrator/verifier.ts`, `src/orchestrator/judge.ts`, `src/orchestrator/retry.ts` — unchanged execution layer confirmation
+- `src/agent/index.ts` — preVerify and version resolution guard confirmed sufficient for generic tasks
+- `.planning/PROJECT.md` — "generic execution path preferred"; "no hardcoded task-type handlers per category"
 
 ### Secondary (MEDIUM confidence)
-- [Ambig-SWE: Active questioning in agentic AI (arXiv 2502.13069)](https://arxiv.org/html/2502.13069v3) — clarification reduces errors 27%, ambiguity retries from 4.1 to 1.3 per session
-- [Intent-Driven NLI: Hybrid LLM + Intent Classification (Medium 2025)](https://medium.com/data-science-collective/intent-driven-natural-language-interface-a-hybrid-llm-intent-classification-approach-e1d96ad6f35d) — fast-path classification pattern
-- [Google Conductor: context-driven development for Gemini CLI](https://developers.googleblog.com/conductor-introducing-context-driven-development-for-gemini-cli/) — plan-before-execute pattern validation
-- [Agent State Management — AgentMemo 2026](https://agentmemo.ai/blog/agent-state-management-guide.html) — multi-turn state management patterns
-- [Containing Agent Chaos: Dagger Container Use](https://dagger.io/blog/agent-container-use) — fresh-container-per-task rationale
+- [LLM-Driven Code Refactoring: Opportunities and Limitations (IDE 2025 @ ICSE)](https://conf.researchr.org/details/icse-2025/ide-2025-papers/12/LLM-Driven-Code-Refactoring-Opportunities-and-Limitations) — refactoring scope injection requirements; explicit scope+type needed to avoid over-engineering
+- [SWE-bench Pro (arXiv 2509.16941)](https://arxiv.org/pdf/2509.16941) — change category reliability: logic bugs 43.2%, configuration 39.5%, multi-file 41%, single-file 42.3%
+- [AMBIG-SWE: Interactive Agents to Overcome Ambiguity (ICLR 2026)](https://arxiv.org/html/2502.13069v1) — pre-confirm clarification strategies for underspecified instructions
+- [Anthropic Engineering — Claude Code Best Practices](https://www.anthropic.com/engineering/claude-code-best-practices) — end-state prompting, scope control, CLAUDE.md patterns
+- [Augment Code — 11 Prompting Techniques for Agents](https://www.augmentcode.com/blog/how-to-build-your-agent-11-prompting-techniques-for-better-ai-agents) — end-state vs step-by-step comparison; planning increases SWE-bench pass rate ~4%
+- [How We Prevent AI Agent Drift (DEV Community 2025)](https://dev.to/singhdevhub/how-we-prevent-ai-agents-drift-code-slop-generation-2eb7) — Spotify composite verifier + LLM Judge diff-vs-prompt pattern; validates existing project architecture
+
+### Tertiary (LOW confidence)
+- [Your AI Agent Configs Are Probably Broken (DEV Community 2025)](https://dev.to/avifenesh/your-ai-agent-configs-are-probably-broken-and-you-dont-know-it-16n1) — config-only changes produce no build-system feedback signal; needs validation against this specific verifier implementation
 
 ---
-*Research completed: 2026-03-19*
+*Research completed: 2026-03-23*
 *Ready for roadmap: yes*

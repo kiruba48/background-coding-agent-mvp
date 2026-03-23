@@ -1,26 +1,16 @@
 # Feature Research
 
-**Domain:** Conversational agent interface — REPL, intent parsing, one-shot CLI, project registry, multi-turn sessions
-**Researched:** 2026-03-19
-**Confidence:** HIGH (table stakes verified against established CLI tool patterns, REPL conventions, and Claude Agent SDK docs)
+**Domain:** Generic code-change agent — arbitrary explicit instructions (config updates, refactors, method replacements)
+**Researched:** 2026-03-23
+**Confidence:** HIGH (core patterns verified against multiple sources), MEDIUM (edge cases and classifier behavior)
 
 ---
 
 ## Context
 
-This replaces the v2.0 migration feature landscape. v2.0 is shipped.
+This milestone (v2.2) adds a **generic task type** to the existing background coding agent. Already built and not re-researched: REPL + one-shot CLI, LLM intent parser with fast-path regex, confirm-before-execute flow, Maven/npm dependency update handlers, composite verifier (build+test+lint), LLM Judge, retry loop, Docker isolation, MCP mid-session self-check, project registry, multi-turn sessions.
 
-**Existing foundation (do not re-research):**
-- CLI with Commander.js, `--task-type`, `--dep`, `--target-version`, `--repo` flags
-- Agent executes in Docker container with iptables network isolation
-- Verification pipeline (build/test/lint + MCP mid-session + LLM Judge)
-- GitHub PR creation with rich context
-- Maven and npm dependency update task types
-- Retry loop with error summarization
-- Claude Agent SDK `query()` with PreToolUse/PostToolUse hooks
-
-**What this research covers:**
-Interactive REPL, one-shot CLI mode, LLM intent parser, context-first clarification (scan repo → propose plan → confirm), project registry, multi-turn session context.
+The research question: what does a generic task executor need to work reliably on explicit but diverse instructions?
 
 ---
 
@@ -28,121 +18,103 @@ Interactive REPL, one-shot CLI mode, LLM intent parser, context-first clarificat
 
 ### Table Stakes (Users Expect These)
 
-Features a conversational developer agent must have. Missing these makes the interface feel worse than the flags-based CLI it replaces.
+Features a generic code-change path must have. Their absence makes the platform feel unreliable for anything beyond dependency updates.
 
 | Feature | Why Expected | Complexity | Notes |
 |---------|--------------|------------|-------|
-| **One-shot natural language mode** | `bg-agent 'update recharts to 2.15'` must work without flags | LOW | Positional argument detected → route to intent parser; no REPL loop opened. Deep Agents CLI, pipe-agent: both auto-detect stdin/arg and run non-interactively. |
-| **Interactive REPL with prompt** | All conversational agents (Claude Code, aider, open-interpreter) provide a `>` prompt loop | LOW | Node.js `readline` / `node:readline/promises` handles line editing, history, Ctrl+C exit natively. No third-party dep needed. |
-| **REPL command history (persistent)** | Up-arrow to recall previous tasks is table stakes for any terminal REPL | LOW | Node.js `repl.REPLServer` built-in: persists to `~/.node_repl_history`. With `readline`, persist manually to `~/.bg-agent-history`. |
-| **Clear exit semantics** | `exit`, `quit`, Ctrl+C, Ctrl+D must all work predictably | LOW | Standard readline events: `SIGINT`, `close`. Must flush any in-progress state before exit. |
-| **Echo confirmed plan before executing** | Users expect the agent to confirm what it's about to do before running a 5-min task | LOW | Print structured summary: task type, dep, version, repo. Prompt `Proceed? [Y/n]`. Claude Code and Conductor both do this. |
-| **Graceful handling of ambiguous input** | "update recharts" without a version should ask, not fail silently or guess wrong | MEDIUM | Ask exactly one targeted question. Research: adding clarifying questions reduced error rates 27% and ambiguity retries from 4.1 to 1.3 per session. |
-| **Status feedback during execution** | User must know the agent is running, not hung | LOW | Print "Running agent... (turn N/10)" lines to stderr. Same pattern as CLI `--verbose` mode already. |
-| **Error messages in plain English** | Verification failure must surface as human-readable output, not raw JSON | LOW | Already done in CLI; REPL must preserve same behavior. |
+| Pass user instruction as end-state prompt to agent | User's words are the spec — no translation loss; any LLM intermediate rewrite is a source of error | LOW | Already the established project pattern. Dep-update handlers translate natural language into dep+version; generic path just passes instruction through. Adding this is a routing change, not new infrastructure. |
+| Intent parser recognizes generic instructions | Parser currently produces `maven-dependency-update` or `npm-dependency-update`. Everything else must land somewhere, not crash | LOW | Add `generic` as a valid intent type output. Fast-path regex still runs first; if no dep-update pattern is detected, LLM classifier fires with `generic` as an allowed classification. |
+| LLM Judge fires on generic tasks | Scope creep is more likely on vague instructions than on typed dep updates. Users expect the safety net to still apply | LOW | Judge is already generic — it compares final diff against original prompt. No new judge logic needed; generic tasks must route through the same judge path. Verify by test. |
+| Retry loop handles generic failure context | When agent produces a broken change, it must see the error and the diff together | LOW | RetryOrchestrator already supports this. Generic tasks use the same retry path. No new code. |
+| End-to-end autonomous execution after confirm | "No user input after task confirmation until PR" is the milestone contract. Generic path must not introduce interactive mid-run steps | LOW | Architecture already enforces this. Risk: agent making ambiguous decisions mid-run and pausing. Prevention: system prompt must include explicit scope constraint and decision-making guidance. |
+| Graceful handling of zero-diff outcome | Agent searches, finds no applicable change site, makes no changes. Without handling, this produces an empty PR or silent success that confused users | MEDIUM | After agent run, check diff before handing to verifier. If diff is empty, surface as a distinct terminal state. Do not create a PR. This is the most common failure mode for generic tasks on well-specified but already-compliant codebases. |
 
 ### Differentiators (Competitive Advantage)
 
-Features that make this conversational interface meaningfully better than just wrapping the existing flags CLI.
+Features that make the generic path trustworthy rather than just functional. These are where reliability comes from, not functionality.
 
 | Feature | Value Proposition | Complexity | Notes |
 |---------|-------------------|------------|-------|
-| **LLM intent parser** | Natural language → structured `{taskType, dep, targetVersion, repo}` without users memorizing flag syntax | MEDIUM | Single Anthropic SDK call with structured output (tool_use). Use Claude Haiku 3.5 (same as Judge) for cost efficiency. Schema: `{taskType, dep, targetVersion, repo, confidence, clarification_needed}`. |
-| **Context-first repo scan** | Agent scans `package.json` / `pom.xml` before asking questions — surfaces current version, suggests target version | MEDIUM | Before intent parsing, read manifest file. Inject into intent parser prompt: "Current recharts: 2.12.7, latest: 2.15.0". Reduces clarification turns. |
-| **Project registry** | `bg-agent` in any registered project just works — no `--repo /long/path/to/project` | MEDIUM | JSON file at `~/.bg-agent/projects.json`. `{name: string, path: string, registeredAt: string}[]`. Auto-register cwd on first use (or explicit `bg-agent register`). |
-| **Multi-turn session context** | Follow-up in REPL: "now do lodash too" understands context from previous task | HIGH | Maintain conversation window: last N parsed intents + outcomes. Inject as context into intent parser. Scope: last 5 tasks, same session. Do NOT persist across REPL restarts (scope creep risk). |
-| **`--print` / non-interactive one-shot** | `bg-agent --print 'update recharts' | jq` for scripting and CI pipelines | LOW | Flag that suppresses REPL, disables confirm prompt, outputs structured JSON result to stdout. Deep Agents and pipe-agent both implement this. |
-| **Registry short-name routing** | `bg-agent 'update recharts' --project myapp` instead of full path | LOW | Resolves `myapp` → path from `~/.bg-agent/projects.json`. Fallback: cwd if no `--project` given. |
-| **Confidence threshold for auto-proceed** | High-confidence parses (`confidence >= 0.9`) skip manual confirmation in `--yes` mode | MEDIUM | `--yes` flag: if `confidence >= 0.9`, skip confirm prompt and run. If lower, always confirm regardless of flag. Prevents silent misparses. |
+| Change-type-aware verification | Config-only changes (JSON/YAML/properties) do not need a 2–3 minute build+test run. Skipping heavy verification for config-only changes reduces cycle time and avoids false failures (e.g., lint fails on unrelated issues) | MEDIUM | After agent run, inspect modified file extensions. If all changed files are config/data files (.json, .yaml, .yml, .properties, .toml, .env, .ini), run lint only. If any source file (.ts, .js, .java, .py, .go, .rb) changed, run full composite verifier. Already planned as part of v2.2 build-system detection work. |
+| Scope constraint in generic task system prompt | Generic agents are known to sprawl into adjacent code. SWE-bench data shows this is the primary failure mode. A single explicit constraint ("touch only files directly relevant to the instruction, nothing else") reduces scope drift without requiring new infrastructure | LOW | Prompt engineering only. This is a critical correctness feature masquerading as a low-complexity one. Must be tested against real generic tasks, not just dep updates. |
+| Zero-diff as explicit terminal state | Most agents silently succeed with empty output or produce hollow PRs. Treating zero-diff as a named failure state with a clear user message is a quality differentiator that competitors lack | LOW | Diff-size check before verifier. New `zero_diff` session state alongside existing `success`, `failed`, `vetoed`. User message: "Agent ran successfully but made no changes. Your instruction may already be satisfied, or the agent could not locate the relevant code." |
+| Instruction enrichment via existing clarification flow | Context-first clarification already scans repo manifests and proposes a plan before confirm. For generic tasks, the plan shown to the user during confirmation is the scope contract that the Judge validates against. Making this visible and user-correctable before the run increases first-run success rate | MEDIUM | No new infrastructure. Key change: ensure the clarification prompt for generic tasks surfaces the agent's intended target files and approach, not just the raw instruction. The user's correction at confirm time updates the scope that the Judge uses. |
 
 ### Anti-Features (Commonly Requested, Often Problematic)
 
 | Feature | Why Requested | Why Problematic | Alternative |
 |---------|---------------|-----------------|-------------|
-| **Persistent multi-turn context across REPL sessions** | "It should remember I worked on myapp last week" | Context from old sessions becomes stale, incorrect, and misleading. A dep updated last week may be different from today's state. | Project registry records session outcomes. Fresh context scan at start of each task. |
-| **Auto-execute without confirmation** | "It's annoying to type Y every time" | Removes human-in-the-loop for a destructive operation (modifying code, creating PRs). Verification does not catch all unintended changes. | `--yes` flag as opt-in. Default always confirms. |
-| **Free-form follow-up that modifies previous agent output** | "Actually, also update the peer dep" after a PR is already created | Re-running an agent against already-modified code creates merge conflicts and overlapping PRs. | Start a new REPL task on the already-changed branch. Warn user if git status shows uncommitted changes. |
-| **LLM parsing of flags** | "Could the intent parser understand `--dep lodash --target 4.18`?" | This is just the existing CLI. Adding LLM parsing to flag input adds latency and failure modes for zero benefit. | Keep Commander.js for flag mode. Intent parser only runs on positional/freeform text. |
-| **Slack bot / webhook trigger in v2.1** | "I want to trigger from Slack" | Adds authentication, event subscription, workspace management scope. Completely separate problem from conversational REPL. | Project.md explicitly defers Slack to a later milestone. Architecture should not block this, but do not implement in v2.1. |
-| **"Update all outdated deps"** | Convenient sounding | Single-turn agent with focus constraint is the trust model. Bulk updates destroy focus, cause scope creep, and make LLM Judge evaluation meaningless. | Iterate: one dep per REPL task. Multi-dep support can be a later research milestone. |
-| **Intent parser that silently falls back to best guess** | Reduce friction | Silent wrong parses cause real damage (wrong dep updated, wrong version). | Always surface parse result to user. If `confidence < 0.7`, explain what was inferred and ask to confirm or correct. |
+| Per-category task-type handlers (refactor-handler, config-handler, rename-handler, etc.) | Feels like it gives more control over specific scenarios | Combinatorial maintenance burden. Every new category requires a handler. Generic end-state prompting already works for localized changes per SWE-bench research. PROJECT.md explicitly rejects this. | Single generic execution path with good end-state prompting and scope constraints in system prompt |
+| Agent asks user for clarification during the run | Catches ambiguity that the confirm step missed | Breaks the "no user input after confirm" invariant. Makes runs non-deterministic and hard to script. Introduce a blocking interactive state mid-Docker-run. | Shift all clarification to the pre-confirm stage. Context-first scan + clarification prompt already does this. If agent cannot determine the right action without a mid-run question, the task was underspecified at confirm time. |
+| Step-by-step instructions injected into generic prompt | Teams want to guide the agent's approach | Research confirms end-state prompting outperforms step-by-step on capable models. Step-by-step causes the agent to follow steps mechanically even when a step is wrong, rather than using judgment. This is the established project decision (TASK-04). | End-state prompting: describe desired outcome, constraint, and what "done" looks like. Let the agent plan its own steps. |
+| Multi-file migration as a generic task in v2.2 | Users will try "migrate all usages of X to Y across the codebase" | Exceeds reliable single-run scope. SWE-bench data shows multi-file changes have only ~41% pass rate vs ~40% for single-file, but the failures are harder to diagnose and retry. Context window pressure causes partial migrations that leave the codebase in a broken intermediate state. | Explicitly out of scope for v2.2. Document limit in the REPL. Tell users to split into single-file or single-module tasks. |
+| Task discovery ("find places that need this change") | Discovery before application seems helpful | Changes the agent's contract from "apply this instruction" to "decide what needs changing." When scope is agent-defined, the LLM Judge cannot validate it — it has no ground truth to compare against. | Require explicit instruction: user specifies what to change and where. Task discovery is a separate analysis mode deferred to v2.3+. |
+| Automatic instruction rewriting/strengthening before sending to agent | LLM pre-processes vague user instruction into a more specific prompt | Introduces a hidden translation layer. If the rewritten instruction is wrong, the user cannot see or correct it. Violates the "user's words are the spec" principle. | Show the agent's interpretation at confirm time (via clarification flow). If wrong, user corrects it explicitly before the run. |
 
 ---
 
 ## Feature Dependencies
 
 ```
-[Project Registry]
-    └──required by──> [Registry short-name routing]
-    └──required by──> [cwd auto-register]
+Generic Intent Class (catch-all output from parser)
+    └──requires──> LLM Intent Parser (already built)
+                       └──requires──> REPL / one-shot CLI (already built)
 
-[LLM Intent Parser]
-    └──required by──> [One-shot natural language mode]
-    └──required by──> [Interactive REPL]
-    └──enhances──>    [Context-first repo scan]  (scan feeds parser context)
+Generic Task Executor
+    └──requires──> Generic Intent Class
+    └──requires──> End-state prompt construction (new: build prompt from user instruction + repo context)
+    └──uses──>     ClaudeCodeSession / RetryOrchestrator (already built, no changes)
 
-[Interactive REPL]
-    └──requires──>    [LLM Intent Parser]
-    └──requires──>    [Echo confirmed plan]
-    └──enhances──>    [Multi-turn session context]
+Zero-Diff Detection
+    └──requires──> Post-run diff extraction (new, runs before outer verifier)
+    └──blocks──>   Composite Verifier (verifier only runs if diff is non-empty)
 
-[Context-first repo scan]
-    └──enhances──>    [LLM Intent Parser]         (reduces clarification turns)
-    └──enhances──>    [Graceful ambiguity handling]
+Change-Type-Aware Verifier
+    └──requires──> Build-system detection (already planned for v2.2)
+    └──requires──> Post-run file list inspection (new, LOW complexity)
+    └──uses──>     Composite Verifier (already built, selects subset)
 
-[Multi-turn session context]
-    └──requires──>    [Interactive REPL]           (no context across one-shot runs)
-    └──conflicts──>   [Persistent cross-session context]  (see anti-features)
+LLM Judge on Generic Tasks
+    └──requires──> Generic task routes through same pipeline as dep-update tasks
+    └──uses──>     LLM Judge (already built, no changes)
 
-[One-shot mode]
-    └──requires──>    [LLM Intent Parser]
-    └──conflicts──>   [Multi-turn session context]  (no session in one-shot)
-
-[--print / non-interactive flag]
-    └──requires──>    [One-shot mode]
-    └──conflicts──>   [Interactive REPL]
+Scope Constraint in System Prompt
+    └──requires──> Generic Task Executor (where system prompt is constructed)
+    └──enhances──> LLM Judge accuracy (tighter scope = more precise validation)
 ```
 
 ### Dependency Notes
 
-- **LLM Intent Parser is the critical path**: REPL, one-shot mode, and context-first scan all depend on it. Build and test intent parser first (Phase 1).
-- **Project registry is independent**: Can be built in parallel with intent parser. No LLM dependency — pure JSON file + CLI commands.
-- **Multi-turn context requires REPL**: Only meaningful in an interactive loop. Do not implement for one-shot mode.
-- **Context-first scan enhances intent parser**: Read manifest before parsing to inject current version data. Reduces from "what version?" clarification to auto-proposing the right version.
-- **One-shot and REPL conflict**: Same binary entry point must detect which mode to enter. Detection logic: positional arg present → one-shot; no arg → REPL.
+- **Generic Intent Class is the critical path entry:** Everything else in v2.2 depends on having a valid `generic` intent output from the parser. Build this first.
+- **Zero-diff detection must precede the verifier:** Running a 2–3 minute build on an empty diff is wasteful and produces misleading error messages. The zero-diff check is a pre-verifier gate.
+- **Change-type-aware verifier requires build-system detection first:** Detection was already planned. File extension inspection is the consumer of that detection work.
+- **Judge requires no changes:** It already operates on `{originalPrompt, diff}`. Generic tasks provide the same inputs. Verify this routes correctly in integration tests.
+- **Scope constraint has no code dependencies:** It is prompt engineering applied during generic task executor construction. Low complexity, high impact on correctness.
 
 ---
 
 ## MVP Definition
 
-### Launch With (v2.1)
+### Launch With (v2.2)
 
-Minimum viable conversational interface — what's needed to replace the flags CLI for the primary use case (dependency updates).
+Minimum for the generic task path to be trustworthy end-to-end.
 
-- [ ] **LLM intent parser** — extracts `{taskType, dep, targetVersion, repo}` from freeform text. Structured output with `confidence` field. Claude Haiku 3.5 call. Core of everything else.
-- [ ] **One-shot natural language mode** — `bg-agent 'update recharts to 2.15'` runs the full existing pipeline. Single positional arg detected, parsed, confirm prompt, execute.
-- [ ] **Interactive REPL** — `bg-agent` with no args opens `>` prompt. Each task parses, confirms, executes. Ctrl+C aborts current task. Ctrl+D / `exit` quits.
-- [ ] **Echo confirmed plan** — before any agent run, print: `Task: npm-dependency-update | Dep: recharts | Version: 2.15.0 | Repo: /path/to/project. Proceed? [Y/n]`
-- [ ] **Project registry** — `~/.bg-agent/projects.json`. Auto-register cwd on first use. `bg-agent register [name]` for explicit registration. `--project name` flag to select.
-- [ ] **Graceful ambiguity handling** — if intent parser sets `clarification_needed: true`, ask the minimum clarifying question before proceeding.
+- [ ] **Generic intent class** — Intent parser outputs `{taskType: 'generic', instruction: string}` for non-dep-update instructions. Fast-path regex still fires first. LLM classifier adds `generic` as a valid type. No translation of the instruction — pass through verbatim.
+- [ ] **Generic task executor** — Builds agent prompt from `instruction` + repo context (manifest summary, language, build tool). System prompt includes explicit scope constraint: "touch only files directly relevant to the instruction." Routes through existing RetryOrchestrator and ClaudeCodeSession unchanged.
+- [ ] **Zero-diff detection** — After agent run, inspect diff size before calling composite verifier. If diff is empty, record `zero_diff` terminal state, surface a clear message to user, do not create PR.
+- [ ] **Change-type-aware verification** — Inspect changed file extensions post-run. All config/data files → lint only. Any source file → full composite verifier. Build-system detection feeds this decision.
+- [ ] **LLM Judge routing verified** — Integration test confirms generic tasks hit the same judge path as dep-update tasks. No new judge code.
 
-### Add After Validation (v1.x)
+### Add After Validation (v2.2.x)
 
-Features to add once core REPL loop is used and validated.
+- [ ] **`zero_diff` as distinct session history state** — Record `zero_diff` separately from `failed` for observability. Trigger: want to distinguish "agent ran and found nothing to change" from "agent ran and produced broken output." Currently both would be `failed`.
+- [ ] **Instruction enrichment hint at confirm step** — When intent is `generic`, clarification prompt shows the agent's planned target scope (files, approach) before user confirms. Trigger: generic tasks showing high wrong-scope rates in real usage.
 
-- [ ] **Context-first repo scan** — trigger: intent parser confidence is <0.85 for version selection. Scan manifest to auto-propose version, reducing clarification loops.
-- [ ] **Persistent REPL history** — trigger: users report re-typing same commands. `~/.bg-agent-history` file, 1000 entry cap.
-- [ ] **Multi-turn session context** — trigger: users use follow-up commands ("now do lodash too") and hit confusion. Last 5 parsed intents injected into intent parser prompt.
-- [ ] **`--print` / non-interactive flag** — trigger: CI integration requests. Outputs structured JSON, suppresses confirm prompt.
+### Future Consideration (v2.3+)
 
-### Future Consideration (v2+)
-
-Features to defer until product-market fit is established.
-
-- [ ] **Confidence threshold auto-proceed** (`--yes`) — defer until user behavior shows confirm step is the main friction.
-- [ ] **Slack / webhook trigger** — separate problem domain; architecture must not block it, but do not implement now.
-- [ ] **Multi-dep batch mode** — defer until focus model is proven insufficient.
-- [ ] **Cross-session persistent context** — defer; likely never needed given staleness risk.
+- [ ] **Multi-file migration support** — Needs a scoped planning phase before execution to prevent partial migrations. Requires proof-of-concept on complex real-world repos. Defer until generic path is stable.
+- [ ] **Task discovery mode** — Separate analysis mode that does not produce code changes. Different agent session contract; requires new Judge evaluation strategy.
+- [ ] **Custom verifier profiles per file type** — E.g., run only ESLint for JS-only changes. The change-type-aware verifier covers 80% of the value with less complexity.
 
 ---
 
@@ -150,59 +122,50 @@ Features to defer until product-market fit is established.
 
 | Feature | User Value | Implementation Cost | Priority |
 |---------|------------|---------------------|----------|
-| LLM intent parser | HIGH | MEDIUM | P1 |
-| One-shot natural language mode | HIGH | LOW (builds on parser) | P1 |
-| Interactive REPL | HIGH | LOW | P1 |
-| Echo confirmed plan | HIGH | LOW | P1 |
-| Project registry | HIGH | LOW | P1 |
-| Graceful ambiguity handling | HIGH | MEDIUM | P1 |
-| Context-first repo scan | MEDIUM | MEDIUM | P2 |
-| Persistent REPL history | LOW | LOW | P2 |
-| Multi-turn session context | MEDIUM | HIGH | P2 |
-| `--print` non-interactive flag | MEDIUM | LOW | P2 |
-| Confidence auto-proceed (`--yes`) | LOW | LOW | P3 |
-| Slack / webhook | LOW (now) | HIGH | P3 |
+| Generic intent class | HIGH | LOW | P1 |
+| Generic task executor with scope constraint | HIGH | LOW | P1 |
+| Zero-diff detection | HIGH | LOW | P1 |
+| Change-type-aware verification | HIGH | MEDIUM | P1 |
+| LLM Judge routing for generics | HIGH | LOW (verify only) | P1 |
+| `zero_diff` as distinct session state | MEDIUM | LOW | P2 |
+| Instruction enrichment at confirm step | MEDIUM | LOW | P2 |
+| Multi-file migration | MEDIUM | HIGH | P3 |
+| Task discovery mode | MEDIUM | HIGH | P3 |
 
 **Priority key:**
-- P1: Must have for v2.1 launch
-- P2: Should have, add after P1 validated
-- P3: Nice to have, future milestone
+- P1: Must have for v2.2 launch
+- P2: Add after P1 validated in real usage
+- P3: Future milestone
 
 ---
 
-## Existing System Integration Points
+## Competitor Feature Analysis
 
-Where new features must wire into the existing pipeline without breaking it.
-
-| New Feature | Integration Point | Risk |
-|-------------|-------------------|------|
-| LLM intent parser | Produces `{taskType, dep, targetVersion, repo}` — same shape as existing `runAgent()` options | LOW — parser output maps 1:1 to existing flags |
-| One-shot mode | New entry path in `src/cli/index.ts` — detect positional arg, call parser, call `runAgent()` | LOW — `runAgent()` already takes structured options |
-| Interactive REPL | New `src/cli/repl.ts` module — loop wrapping parser + `runAgent()` | LOW — additive, doesn't touch existing `program.parse()` path |
-| Project registry | New `src/registry/` module — read/write `~/.bg-agent/projects.json` | LOW — no coupling to agent pipeline |
-| Confirm prompt | Inject between parser output and `runAgent()` call | LOW — can be a thin `src/cli/confirm.ts` utility |
-| Context-first scan | Read `package.json` or `pom.xml` in resolved repo path before intent parsing | LOW — file read only, no agent involvement |
-| Multi-turn context | Pass last N intents array into intent parser system prompt | MEDIUM — parser prompt contract changes; must not affect one-shot path |
-
-**No existing CLI flag path should be broken.** `background-agent --task-type maven-dependency-update --repo /path ...` must continue to work unchanged. The new interface is additive.
+| Feature | Claude Code / Copilot Agent Mode | Cline / Aider | Our Approach |
+|---------|----------------------------------|---------------|--------------|
+| Generic instruction handling | Yes — full IDE context, user approves each file change | Yes — interactive, user approves per-file diffs | Autonomous post-confirm; no mid-run interaction; Docker-isolated |
+| Verification | Build errors fed back in loop; no independent verifier | Compile/lint errors fed back; no LLM Judge | Three-layer: deterministic verifier + LLM Judge + retry loop |
+| Scope control | Relies on user to review each change | User approves each change; agent can still sprawl | LLM Judge blocks scope-creep PRs; scope constraint in system prompt |
+| Config-only detection | Not differentiated | Not differentiated | Skip build+test for config-only changes |
+| Zero-diff handling | Varies; can produce empty commits | User notices; no system-level detection | Explicit `zero_diff` terminal state before verifier runs |
+| Human-in-the-loop | Approves each file change during run | Approves each file change during run | Single confirmation before run; full automation after |
 
 ---
 
 ## Sources
 
-- [Node.js readline documentation](https://nodejs.org/api/readline.html) — HIGH confidence, official Node.js v25 docs
-- [Node.js REPL documentation](https://nodejs.org/api/repl.html) — HIGH confidence, official Node.js v25 docs
-- [Intent-Driven Natural Language Interface: Hybrid LLM + Intent Classification Approach](https://medium.com/data-science-collective/intent-driven-natural-language-interface-a-hybrid-llm-intent-classification-approach-e1d96ad6f35d) — MEDIUM confidence, practitioner writeup
-- [Ambig-SWE: Interactive Agents to Overcome Underspecificity in Software Engineering](https://arxiv.org/html/2502.13069v3) — MEDIUM confidence, 2025 research paper; clarification reduces errors 27%
-- [When agents learn to ask: Active questioning in agentic AI](https://medium.com/@milesk_33/when-agents-learn-to-ask-active-questioning-in-agentic-ai-f9088e249cf7) — MEDIUM confidence, practitioner writeup
-- [Deep Agents CLI — stdin pipe and non-interactive mode](https://docs.langchain.com/oss/python/deepagents/cli/overview) — MEDIUM confidence, LangChain official docs; confirms auto-detect stdin pattern
-- [Google Conductor: context-driven development for Gemini CLI](https://developers.googleblog.com/conductor-introducing-context-driven-development-for-gemini-cli/) — MEDIUM confidence, official Google blog; validates plan-before-execute pattern
-- [Anthropic: Effective Harnesses for Long-Running Agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents) — HIGH confidence, Anthropic engineering blog
-- [Anthropic: Context Management](https://www.anthropic.com/news/context-management) — HIGH confidence, official Anthropic docs
-- [Claude Code Interactive REPL and Workflow Modes](https://oboe.com/learn/mastering-claude-code-for-agentic-development-ivtygx/interactive-repl-and-workflow-modes-1) — MEDIUM confidence, third-party Claude Code guide; confirms REPL design patterns
-- [OpenAI Codex Prompting Guide](https://developers.openai.com/cookbook/examples/gpt-5/codex_prompting_guide) — MEDIUM confidence, OpenAI official; confirms plan-confirm pattern
+- [LLM-Driven Code Refactoring: Opportunities and Limitations (2025 IDE Workshop)](https://seal-queensu.github.io/publications/pdf/IDE-Jonathan-2025.pdf) — HIGH confidence; LLMs reliable on localized refactors, unreliable on architectural/multi-module. Config 39.5% pass rate on SWE-bench-style tasks.
+- [SWE-bench Pro (arXiv 2509.16941)](https://arxiv.org/pdf/2509.16941) — MEDIUM confidence; change category reliability: logic bugs 43.2%, API misuse 40.8%, configuration 39.5%, multi-file 41%, single-file 42.3%.
+- [AMBIG-SWE: Interactive Agents to Overcome Ambiguity in Software Engineering (ICLR 2026)](https://arxiv.org/html/2502.13069v1) — MEDIUM confidence; agent clarification strategies for underspecified instructions.
+- [Anthropic Engineering — Claude Code Best Practices](https://www.anthropic.com/engineering/claude-code-best-practices) — HIGH confidence; end-state prompting, scope control, CLAUDE.md patterns.
+- [How We Prevent AI Agent Drift — DEV Community](https://dev.to/singhdevhub/how-we-prevent-ai-agents-drift-code-slop-generation-2eb7) — MEDIUM confidence; practical scope-limiting strategies for production agents.
+- [Augment Code — 11 Prompting Techniques for Agents](https://www.augmentcode.com/blog/how-to-build-your-agent-11-prompting-techniques-for-better-ai-agents) — MEDIUM confidence; end-state vs step-by-step comparison; planning increases SWE-bench pass rate 4%.
+- [The Agent That Says No: Verification Beats Generation (Vadim's blog)](https://vadim.blog/verification-gate-research-to-practice) — MEDIUM confidence; Google DORA 2025 correlation: more generation without better verification is net negative.
+- [Tweag — Introduction to Agentic Coding](https://www.tweag.io/blog/2025-10-23-agentic-coding-intro/) — MEDIUM confidence; plan specificity: "what will change, where it will change, how success will be verified."
+- [LLM as a Judge — Maxim](https://www.getmaxim.ai/articles/llm-as-a-judge-a-practical-reliable-path-to-evaluating-ai-systems-at-scale/) — MEDIUM confidence; LLM Judge for intent drift detection patterns.
+- [Spotify Background Coding Agent (referenced in search results)](https://dev.to/singhdevhub/how-we-prevent-ai-agents-drift-code-slop-generation-2eb7) — HIGH confidence; confirms composite verifier + LLM Judge diff-vs-prompt pattern; validates existing project architecture.
 
 ---
 
-*Feature research for: conversational agent interface (v2.1)*
-*Researched: 2026-03-19*
+*Feature research for: generic code-change agent (background-coding-agent v2.2)*
+*Researched: 2026-03-23*
