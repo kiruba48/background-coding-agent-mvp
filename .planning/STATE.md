@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v2.2
 milestone_name: Deterministic Task Support
-status: in-progress
-stopped_at: "Completed 18-01-PLAN.md"
-last_updated: "2026-03-23T10:52:12Z"
-last_activity: 2026-03-23 — Completed plan 18-01 (SDK bump + verb guard)
+status: executing
+stopped_at: Completed 18-02-PLAN.md
+last_updated: "2026-03-23T10:59:27.801Z"
+last_activity: "2026-03-23 — Completed 18-01: SDK bump to ^0.80.0 + REFACTORING_VERB_GUARD"
 progress:
   total_phases: 3
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 1
+  completed_phases: 1
+  total_plans: 2
+  completed_plans: 2
   percent: 5
 ---
 
@@ -51,6 +51,9 @@ Progress: [█░░░░░░░░░] 5% (v2.2)
 - `originalTask` passed to RetryOrchestrator must be the full expanded prompt from `buildPrompt()` — not the raw user description — to preserve scope fence on retry
 - REFACTORING_VERB_GUARD exported from fast-path.ts for test visibility and future reuse (18-01)
 - Verb guard placed before PR_SUFFIX test so compound "replace X and create PR" instructions are blocked at the guard (18-01)
+- [Phase 18]: IntentSchema uses 'generic' enum value directly — 'unknown' is removed entirely, keeping schema honest (18-02)
+- [Phase 18]: taskCategory required field in IntentSchema/OUTPUT_SCHEMA, flows through ResolvedIntent for phase-19 consumption (18-02)
+- [Phase 18]: GA API path: client.messages.create replaces client.beta.messages.create with zero type assertions (18-02)
 
 ### Pending Todos
 
@@ -62,7 +65,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-23T10:52:12Z
-Stopped at: Completed 18-01-PLAN.md
-Resume file: .planning/phases/18-intent-parser-generalization/18-01-SUMMARY.md
+Last session: 2026-03-23T10:59:27.799Z
+Stopped at: Completed 18-02-PLAN.md
+Resume file: None
 Next action: `/gsd:execute-phase 18` (execute Plan 02)

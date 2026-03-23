@@ -63,7 +63,7 @@ Full details: [v2.1-ROADMAP.md](milestones/v2.1-ROADMAP.md)
 
 **Milestone Goal:** Generalize the agent beyond dependency updates to handle any explicit code change instruction — config edits, simple refactors, method replacements — with fully autonomous execution from task spec to PR.
 
-- [ ] **Phase 18: Intent Parser Generalization** - Add `generic` task type, refactoring verb guard, and migrate to GA structured outputs API
+- [x] **Phase 18: Intent Parser Generalization** - Add `generic` task type, refactoring verb guard, and migrate to GA structured outputs API (completed 2026-03-23)
 - [ ] **Phase 19: Generic Prompt Builder** - Build scope-fenced prompt, wire dispatch, update confirm loop display
 - [ ] **Phase 20: Verification & Safety** - Zero-diff detection, change-type-aware verification, LLM Judge calibration
 
@@ -133,6 +133,6 @@ Plans:
 | 15. Intent Parser + One-Shot Mode | v2.1 | 3/3 | Complete | 2026-03-20 |
 | 16. Interactive REPL | v2.1 | 2/2 | Complete | 2026-03-20 |
 | 17. Multi-Turn Session Context | v2.1 | 2/2 | Complete | 2026-03-22 |
-| 18. Intent Parser Generalization | 1/2 | In Progress|  | - |
+| 18. Intent Parser Generalization | 2/2 | Complete   | 2026-03-23 | - |
 | 19. Generic Prompt Builder | v2.2 | 0/? | Not started | - |
 | 20. Verification & Safety | v2.2 | 0/? | Not started | - |
