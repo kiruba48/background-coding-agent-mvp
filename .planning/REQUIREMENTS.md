@@ -57,21 +57,21 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INTENT-01 | — | Pending |
-| INTENT-02 | — | Pending |
-| INTENT-03 | — | Pending |
-| PROMPT-01 | — | Pending |
-| PROMPT-02 | — | Pending |
-| PROMPT-03 | — | Pending |
-| VERIFY-01 | — | Pending |
-| VERIFY-02 | — | Pending |
-| VERIFY-03 | — | Pending |
+| INTENT-01 | Phase 18 | Pending |
+| INTENT-02 | Phase 18 | Pending |
+| INTENT-03 | Phase 18 | Pending |
+| PROMPT-01 | Phase 19 | Pending |
+| PROMPT-02 | Phase 19 | Pending |
+| PROMPT-03 | Phase 19 | Pending |
+| VERIFY-01 | Phase 20 | Pending |
+| VERIFY-02 | Phase 20 | Pending |
+| VERIFY-03 | Phase 20 | Pending |
 
 **Coverage:**
 - v2.2 requirements: 9 total
-- Mapped to phases: 0
-- Unmapped: 9 ⚠️
+- Mapped to phases: 9
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-03-23*
-*Last updated: 2026-03-23 after initial definition*
+*Last updated: 2026-03-23 — traceability filled after roadmap creation*
