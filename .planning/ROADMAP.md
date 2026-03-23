@@ -78,10 +78,11 @@ Full details: [v2.1-ROADMAP.md](milestones/v2.1-ROADMAP.md)
   2. User types any explicit code change instruction (not a dep update) and the intent schema produces `{taskType: 'generic', description: string}` with no parse error
   3. The fast-path regex skips to the LLM parser when a refactoring verb (`replace`, `rename`, `move`, `extract`, `migrate`, `rewrite`) precedes a package name
   4. Intent parsing calls `client.messages.create()` with `output_config.format` — no `betas` header, no beta endpoint
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 18-01: TBD
+- [ ] 18-01-PLAN.md — SDK bump to ^0.80.0 and refactoring verb guard in fast-path
+- [ ] 18-02-PLAN.md — Schema generalization (generic type + taskCategory) and GA API migration
 
 ### Phase 19: Generic Prompt Builder
 **Goal**: Agent sessions for generic tasks receive a scope-fenced end-state prompt derived from the user's instruction, and users see a meaningful task summary before confirming
@@ -132,6 +133,6 @@ Plans:
 | 15. Intent Parser + One-Shot Mode | v2.1 | 3/3 | Complete | 2026-03-20 |
 | 16. Interactive REPL | v2.1 | 2/2 | Complete | 2026-03-20 |
 | 17. Multi-Turn Session Context | v2.1 | 2/2 | Complete | 2026-03-22 |
-| 18. Intent Parser Generalization | v2.2 | 0/? | Not started | - |
+| 18. Intent Parser Generalization | v2.2 | 0/2 | Not started | - |
 | 19. Generic Prompt Builder | v2.2 | 0/? | Not started | - |
 | 20. Verification & Safety | v2.2 | 0/? | Not started | - |
