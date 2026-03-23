@@ -1,35 +1,36 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.1
-milestone_name: Conversational Mode
-status: complete
-stopped_at: Milestone v2.1 shipped
-last_updated: "2026-03-22"
-last_activity: 2026-03-22 — Milestone v2.1 Conversational Mode shipped
+milestone: v2.2
+milestone_name: Deterministic Task Support
+status: active
+stopped_at: null
+last_updated: "2026-03-23"
+last_activity: 2026-03-23 — Milestone v2.2 started
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 10
-  completed_plans: 10
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-22)
+See: .planning/PROJECT.md (updated 2026-03-23)
 
 **Core value:** The full verification loop must work: agent changes code, deterministic verifiers catch failures, LLM Judge catches scope creep, and only verified changes proceed.
-**Current focus:** Planning next milestone
+**Current focus:** v2.2 Deterministic Task Support
 
 ## Current Position
 
-Phase: All v2.1 phases complete
-Status: Milestone v2.1 shipped
-Last activity: 2026-03-22 — Milestone v2.1 Conversational Mode archived
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-03-23 — Milestone v2.2 started
 
-Progress: [██████████] 100% (v2.1)
+Progress: [░░░░░░░░░░] 0% (v2.2)
 
 ## Performance Metrics
 
@@ -44,7 +45,8 @@ Progress: [██████████] 100% (v2.1)
 
 ### Decisions
 
-(Cleared at milestone boundary — see PROJECT.md Key Decisions for full log)
+- Generic execution path over hardcoded task-type handlers — agent should handle any explicit instruction, not a fixed menu
+- v2.2 scoped to simpler tasks (config, refactors); complex migrations deferred to v2.3+
 
 ### Pending Todos
 
@@ -56,7 +58,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-22
-Stopped at: Milestone v2.1 shipped
+Last session: 2026-03-23
+Stopped at: Defining requirements for v2.2
 Resume file: None
-Next action: /gsd:new-milestone
+Next action: Define requirements

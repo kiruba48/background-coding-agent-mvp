@@ -40,6 +40,18 @@ The full verification loop must work: agent changes code, deterministic verifier
 
 ### Active
 
+#### Current Milestone: v2.2 — Deterministic Task Support
+
+**Goal:** Generalize the agent beyond dependency updates to handle any explicit code change instruction — config edits, simple refactors, method replacements — with fully autonomous execution from task spec to PR.
+
+**Target features:**
+- Generic task type that passes user instructions as end-state prompts (not hardcoded task-type handlers)
+- Intent parser recognizes generic change instructions alongside dependency updates
+- Verification adapts to repo context (build system detection, config-only vs code changes)
+- Works end-to-end with no user input after task confirmation until PR
+
+#### Deferred
+
 - [ ] Follow-up tasks can explicitly reference previous task results
 - [ ] Tab completion for project names and common task patterns
 - [ ] --yes flag for auto-proceed on high-confidence parses (CI/scripting)
@@ -58,6 +70,9 @@ The full verification loop must work: agent changes code, deterministic verifier
 - Shared workspace across multi-turn tasks — breaks one-container-per-task isolation invariant
 - Auto-execute without confirmation — removes human-in-the-loop trust model
 - Persistent cross-session context — stale context causes misparses, sessions reset on restart
+- Task discovery/analysis ("find all deprecated calls") — v2.2 requires explicit user instructions
+- Complex multi-file migrations (Scio, Backstage) — deferred to v2.3+ after generic path proven
+- Hardcoded task-type handlers per category — generic execution path preferred
 
 ## Shipped: v2.1 Conversational Mode (2026-03-22)
 
@@ -111,4 +126,4 @@ Replaced the custom agent loop with the Claude Agent SDK. Deleted 1,989 lines of
 | conf@15 for project registry | Atomic writes, ESM-native, cwd isolation for tests | ✓ Good — simple persistent key-value store |
 
 ---
-*Last updated: 2026-03-22 after v2.1 milestone*
+*Last updated: 2026-03-23 after v2.2 milestone start*
