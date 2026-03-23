@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v2.2
 milestone_name: Deterministic Task Support
-status: active
-stopped_at: null
-last_updated: "2026-03-23"
-last_activity: 2026-03-23 — Roadmap created, 3 phases defined (18-20)
+status: planning
+stopped_at: Phase 18 context gathered
+last_updated: "2026-03-23T10:30:07.060Z"
+last_activity: 2026-03-23 — Roadmap created for v2.2 (phases 18-20)
 progress:
   total_phases: 3
   completed_phases: 0
@@ -60,7 +60,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-23
-Stopped at: Roadmap created — 3 phases defined, ready to plan Phase 18
-Resume file: None
+Last session: 2026-03-23T10:30:07.058Z
+Stopped at: Phase 18 context gathered
+Resume file: .planning/phases/18-intent-parser-generalization/18-CONTEXT.md
 Next action: `/gsd:plan-phase 18`
