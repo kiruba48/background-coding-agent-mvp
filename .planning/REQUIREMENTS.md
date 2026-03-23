@@ -10,8 +10,8 @@ Requirements for Deterministic Task Support milestone. Each maps to roadmap phas
 ### Intent Parsing
 
 - [ ] **INTENT-01**: User can provide any explicit code change instruction and the intent parser classifies it as `generic` task type
-- [ ] **INTENT-02**: Fast-path regex includes verb guard so refactoring instructions ("replace axios with fetch") are not misclassified as dependency updates
-- [ ] **INTENT-03**: Intent parser uses GA structured outputs API (`output_config.format`) instead of deprecated beta endpoint
+- [x] **INTENT-02**: Fast-path regex includes verb guard so refactoring instructions ("replace axios with fetch") are not misclassified as dependency updates
+- [x] **INTENT-03**: Intent parser uses GA structured outputs API (`output_config.format`) instead of deprecated beta endpoint
 
 ### Prompt & Execution
 
@@ -58,8 +58,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | INTENT-01 | Phase 18 | Pending |
-| INTENT-02 | Phase 18 | Pending |
-| INTENT-03 | Phase 18 | Pending |
+| INTENT-02 | Phase 18 | Complete |
+| INTENT-03 | Phase 18 | Complete |
 | PROMPT-01 | Phase 19 | Pending |
 | PROMPT-02 | Phase 19 | Pending |
 | PROMPT-03 | Phase 19 | Pending |
