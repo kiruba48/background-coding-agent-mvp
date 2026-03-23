@@ -120,15 +120,16 @@ export async function parseIntent(
   // Step 4: Map LLM result to ResolvedIntent — pass through clarifications
   // Merge createPr from fast-path (if it matched pattern but fell through) or LLM
   const createPr = fastResult?.createPr || llmResult.createPr;
-  const isGeneric = llmResult.taskType === 'unknown';
+  const isGeneric = llmResult.taskType === 'generic';
   return {
-    taskType: isGeneric ? 'generic' : llmResult.taskType,
+    taskType: llmResult.taskType,
     repo: repoPath,
     dep: llmResult.dep,
     version: llmResult.version,
     confidence: llmResult.confidence,
     createPr: createPr ? true : undefined,
     description: isGeneric ? input : undefined,
+    taskCategory: isGeneric ? llmResult.taskCategory : undefined,
     clarifications: llmResult.clarifications.length > 0 ? llmResult.clarifications : undefined,
   };
 }

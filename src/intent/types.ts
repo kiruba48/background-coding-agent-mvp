@@ -1,11 +1,12 @@
 import { z } from 'zod';
 
 export const IntentSchema = z.object({
-  taskType: z.enum(['npm-dependency-update', 'maven-dependency-update', 'unknown']),
+  taskType: z.enum(['npm-dependency-update', 'maven-dependency-update', 'generic']),
   dep: z.string().nullable(),
   version: z.enum(['latest']).nullable(),   // NEVER a real version — sentinel only
   confidence: z.enum(['high', 'low']),
   createPr: z.boolean(),
+  taskCategory: z.enum(['code-change', 'config-edit', 'refactor']).nullable(),
   clarifications: z.array(z.object({
     label: z.string(),
     intent: z.string(),
@@ -35,6 +36,7 @@ export interface ResolvedIntent {
   confidence: 'high' | 'low';
   createPr?: boolean;       // user requested PR creation (e.g. "and create PR")
   description?: string;     // raw NL input when taskType is 'generic'
+  taskCategory?: 'code-change' | 'config-edit' | 'refactor' | null;
   clarifications?: ClarificationOption[];  // from LLM when confidence is low
   inheritedFields?: Array<'taskType' | 'repo'>; // fields inherited from session history (follow-up)
 }

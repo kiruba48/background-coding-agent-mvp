@@ -7,28 +7,33 @@ import type { TaskHistoryEntry } from '../repl/types.js';
 const MAX_INPUT_LENGTH = 500;
 
 const INTENT_SYSTEM_PROMPT = `You are an intent classifier for a coding agent CLI. Given a natural language task description and the project's manifest dependencies, determine:
-1. taskType: 'npm-dependency-update', 'maven-dependency-update', or 'unknown'
+1. taskType: 'npm-dependency-update', 'maven-dependency-update', or 'generic'
 2. dep: the dependency name (null if not identifiable)
 3. version: ALWAYS set to 'latest' or null. You MUST NOT output a specific version number.
 4. confidence: 'high' if the intent is clear, 'low' if ambiguous
 5. createPr: true if the user asks to create/raise/open a PR or pull request, false otherwise
 6. clarifications: if confidence is 'low', provide 2-3 possible interpretations as {label, intent} pairs. Empty array if confidence is 'high'.
+7. taskCategory: for generic tasks, classify as 'code-change' (replace, add, remove code), 'config-edit' (edit config files, env vars), or 'refactor' (rename, move, extract, restructure). null for dependency updates.
 
 Rules:
 - If the user mentions a dependency that exists in the manifest, set confidence to 'high'.
-- If the user's request doesn't match a dependency update pattern, set taskType to 'unknown'.
-- For unknown task types, set dep to null and confidence to 'high' (pass through as generic task).
+- If the user's request doesn't match a dependency update pattern, set taskType to 'generic'. generic = any explicit code change instruction (replace, rename, edit config, add/remove code). NOT task discovery, analysis, or multi-repo ops.
+- For generic tasks, set dep to null. Set confidence to 'high' when the instruction is a single clear action (e.g., 'replace axios with fetch', 'rename getUserData to fetchUserProfile'). Set confidence to 'low' when the instruction is vague ('clean up the code'), spans multiple unrelated changes, or sounds like task discovery ('find all deprecated calls'). For low-confidence generic tasks, provide clarifications with narrowed-down interpretations.
 - NEVER set version to a specific version number. Only 'latest' or null.
 - Set createPr to true when the user says phrases like "create PR", "raise PR", "open pull request", "make a PR", "and PR", etc. Default to false if not mentioned.`;
 
 const OUTPUT_SCHEMA = {
   type: 'object' as const,
   properties: {
-    taskType: { type: 'string', enum: ['npm-dependency-update', 'maven-dependency-update', 'unknown'] },
+    taskType: { type: 'string', enum: ['npm-dependency-update', 'maven-dependency-update', 'generic'] },
     dep: { anyOf: [{ type: 'string' }, { type: 'null' }] },
     version: { anyOf: [{ type: 'string', enum: ['latest'] }, { type: 'null' }] },
     confidence: { type: 'string', enum: ['high', 'low'] },
     createPr: { type: 'boolean' },
+    taskCategory: { anyOf: [
+      { type: 'string', enum: ['code-change', 'config-edit', 'refactor'] },
+      { type: 'null' },
+    ]},
     clarifications: {
       type: 'array',
       items: {
@@ -42,7 +47,7 @@ const OUTPUT_SCHEMA = {
       },
     },
   },
-  required: ['taskType', 'dep', 'version', 'confidence', 'createPr', 'clarifications'],
+  required: ['taskType', 'dep', 'version', 'confidence', 'createPr', 'taskCategory', 'clarifications'],
   additionalProperties: false,
 };
 
