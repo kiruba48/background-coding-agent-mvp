@@ -19,9 +19,13 @@ vi.mock('./context-scanner.js', () => ({
   readManifestDeps: vi.fn(),
 }));
 
-vi.mock('./llm-parser.js', () => ({
-  llmParse: vi.fn(),
-}));
+vi.mock('./llm-parser.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./llm-parser.js')>();
+  return {
+    ...actual,
+    llmParse: vi.fn(),
+  };
+});
 
 import { parseIntent } from './index.js';
 import { fastPathParse, validateDepInManifest, detectTaskType } from './fast-path.js';
@@ -289,7 +293,7 @@ describe('parseIntent coordinator', () => {
         version: null,
         confidence: 'low',
         createPr: false,
-        taskCategory: null,
+        taskCategory: 'code-change',
         clarifications: [], // empty
       });
 

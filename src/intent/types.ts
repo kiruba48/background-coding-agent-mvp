@@ -1,17 +1,27 @@
 import { z } from 'zod';
 
+/** Shared enum values — used by both Zod schema and OUTPUT_SCHEMA for the LLM */
+export const TASK_TYPES = ['npm-dependency-update', 'maven-dependency-update', 'generic'] as const;
+export const TASK_CATEGORIES = ['code-change', 'config-edit', 'refactor'] as const;
+
+export type TaskType = (typeof TASK_TYPES)[number];
+export type TaskCategory = (typeof TASK_CATEGORIES)[number];
+
 export const IntentSchema = z.object({
-  taskType: z.enum(['npm-dependency-update', 'maven-dependency-update', 'generic']),
+  taskType: z.enum(TASK_TYPES),
   dep: z.string().nullable(),
   version: z.enum(['latest']).nullable(),   // NEVER a real version — sentinel only
   confidence: z.enum(['high', 'low']),
   createPr: z.boolean(),
-  taskCategory: z.enum(['code-change', 'config-edit', 'refactor']).nullable(),
+  taskCategory: z.enum(TASK_CATEGORIES).nullable(),
   clarifications: z.array(z.object({
     label: z.string(),
     intent: z.string(),
   })),
-});
+}).refine(
+  (data) => data.taskType !== 'generic' || data.taskCategory !== null,
+  { message: 'taskCategory is required when taskType is generic', path: ['taskCategory'] },
+);
 
 export type IntentResult = z.infer<typeof IntentSchema>;
 
@@ -29,14 +39,14 @@ export interface ClarificationOption {
 }
 
 export interface ResolvedIntent {
-  taskType: string;
+  taskType: TaskType;
   repo: string;             // absolute path to resolved project
   dep: string | null;
   version: string | null;   // 'latest' sentinel, explicit version, or null
   confidence: 'high' | 'low';
   createPr?: boolean;       // user requested PR creation (e.g. "and create PR")
   description?: string;     // raw NL input when taskType is 'generic'
-  taskCategory?: 'code-change' | 'config-edit' | 'refactor' | null;
+  taskCategory?: TaskCategory | null;
   clarifications?: ClarificationOption[];  // from LLM when confidence is low
   inheritedFields?: Array<'taskType' | 'repo'>; // fields inherited from session history (follow-up)
 }

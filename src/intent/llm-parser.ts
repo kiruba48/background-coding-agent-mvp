@@ -1,10 +1,10 @@
 import Anthropic from '@anthropic-ai/sdk';
 import path from 'node:path';
 import type { Message } from '@anthropic-ai/sdk/resources/messages/messages.js';
-import { IntentSchema, type IntentResult } from './types.js';
+import { IntentSchema, TASK_TYPES, TASK_CATEGORIES, type IntentResult } from './types.js';
 import type { TaskHistoryEntry } from '../repl/types.js';
 
-const MAX_INPUT_LENGTH = 500;
+export const MAX_INPUT_LENGTH = 500;
 
 const INTENT_SYSTEM_PROMPT = `You are an intent classifier for a coding agent CLI. Given a natural language task description and the project's manifest dependencies, determine:
 1. taskType: 'npm-dependency-update', 'maven-dependency-update', or 'generic'
@@ -25,13 +25,13 @@ Rules:
 const OUTPUT_SCHEMA = {
   type: 'object' as const,
   properties: {
-    taskType: { type: 'string', enum: ['npm-dependency-update', 'maven-dependency-update', 'generic'] },
+    taskType: { type: 'string', enum: [...TASK_TYPES] },
     dep: { anyOf: [{ type: 'string' }, { type: 'null' }] },
     version: { anyOf: [{ type: 'string', enum: ['latest'] }, { type: 'null' }] },
     confidence: { type: 'string', enum: ['high', 'low'] },
     createPr: { type: 'boolean' },
     taskCategory: { anyOf: [
-      { type: 'string', enum: ['code-change', 'config-edit', 'refactor'] },
+      { type: 'string', enum: [...TASK_CATEGORIES] },
       { type: 'null' },
     ]},
     clarifications: {
@@ -71,6 +71,11 @@ function getClient(): Anthropic {
     sharedClient = new Anthropic({ timeout: 15_000 });
   }
   return sharedClient;
+}
+
+/** Reset the shared client — for testing or API key rotation */
+export function resetClient(): void {
+  sharedClient = null;
 }
 
 export class LlmParseError extends Error {
