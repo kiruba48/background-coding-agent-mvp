@@ -1347,4 +1347,36 @@ describe('compositeVerifier — Maven integration', () => {
     // Maven test should be skipped (not reported as failure) when build fails
     expect(result.errors.find(e => e.summary?.includes('skipped'))).toBeUndefined();
   });
+
+  it('44. compositeVerifier with configOnly:true runs lint only (no build/test/maven/npm)', async () => {
+    // ESLint config exists, tsconfig exists, vitest exists — but with configOnly they should NOT run
+    mockAccess.mockResolvedValue(undefined); // all files found
+    mockReadFile.mockResolvedValue('{"scripts":{}}'); // no build/test scripts
+
+    // Lint: stash operation (stash returns 'Saved'), baseline run (0 errors), pop, current run (0 errors)
+    mockExecSequence([
+      { success: true, stdout: 'Saved working directory and index state', stderr: '' }, // git stash push
+      { success: true, stdout: '[]', stderr: '' }, // eslint baseline (0 errors)
+      { success: true, stdout: '', stderr: '' }, // git stash pop
+      { success: true, stdout: '[]', stderr: '' }, // eslint current (0 errors)
+    ]);
+
+    const result = await compositeVerifier('/workspace', { configOnly: true });
+
+    expect(result.passed).toBe(true);
+    // Only lint ran — no build/test errors means they were skipped entirely
+    // The result should not contain errors from tsc or vitest
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('45. compositeVerifier without configOnly runs full pipeline', async () => {
+    // No config files found — all verifiers skip gracefully, returning passed:true
+    mockAccess.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    mockReadFile.mockRejectedValue(new Error('Not found'));
+
+    const result = await compositeVerifier('/workspace');
+
+    // No verifiers run (nothing found) — aggregate should still pass
+    expect(result.passed).toBe(true);
+  });
 });

@@ -8,10 +8,17 @@ vi.mock('./claude-code-session.js', () => {
   return { ClaudeCodeSession: MockClaudeCodeSession };
 });
 
-// Mock judge.js to control captureBaselineSha output
+// Mock judge.js to control captureBaselineSha and getWorkspaceDiff output
 vi.mock('./judge.js', () => ({
   captureBaselineSha: vi.fn().mockResolvedValue(undefined),
   llmJudge: vi.fn(),
+  getWorkspaceDiff: vi.fn().mockResolvedValue('meaningful diff content here'),
+  MIN_DIFF_CHARS: 10,
+}));
+
+// Mock verifier.js for compositeVerifier call tracking
+vi.mock('./verifier.js', () => ({
+  compositeVerifier: vi.fn().mockResolvedValue({ passed: true, errors: [], durationMs: 50 }),
 }));
 
 // Mock child_process for git reset verification
@@ -24,8 +31,9 @@ vi.mock('node:child_process', () => ({
 }));
 
 // Import AFTER mocks are set up
-import { RetryOrchestrator, PreVerifyError } from './retry.js';
+import { RetryOrchestrator, PreVerifyError, isConfigFile, getChangedFilesFromBaseline } from './retry.js';
 import { ClaudeCodeSession } from './claude-code-session.js';
+import { compositeVerifier } from './verifier.js';
 
 const MockClaudeCodeSession = ClaudeCodeSession as ReturnType<typeof vi.fn>;
 
@@ -636,6 +644,173 @@ describe('RetryOrchestrator', () => {
 
     expect(result.finalStatus).toBe('success');
     expect(gitResetCalls).toHaveLength(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // Zero-diff detection tests
+  // -------------------------------------------------------------------------
+
+  it('zero-1. returns zero_diff when getWorkspaceDiff returns empty string', async () => {
+    const { getWorkspaceDiff } = await import('./judge.js');
+    const mockGetDiff = getWorkspaceDiff as ReturnType<typeof vi.fn>;
+    mockGetDiff.mockResolvedValueOnce('');
+
+    const verifier = vi.fn().mockResolvedValue({ passed: true, errors: [], durationMs: 50 });
+    const judge = vi.fn().mockResolvedValue({ verdict: 'APPROVE', reasoning: '', veto_reason: '', durationMs: 0 });
+    const session = createMockSession(makeSessionResult());
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
+
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace' },
+      { maxRetries: 3, verifier, judge }
+    );
+
+    const result = await orchestrator.run('Fix the bug');
+
+    expect(result.finalStatus).toBe('zero_diff');
+    expect(verifier).not.toHaveBeenCalled();
+    expect(judge).not.toHaveBeenCalled();
+  });
+
+  it('zero-2. returns zero_diff when diff is shorter than MIN_DIFF_CHARS', async () => {
+    const { getWorkspaceDiff } = await import('./judge.js');
+    const mockGetDiff = getWorkspaceDiff as ReturnType<typeof vi.fn>;
+    mockGetDiff.mockResolvedValueOnce('tiny'); // 4 chars < MIN_DIFF_CHARS (10)
+
+    const verifier = vi.fn().mockResolvedValue({ passed: true, errors: [], durationMs: 50 });
+    const judge = vi.fn().mockResolvedValue({ verdict: 'APPROVE', reasoning: '', veto_reason: '', durationMs: 0 });
+    const session = createMockSession(makeSessionResult());
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
+
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace' },
+      { maxRetries: 3, verifier, judge }
+    );
+
+    const result = await orchestrator.run('Fix the bug');
+
+    expect(result.finalStatus).toBe('zero_diff');
+    expect(verifier).not.toHaveBeenCalled();
+    expect(judge).not.toHaveBeenCalled();
+  });
+
+  it('zero-3. zero_diff returns immediately on first attempt (no retry)', async () => {
+    const { getWorkspaceDiff } = await import('./judge.js');
+    const mockGetDiff = getWorkspaceDiff as ReturnType<typeof vi.fn>;
+    mockGetDiff.mockResolvedValue('');
+
+    const verifier = vi.fn().mockResolvedValue({ passed: true, errors: [], durationMs: 50 });
+    const session = createMockSession(makeSessionResult());
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
+
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace' },
+      { maxRetries: 3, verifier }
+    );
+
+    const result = await orchestrator.run('Fix the bug');
+
+    expect(result.finalStatus).toBe('zero_diff');
+    expect(result.attempts).toBe(1);
+    expect(MockClaudeCodeSession.mock.calls).toHaveLength(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Config-only classification tests
+  // -------------------------------------------------------------------------
+
+  it('config-1. isConfigFile returns true for config files', () => {
+    expect(isConfigFile('.eslintrc.json')).toBe(true);
+    expect(isConfigFile('tsconfig.json')).toBe(true);
+    expect(isConfigFile('vite.config.ts')).toBe(true);
+    expect(isConfigFile('.prettierrc')).toBe(true);
+    expect(isConfigFile('jest.config.js')).toBe(true);
+    expect(isConfigFile('.gitignore')).toBe(true);
+    expect(isConfigFile('.nvmrc')).toBe(true);
+  });
+
+  it('config-2. isConfigFile returns false for source files', () => {
+    expect(isConfigFile('src/app.ts')).toBe(false);
+    expect(isConfigFile('lib/utils.js')).toBe(false);
+  });
+
+  it('config-3. isConfigFile handles nested config files correctly', () => {
+    expect(isConfigFile('packages/foo/tsconfig.json')).toBe(true);
+    expect(isConfigFile('.github/workflows/ci.yml')).toBe(true);
+  });
+
+  it('config-4. isConfigFile rejects source files with "config" in directory path', () => {
+    expect(isConfigFile('src/config/app.ts')).toBe(false);
+  });
+
+  it('config-5. config-only changes invoke compositeVerifier with configOnly: true', async () => {
+    const { getWorkspaceDiff } = await import('./judge.js');
+    const mockGetDiff = getWorkspaceDiff as ReturnType<typeof vi.fn>;
+    mockGetDiff.mockResolvedValue('substantial config diff content here');
+
+    // Mock getChangedFilesFromBaseline via execFile — return only config file
+    const { execFile } = await import('node:child_process');
+    const mockExecFile = execFile as unknown as ReturnType<typeof vi.fn>;
+    mockExecFile.mockImplementation((...args: any[]) => {
+      const cmdArgs = args[1] as string[];
+      const callback = args[args.length - 1];
+      if (args[0] === 'git' && cmdArgs[0] === 'diff' && cmdArgs.includes('--name-only')) {
+        if (typeof callback === 'function') callback(null, '.eslintrc.json\n', '');
+      } else {
+        if (typeof callback === 'function') callback(null, '', '');
+      }
+    });
+
+    const mockCompositeVerifier = compositeVerifier as ReturnType<typeof vi.fn>;
+    mockCompositeVerifier.mockResolvedValue({ passed: true, errors: [], durationMs: 50 });
+
+    const session = createMockSession(makeSessionResult());
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
+
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace' },
+      { maxRetries: 3, verifier: compositeVerifier }
+    );
+
+    await orchestrator.run('update eslint config');
+
+    expect(mockCompositeVerifier).toHaveBeenCalledWith('/tmp/workspace', { configOnly: true });
+  });
+
+  it('config-6. config-only changes still invoke the judge', async () => {
+    const { getWorkspaceDiff } = await import('./judge.js');
+    const mockGetDiff = getWorkspaceDiff as ReturnType<typeof vi.fn>;
+    mockGetDiff.mockResolvedValue('substantial config diff content here');
+
+    // Mock getChangedFilesFromBaseline via execFile — return only config file
+    const { execFile } = await import('node:child_process');
+    const mockExecFile = execFile as unknown as ReturnType<typeof vi.fn>;
+    mockExecFile.mockImplementation((...args: any[]) => {
+      const cmdArgs = args[1] as string[];
+      const callback = args[args.length - 1];
+      if (args[0] === 'git' && cmdArgs[0] === 'diff' && cmdArgs.includes('--name-only')) {
+        if (typeof callback === 'function') callback(null, '.eslintrc.json\n', '');
+      } else {
+        if (typeof callback === 'function') callback(null, '', '');
+      }
+    });
+
+    const mockCompositeVerifier = compositeVerifier as ReturnType<typeof vi.fn>;
+    mockCompositeVerifier.mockResolvedValue({ passed: true, errors: [], durationMs: 50 });
+
+    const judge = vi.fn().mockResolvedValue({ verdict: 'APPROVE', reasoning: '', veto_reason: '', durationMs: 0 });
+    const session = createMockSession(makeSessionResult());
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
+
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace' },
+      { maxRetries: 3, verifier: compositeVerifier, judge }
+    );
+
+    await orchestrator.run('update eslint config');
+
+    // Judge MUST still be called for config-only changes
+    expect(judge).toHaveBeenCalledTimes(1);
   });
 
   it('14. retry message only includes last failed verification (not stale errors)', async () => {
