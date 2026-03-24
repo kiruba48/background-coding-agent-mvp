@@ -16,7 +16,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import Anthropic from '@anthropic-ai/sdk';
-import type { BetaMessage } from '@anthropic-ai/sdk/resources/beta/messages/messages.js';
 import type { JudgeResult } from '../types.js';
 
 const execFileAsync = promisify(execFile);
@@ -185,7 +184,7 @@ export function truncateLockfileDiffs(diff: string): string {
  * - Retrieves the workspace diff via git CLI
  * - Skips (approves) if diff is empty or trivially small
  * - Truncates lockfile diffs and large diffs before sending to judge
- * - Calls Claude via beta structured output API
+ * - Calls Claude via GA structured output API
  * - Fails open (approves with skipped=true) on any API error
  *
  * @param workspaceDir - Absolute path to the agent workspace
@@ -227,6 +226,10 @@ Evaluate the diff against the original task. Think step-by-step:
    - Examples of scope creep: refactoring unrelated code, changing test structure, updating files not mentioned, modifying configuration not relevant to the task
    - NOT scope creep: fixing compilation errors caused by the primary change, updating imports required by the change, updating tests that directly test the changed code
    - NOT scope creep: lockfile changes (package-lock.json, yarn.lock, pnpm-lock.yaml) — these are regenerated externally after the agent runs, not by the agent itself. Lockfile diffs are stripped from this diff.
+   - NOT scope creep: updating test files that exercise the renamed, moved, or changed symbol — tests must stay consistent with the code they test
+   - NOT scope creep: updating import paths and import statements required by a rename or file move — these are mechanical consequences of the rename, not independent decisions
+   - NOT scope creep: updating TypeScript type annotations, interface names, or type aliases that reference the changed symbol — type consistency is a language requirement
+   - NOT scope creep: updating string literals or documentation comments that name the renamed symbol, if the task explicitly asked for a rename
 
 Return your analysis as JSON with:
 - reasoning: your step-by-step analysis
@@ -239,13 +242,12 @@ Return your analysis as JSON with:
     const client = new Anthropic({ timeout: JUDGE_TIMEOUT_MS });
     const model = process.env.JUDGE_MODEL ?? DEFAULT_JUDGE_MODEL;
 
-    const response = await client.beta.messages.create({
+    const response = await client.messages.create({
       model,
       max_tokens: 1024,
       stream: false,
       system: 'You are a code review judge evaluating whether an AI agent stayed within the scope of its assigned task.',
       messages: [{ role: 'user', content: judgePrompt }],
-      betas: ['structured-outputs-2025-11-13'],
       output_config: {
         format: {
           type: 'json_schema',
@@ -273,8 +275,7 @@ Return your analysis as JSON with:
           },
         },
       },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any) as BetaMessage;
+    });
 
     const durationMs = Date.now() - startTime;
 
