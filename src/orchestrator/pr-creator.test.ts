@@ -634,5 +634,120 @@ describe('GitHubPRCreator', () => {
 
       expect(result.error).toContain('Failed to create branch');
     });
+
+    // --- Generic task PR tests ---
+
+    it('branch name for generic task includes description-derived slug (not just "generic")', async () => {
+      setupStandardMocks();
+
+      const creator = new GitHubPRCreator('/workspace');
+      await creator.create({
+        taskType: 'generic',
+        originalTask: 'replace axios with fetch',
+        retryResult: makeRetryResult(),
+        description: 'replace axios with fetch',
+        taskCategory: 'code-change',
+      });
+
+      const pushCalls = mockPush.mock.calls;
+      const branchArg: string = pushCalls[0][1]; // HEAD:refs/heads/<branch>
+      expect(branchArg).toContain('code-change');
+      expect(branchArg).not.toMatch(/^HEAD:refs\/heads\/agent\/generic-\d/);
+    });
+
+    it('PR title for generic task uses description text (not "Agent: generic YYYY-MM-DD")', async () => {
+      setupStandardMocks();
+
+      const creator = new GitHubPRCreator('/workspace');
+      await creator.create({
+        taskType: 'generic',
+        originalTask: 'replace axios with fetch',
+        retryResult: makeRetryResult(),
+        description: 'replace axios with fetch',
+        taskCategory: 'code-change',
+      });
+
+      const createCall = mockPullsCreate.mock.calls[0][0];
+      expect(createCall.title).toBe('replace axios with fetch');
+      expect(createCall.title).not.toMatch(/^Agent:/);
+    });
+
+    it('PR title for generic task truncates at 72 chars with ellipsis', async () => {
+      setupStandardMocks();
+      const longDescription = 'a'.repeat(80);
+
+      const creator = new GitHubPRCreator('/workspace');
+      await creator.create({
+        taskType: 'generic',
+        originalTask: longDescription,
+        retryResult: makeRetryResult(),
+        description: longDescription,
+        taskCategory: 'code-change',
+      });
+
+      const createCall = mockPullsCreate.mock.calls[0][0];
+      expect(createCall.title).toBe('a'.repeat(72) + '...');
+    });
+
+    it('non-generic tasks still use existing title format "Agent: {taskType} YYYY-MM-DD"', async () => {
+      setupStandardMocks();
+
+      const creator = new GitHubPRCreator('/workspace');
+      await creator.create({
+        taskType: 'npm-dependency-update',
+        originalTask: 'Update recharts to latest',
+        retryResult: makeRetryResult(),
+      });
+
+      const createCall = mockPullsCreate.mock.calls[0][0];
+      expect(createCall.title).toMatch(/^Agent: npm-dependency-update \d{4}-\d{2}-\d{2}$/);
+    });
+
+    it('PR body for generic task includes instruction text (description)', async () => {
+      setupStandardMocks();
+
+      const creator = new GitHubPRCreator('/workspace');
+      await creator.create({
+        taskType: 'generic',
+        originalTask: 'replace axios with fetch',
+        retryResult: makeRetryResult(),
+        description: 'replace axios with fetch',
+        taskCategory: 'code-change',
+      });
+
+      const createCall = mockPullsCreate.mock.calls[0][0];
+      expect(createCall.body).toContain('replace axios with fetch');
+    });
+
+    it('PR body for generic task includes taskCategory label', async () => {
+      setupStandardMocks();
+
+      const creator = new GitHubPRCreator('/workspace');
+      await creator.create({
+        taskType: 'generic',
+        originalTask: 'replace axios with fetch',
+        retryResult: makeRetryResult(),
+        description: 'replace axios with fetch',
+        taskCategory: 'code-change',
+      });
+
+      const createCall = mockPullsCreate.mock.calls[0][0];
+      expect(createCall.body).toContain('code-change');
+    });
+
+    it('PR body for non-generic tasks does not contain Task category/Instruction sections', async () => {
+      setupStandardMocks();
+
+      const creator = new GitHubPRCreator('/workspace');
+      await creator.create({
+        taskType: 'npm-dependency-update',
+        originalTask: 'Update recharts',
+        retryResult: makeRetryResult(),
+      });
+
+      const createCall = mockPullsCreate.mock.calls[0][0];
+      expect(createCall.body).not.toContain('**Task category:**');
+      expect(createCall.body).not.toContain('**Instruction:**');
+    });
   });
 });
