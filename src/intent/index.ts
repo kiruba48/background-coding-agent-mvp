@@ -2,7 +2,7 @@ import path from 'node:path';
 import pc from 'picocolors';
 import { fastPathParse, validateDepInManifest, detectTaskType, FOLLOW_UP_PREFIX, FOLLOW_UP_TOO_SUFFIX } from './fast-path.js';
 import { readManifestDeps } from './context-scanner.js';
-import { llmParse } from './llm-parser.js';
+import { llmParse, MAX_INPUT_LENGTH } from './llm-parser.js';
 import { ProjectRegistry } from '../agent/registry.js';
 import type { ResolvedIntent } from './types.js';
 import type { TaskHistoryEntry } from '../repl/types.js';
@@ -120,15 +120,16 @@ export async function parseIntent(
   // Step 4: Map LLM result to ResolvedIntent — pass through clarifications
   // Merge createPr from fast-path (if it matched pattern but fell through) or LLM
   const createPr = fastResult?.createPr || llmResult.createPr;
-  const isGeneric = llmResult.taskType === 'unknown';
+  const isGeneric = llmResult.taskType === 'generic';
   return {
-    taskType: isGeneric ? 'generic' : llmResult.taskType,
+    taskType: llmResult.taskType,
     repo: repoPath,
     dep: llmResult.dep,
     version: llmResult.version,
     confidence: llmResult.confidence,
     createPr: createPr ? true : undefined,
-    description: isGeneric ? input : undefined,
+    description: isGeneric ? input.slice(0, MAX_INPUT_LENGTH) : undefined,
+    taskCategory: isGeneric ? llmResult.taskCategory : undefined,
     clarifications: llmResult.clarifications.length > 0 ? llmResult.clarifications : undefined,
   };
 }

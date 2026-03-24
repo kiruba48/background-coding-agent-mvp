@@ -19,9 +19,13 @@ vi.mock('./context-scanner.js', () => ({
   readManifestDeps: vi.fn(),
 }));
 
-vi.mock('./llm-parser.js', () => ({
-  llmParse: vi.fn(),
-}));
+vi.mock('./llm-parser.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./llm-parser.js')>();
+  return {
+    ...actual,
+    llmParse: vi.fn(),
+  };
+});
 
 import { parseIntent } from './index.js';
 import { fastPathParse, validateDepInManifest, detectTaskType } from './fast-path.js';
@@ -67,6 +71,7 @@ describe('parseIntent coordinator', () => {
       version: 'latest',
       confidence: 'high',
       createPr: false,
+      taskCategory: null,
       clarifications: [],
     });
   });
@@ -131,6 +136,7 @@ describe('parseIntent coordinator', () => {
           version: null,
           confidence: 'high' as const,
           createPr: false,
+          taskCategory: null,
           clarifications: [],
         };
       });
@@ -176,14 +182,15 @@ describe('parseIntent coordinator', () => {
       expect(result.taskType).toBe('npm-dependency-update'); // from mocked LLM
     });
 
-    it('maps unknown taskType to generic with description field', async () => {
+    it('passes through generic taskType with description and taskCategory', async () => {
       mockFastPathParse.mockReturnValue(null);
       mockLlmParse.mockResolvedValue({
-        taskType: 'unknown',
+        taskType: 'generic',
         dep: null,
         version: null,
         confidence: 'high',
         createPr: false,
+        taskCategory: 'refactor',
         clarifications: [],
       });
 
@@ -192,6 +199,7 @@ describe('parseIntent coordinator', () => {
 
       expect(result.taskType).toBe('generic');
       expect(result.description).toBe('fix the login bug');
+      expect(result.taskCategory).toBe('refactor');
     });
   });
 
@@ -241,6 +249,7 @@ describe('parseIntent coordinator', () => {
         version: null,
         confidence: 'low',
         createPr: false,
+        taskCategory: null,
         clarifications: [
           { label: 'Update recharts to latest', intent: 'update recharts' },
           { label: 'Update react-charts', intent: 'update react-charts' },
@@ -265,6 +274,7 @@ describe('parseIntent coordinator', () => {
         version: 'latest',
         confidence: 'high',
         createPr: false,
+        taskCategory: null,
         clarifications: [],
       });
 
@@ -278,11 +288,12 @@ describe('parseIntent coordinator', () => {
     it('sets clarifications to undefined when LLM returns low confidence but empty clarifications', async () => {
       mockFastPathParse.mockReturnValue(null);
       mockLlmParse.mockResolvedValue({
-        taskType: 'unknown',
+        taskType: 'generic',
         dep: null,
         version: null,
         confidence: 'low',
         createPr: false,
+        taskCategory: 'code-change',
         clarifications: [], // empty
       });
 

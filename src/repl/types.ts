@@ -1,9 +1,9 @@
-import type { ResolvedIntent } from '../intent/types.js';
+import type { ResolvedIntent, TaskType } from '../intent/types.js';
 import type { RetryResult } from '../types.js';
 
 /** A single completed task entry stored in session history. */
 export interface TaskHistoryEntry {
-  taskType: string;
+  taskType: TaskType;
   dep: string | null;
   version: string | null;
   repo: string;

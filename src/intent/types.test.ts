@@ -9,6 +9,7 @@ describe('IntentSchema', () => {
       version: 'latest',
       confidence: 'high',
       createPr: false,
+      taskCategory: null,
       clarifications: [],
     });
     expect(result.taskType).toBe('npm-dependency-update');
@@ -25,22 +26,67 @@ describe('IntentSchema', () => {
       version: null,
       confidence: 'low',
       createPr: false,
+      taskCategory: null,
       clarifications: [{ label: 'Update spring-core', intent: 'update spring-core to latest' }],
     });
     expect(result.version).toBeNull();
   });
 
-  it('accepts taskType: unknown', () => {
+  it('accepts taskType: generic with taskCategory', () => {
     const result = IntentSchema.parse({
-      taskType: 'unknown',
+      taskType: 'generic',
       dep: null,
       version: null,
-      confidence: 'low',
+      confidence: 'high',
       createPr: false,
+      taskCategory: 'refactor',
       clarifications: [],
     });
-    expect(result.taskType).toBe('unknown');
+    expect(result.taskType).toBe('generic');
+    expect(result.taskCategory).toBe('refactor');
     expect(result.dep).toBeNull();
+  });
+
+  it('rejects taskType: generic with taskCategory: null', () => {
+    expect(() =>
+      IntentSchema.parse({
+        taskType: 'generic',
+        dep: null,
+        version: null,
+        confidence: 'high',
+        createPr: false,
+        taskCategory: null,
+        clarifications: [],
+      })
+    ).toThrow('taskCategory is required when taskType is generic');
+  });
+
+  it('rejects taskType: unknown', () => {
+    expect(() =>
+      IntentSchema.parse({
+        taskType: 'unknown',
+        dep: null,
+        version: null,
+        confidence: 'high',
+        createPr: false,
+        taskCategory: null,
+        clarifications: [],
+      })
+    ).toThrow();
+  });
+
+  it('rejects invalid taskCategory', () => {
+    expect(() =>
+      IntentSchema.parse({
+        taskType: 'generic',
+        dep: null,
+        version: null,
+        confidence: 'high',
+        createPr: false,
+        taskCategory: 'invalid',
+        clarifications: [],
+      })
+    ).toThrow();
   });
 
   it('rejects version values other than "latest" or null', () => {
@@ -51,6 +97,7 @@ describe('IntentSchema', () => {
         version: '2.15.0',
         confidence: 'high',
         createPr: false,
+        taskCategory: null,
         clarifications: [],
       })
     ).toThrow();
@@ -64,6 +111,7 @@ describe('IntentSchema', () => {
         version: null,
         confidence: 'high',
         createPr: false,
+        taskCategory: null,
         clarifications: [],
       })
     ).toThrow();
@@ -72,11 +120,12 @@ describe('IntentSchema', () => {
   it('rejects invalid confidence value', () => {
     expect(() =>
       IntentSchema.parse({
-        taskType: 'unknown',
+        taskType: 'npm-dependency-update',
         dep: null,
         version: null,
         confidence: 'medium',
         createPr: false,
+        taskCategory: null,
         clarifications: [],
       })
     ).toThrow();
@@ -89,6 +138,7 @@ describe('IntentSchema', () => {
       version: null,
       confidence: 'low',
       createPr: true,
+      taskCategory: null,
       clarifications: [
         { label: 'Update recharts', intent: 'update recharts to latest' },
         { label: 'Update react-chartjs', intent: 'update react-chartjs to latest' },

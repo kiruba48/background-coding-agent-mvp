@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.2
 milestone_name: Deterministic Task Support
-status: active
-stopped_at: null
-last_updated: "2026-03-23"
-last_activity: 2026-03-23 — Roadmap created, 3 phases defined (18-20)
+status: executing
+stopped_at: Completed 18-02-PLAN.md
+last_updated: "2026-03-23T11:02:07.939Z"
+last_activity: "2026-03-23 — Completed 18-01: SDK bump to ^0.80.0 + REFACTORING_VERB_GUARD"
 progress:
   total_phases: 3
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  completed_phases: 1
+  total_plans: 2
+  completed_plans: 2
+  percent: 5
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-23)
 ## Current Position
 
 Phase: 18 of 20 (Intent Parser Generalization)
-Plan: —
-Status: Ready to plan
-Last activity: 2026-03-23 — Roadmap created for v2.2 (phases 18-20)
+Plan: 01 complete, ready for Plan 02
+Status: In progress
+Last activity: 2026-03-23 — Completed 18-01: SDK bump to ^0.80.0 + REFACTORING_VERB_GUARD
 
-Progress: [░░░░░░░░░░] 0% (v2.2)
+Progress: [█░░░░░░░░░] 5% (v2.2)
 
 ## Performance Metrics
 
@@ -49,6 +49,11 @@ Progress: [░░░░░░░░░░] 0% (v2.2)
 - v2.2 scoped to explicit instructions only (config edits, simple refactors); task discovery and complex migrations deferred to v2.3+
 - End-state prompting discipline (TASK-04): description verbatim as task statement, never paraphrased or rewritten
 - `originalTask` passed to RetryOrchestrator must be the full expanded prompt from `buildPrompt()` — not the raw user description — to preserve scope fence on retry
+- REFACTORING_VERB_GUARD exported from fast-path.ts for test visibility and future reuse (18-01)
+- Verb guard placed before PR_SUFFIX test so compound "replace X and create PR" instructions are blocked at the guard (18-01)
+- [Phase 18]: IntentSchema uses 'generic' enum value directly — 'unknown' is removed entirely, keeping schema honest (18-02)
+- [Phase 18]: taskCategory required field in IntentSchema/OUTPUT_SCHEMA, flows through ResolvedIntent for phase-19 consumption (18-02)
+- [Phase 18]: GA API path: client.messages.create replaces client.beta.messages.create with zero type assertions (18-02)
 
 ### Pending Todos
 
@@ -60,7 +65,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-23
-Stopped at: Roadmap created — 3 phases defined, ready to plan Phase 18
+Last session: 2026-03-23T10:59:27.799Z
+Stopped at: Completed 18-02-PLAN.md
 Resume file: None
-Next action: `/gsd:plan-phase 18`
+Next action: `/gsd:execute-phase 18` (execute Plan 02)

@@ -263,6 +263,53 @@ describe('validateDepInManifest', () => {
   });
 });
 
+describe('verb guard', () => {
+  it('"replace axios with fetch" returns null (refactoring verb blocked)', () => {
+    expect(fastPathParse('replace axios with fetch')).toBeNull();
+  });
+
+  it('"rename getUserData to fetchUserProfile" returns null', () => {
+    expect(fastPathParse('rename getUserData to fetchUserProfile')).toBeNull();
+  });
+
+  it('"move utils to shared" returns null', () => {
+    expect(fastPathParse('move utils to shared')).toBeNull();
+  });
+
+  it('"extract helper function" returns null', () => {
+    expect(fastPathParse('extract helper function')).toBeNull();
+  });
+
+  it('"migrate from jest to vitest" returns null', () => {
+    expect(fastPathParse('migrate from jest to vitest')).toBeNull();
+  });
+
+  it('"rewrite auth module" returns null', () => {
+    expect(fastPathParse('rewrite auth module')).toBeNull();
+  });
+
+  it('"REPLACE axios with fetch" returns null (case insensitive)', () => {
+    expect(fastPathParse('REPLACE axios with fetch')).toBeNull();
+  });
+
+  it('"replace axios with fetch and create PR" returns null (verb guard fires before PR suffix strip)', () => {
+    expect(fastPathParse('replace axios with fetch and create PR')).toBeNull();
+  });
+
+  it('"update recharts" still returns a dep result (dep verbs NOT blocked)', () => {
+    const result = fastPathParse('update recharts');
+    expect(result).not.toBeNull();
+    expect(result?.dep).toBe('recharts');
+    expect(result?.version).toBe('latest');
+  });
+
+  it('"update axios" still returns dep result (not blocked even though "axios" is a dep name)', () => {
+    const result = fastPathParse('update axios');
+    expect(result).not.toBeNull();
+    expect(result?.dep).toBe('axios');
+  });
+});
+
 describe('detectTaskType', () => {
   let tmpDir: string;
 
