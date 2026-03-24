@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.2
 milestone_name: Deterministic Task Support
 status: executing
-stopped_at: "Completed 19-01: buildGenericPrompt + async buildPrompt dispatch"
-last_updated: "2026-03-24T15:22:56Z"
-last_activity: "2026-03-24 — Completed 19-01: scope-fenced generic prompt builder, async buildPrompt, 538 tests pass"
+stopped_at: "Completed 19-02: generic displayIntent + PR creator metadata"
+last_updated: "2026-03-24T15:28:00Z"
+last_activity: "2026-03-24 — Completed 19-02: taskCategory display, Action line, generic PR title/branch/body, 553 tests pass"
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 2
   completed_plans: 2
-  percent: 5
+  percent: 10
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-03-23)
 ## Current Position
 
 Phase: 19 of 20 (Generic Prompt Builder)
-Plan: 01 complete, ready for Plan 02
+Plan: 02 complete — Phase 19 DONE
 Status: In progress
-Last activity: 2026-03-24 — Completed 19-01: scope-fenced generic prompt builder, async buildPrompt, 538 tests pass
+Last activity: 2026-03-24 — Completed 19-02: taskCategory display, Action line, generic PR title/branch/body, 553 tests pass
 
-Progress: [█░░░░░░░░░] 5% (v2.2)
+Progress: [██░░░░░░░░] 10% (v2.2)
 
 ## Performance Metrics
 
@@ -56,6 +56,10 @@ Progress: [█░░░░░░░░░] 5% (v2.2)
 - [Phase 18]: GA API path: client.messages.create replaces client.beta.messages.create with zero type assertions (18-02)
 - [Phase 19]: buildGenericPrompt omits CONTEXT block when readManifestDeps returns 'No manifest found' — clean prompts for repos without manifests (19-01)
 - [Phase 19]: buildPrompt made async for manifest reading; repoPath passed from agent as options.repo (19-01)
+- [Phase 19]: PR body prepends Task category + Instruction block for generic tasks — instructs reader before agent narrative (19-02)
+- [Phase 19]: Branch name uses taskCategory + first 40 chars of description slugified — readable without exploding length (19-02)
+- [Phase 19]: PR title uses raw description text truncated at 72 chars for generic tasks — matches git commit subject convention (19-02)
+- [Phase 19]: Action line in displayIntent positioned after Task line, before Project line — groups task context together (19-02)
 
 ### Pending Todos
 
@@ -67,7 +71,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-24T15:22:56Z
-Stopped at: Completed 19-01-PLAN.md
-Resume file: .planning/phases/19-generic-prompt-builder/19-01-SUMMARY.md
-Next action: `/gsd:execute-phase 19` (execute Plan 02)
+Last session: 2026-03-24T15:28:00Z
+Stopped at: Completed 19-02-PLAN.md
+Resume file: .planning/phases/19-generic-prompt-builder/19-02-SUMMARY.md
+Next action: `/gsd:execute-phase 20` (Phase 20: MCP verifier scope)
