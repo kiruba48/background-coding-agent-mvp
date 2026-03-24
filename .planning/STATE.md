@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.2
 milestone_name: Deterministic Task Support
 status: executing
-stopped_at: Phase 20 context gathered
-last_updated: "2026-03-24T21:58:41.997Z"
+stopped_at: Completed 20-02-PLAN.md
+last_updated: "2026-03-24T23:18:29.755Z"
 last_activity: "2026-03-24 — Completed 19-02: taskCategory display, Action line, generic PR title/branch/body, 553 tests pass"
 progress:
   total_phases: 3
   completed_phases: 2
-  total_plans: 4
-  completed_plans: 4
+  total_plans: 6
+  completed_plans: 5
   percent: 10
 ---
 
@@ -60,6 +60,7 @@ Progress: [██░░░░░░░░] 10% (v2.2)
 - [Phase 19]: Branch name uses taskCategory + first 40 chars of description slugified — readable without exploding length (19-02)
 - [Phase 19]: PR title uses raw description text truncated at 72 chars for generic tasks — matches git commit subject convention (19-02)
 - [Phase 19]: Action line in displayIntent positioned after Task line, before Project line — groups task context together (19-02)
+- [Phase 20]: GA API (client.messages.create) replaces beta API in judge.ts — follows Phase 18 migration pattern; four new NOT-scope-creep entries cover mechanical rename consequences (tests, imports, types, docs)
 
 ### Pending Todos
 
@@ -71,7 +72,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-24T21:58:41.993Z
-Stopped at: Phase 20 context gathered
-Resume file: .planning/phases/20-verification-safety/20-CONTEXT.md
+Last session: 2026-03-24T23:18:29.754Z
+Stopped at: Completed 20-02-PLAN.md
+Resume file: None
 Next action: `/gsd:execute-phase 20` (Phase 20: MCP verifier scope)
