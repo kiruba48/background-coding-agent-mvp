@@ -108,10 +108,11 @@ Plans:
   2. User makes a config-only change (e.g., edits `.eslintrc.json`) — verification runs a syntax check only; pre-existing lint violations in source files are not reported as agent-introduced errors
   3. User makes a code change (edits `.ts` files) — full composite verifier (build + test + lint) runs unchanged
   4. Agent renames a function and updates its call sites and test files — LLM Judge does not veto the result as scope creep; test file changes exercising the renamed symbol are treated as in-scope
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 20-01: TBD
+- [ ] 20-01-PLAN.md — Zero-diff detection + config-only routing in orchestrator and verifier
+- [ ] 20-02-PLAN.md — Judge prompt enrichment (refactoring NOT-scope-creep entries) + GA API migration
 
 ## Progress
 
@@ -136,4 +137,4 @@ Plans:
 | 17. Multi-Turn Session Context | v2.1 | 2/2 | Complete | 2026-03-22 |
 | 18. Intent Parser Generalization | 2/2 | Complete    | 2026-03-23 | - |
 | 19. Generic Prompt Builder | 2/2 | Complete    | 2026-03-24 | - |
-| 20. Verification & Safety | v2.2 | 0/? | Not started | - |
+| 20. Verification & Safety | v2.2 | 0/2 | Not started | - |
