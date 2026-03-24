@@ -7,7 +7,7 @@ export interface TaskHistoryEntry {
   dep: string | null;
   version: string | null;
   repo: string;
-  status: 'success' | 'failed' | 'cancelled';
+  status: 'success' | 'failed' | 'cancelled' | 'zero_diff';
 }
 
 /** Maximum number of history entries to retain per session. */

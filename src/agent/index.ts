@@ -225,6 +225,7 @@ export async function runAgent(
       vetoed: 'vetoed',
       cancelled: 'cancelled',
       max_retries_exhausted: 'failed',
+      zero_diff: 'success',  // agent completed without error
     };
     const status = statusMap[retryResult.finalStatus] ?? 'failed';
     metrics.recordSession(status, lastSession.toolCallCount, lastSession.duration);

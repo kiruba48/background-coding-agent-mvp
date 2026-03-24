@@ -110,6 +110,8 @@ export function renderResultBlock(result: RetryResult): void {
   const statusColor =
     result.finalStatus === 'success'
       ? pc.green
+      : result.finalStatus === 'zero_diff'
+      ? pc.yellow
       : result.finalStatus === 'cancelled'
       ? pc.yellow
       : pc.red;
@@ -137,6 +139,13 @@ export function renderResultBlock(result: RetryResult): void {
   if (result.error) {
     console.log(pc.red(`  Error: ${result.error}`));
   }
+
+  if (result.finalStatus === 'zero_diff') {
+    console.log(pc.yellow('  No changes detected \u2014 agent completed without modifying any files.'));
+    console.log(pc.yellow('  Try rephrasing your instruction or check if the change was already applied.'));
+    console.log('');
+  }
+
   console.log('');
 }
 

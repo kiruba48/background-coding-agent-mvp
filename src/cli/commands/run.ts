@@ -30,6 +30,7 @@ export interface CLIRunOptions {
 export function mapStatusToExitCode(status: RetryResult['finalStatus']): number {
   switch (status) {
     case 'success':   return 0;
+    case 'zero_diff': return 0;
     case 'timeout':   return 124;
     case 'cancelled': return 130;
     default:          return 1;

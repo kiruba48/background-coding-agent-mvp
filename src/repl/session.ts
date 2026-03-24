@@ -135,7 +135,11 @@ export async function processInput(
   let historyStatus: TaskHistoryEntry['status'] = 'failed';
   try {
     const result = await runAgent(agentOptions, agentContext);
-    historyStatus = result.finalStatus === 'success' ? 'success' : 'failed';
+    historyStatus = result.finalStatus === 'success'
+      ? 'success'
+      : result.finalStatus === 'zero_diff'
+      ? 'zero_diff'
+      : 'failed';
     return { action: 'continue', result, intent: confirmed };
   } catch (err) {
     historyStatus = err instanceof Error && err.name === 'AbortError' ? 'cancelled' : 'failed';
