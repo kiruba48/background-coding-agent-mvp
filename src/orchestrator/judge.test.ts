@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { SessionResult, VerificationResult, JudgeResult } from '../types.js';
 
-// Shared mock for Anthropic client's beta.messages.create method
+// Shared mock for Anthropic client's messages.create method (GA API)
 const mockCreate = vi.fn();
 
 // Mock @anthropic-ai/sdk before importing judge
@@ -9,10 +9,8 @@ vi.mock('@anthropic-ai/sdk', () => {
   return {
     default: function MockAnthropic() {
       return {
-        beta: {
-          messages: {
-            create: mockCreate,
-          },
+        messages: {
+          create: mockCreate,
         },
       };
     },
@@ -347,7 +345,7 @@ describe('llmJudge', () => {
     expect(callArgs.messages[0].content).toContain('</diff>');
   });
 
-  it('uses beta structured output with correct schema', async () => {
+  it('uses GA structured output with correct schema (no betas array)', async () => {
     const workspaceDiff = 'diff --git a/src/feature.ts b/src/feature.ts\n+const x = 1;';
     mockExecSuccess(workspaceDiff);
     mockCreate.mockResolvedValue(buildApiResponse('APPROVE'));
@@ -355,12 +353,60 @@ describe('llmJudge', () => {
     await llmJudge('/workspace', 'Add a constant');
 
     const callArgs = mockCreate.mock.calls[0][0];
-    expect(callArgs.betas).toContain('structured-outputs-2025-11-13');
+    expect(callArgs.betas).toBeUndefined();
     expect(callArgs.output_config).toBeDefined();
     expect(callArgs.output_config.format.type).toBe('json_schema');
     expect(callArgs.output_config.format.schema.properties).toHaveProperty('verdict');
     expect(callArgs.output_config.format.schema.properties).toHaveProperty('reasoning');
     expect(callArgs.output_config.format.schema.properties).toHaveProperty('veto_reason');
+  });
+
+  it('judge prompt contains NOT-scope-creep entries for test file updates', async () => {
+    const workspaceDiff = 'diff --git a/src/feature.ts b/src/feature.ts\n+const x = 1;';
+    mockExecSuccess(workspaceDiff);
+    mockCreate.mockResolvedValue(buildApiResponse('APPROVE'));
+
+    await llmJudge('/workspace', 'Add a constant');
+
+    const callArgs = mockCreate.mock.calls[0][0];
+    const prompt: string = callArgs.messages[0].content;
+    expect(prompt).toContain('NOT scope creep: updating test files that exercise the renamed');
+    expect(prompt).toContain('NOT scope creep: updating import paths and import statements');
+    expect(prompt).toContain('NOT scope creep: updating TypeScript type annotations');
+    expect(prompt).toContain('NOT scope creep: updating string literals or documentation comments');
+  });
+
+  it('judge approves refactoring scenario: rename function + update test imports', async () => {
+    const renameDiff = [
+      'diff --git a/src/api.ts b/src/api.ts',
+      '--- a/src/api.ts',
+      '+++ b/src/api.ts',
+      '@@ -1,5 +1,5 @@',
+      '-export function getUserData() {',
+      '+export function fetchUserProfile() {',
+      '   return {};',
+      ' }',
+      'diff --git a/src/api.test.ts b/src/api.test.ts',
+      '--- a/src/api.test.ts',
+      '+++ b/src/api.test.ts',
+      '@@ -1,5 +1,5 @@',
+      "-import { getUserData } from './api.js';",
+      "+import { fetchUserProfile } from './api.js';",
+      '-getUserData()',
+      '+fetchUserProfile()',
+    ].join('\n');
+
+    mockExecSuccess(renameDiff);
+    mockCreate.mockResolvedValue(buildApiResponse('APPROVE', 'Rename is in scope, test updates are consistent', ''));
+
+    const result = await llmJudge('/workspace', 'Rename getUserData to fetchUserProfile');
+
+    expect(result.verdict).toBe('APPROVE');
+    // Prompt should contain the refactoring NOT-scope-creep guidance
+    const callArgs = mockCreate.mock.calls[0][0];
+    const prompt: string = callArgs.messages[0].content;
+    expect(prompt).toContain('NOT scope creep: updating test files that exercise the renamed');
+    expect(prompt).toContain('NOT scope creep: updating import paths and import statements');
   });
 
   it('strips lockfile diffs before calling API', async () => {
