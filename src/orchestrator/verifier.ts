@@ -528,8 +528,20 @@ export async function npmTestVerifier(workspaceDir: string): Promise<Verificatio
  * Aggregates results with Build > Test > Maven Build > Maven Test > npm Build > npm Test > Lint ordering.
  * Uses Promise.allSettled so a verifier crash doesn't block others.
  */
-export async function compositeVerifier(workspaceDir: string, options?: { skipLint?: boolean }): Promise<VerificationResult> {
+export async function compositeVerifier(workspaceDir: string, options?: { skipLint?: boolean; configOnly?: boolean }): Promise<VerificationResult> {
   const wallStart = Date.now();
+
+  if (options?.configOnly) {
+    console.info('[Verifier] Config-only change detected — skipping build and test verification.');
+    // Run lint only for config changes (catches syntax errors in config files)
+    const lintSettled = await lintVerifier(workspaceDir)
+      .then((v): PromiseSettledResult<VerificationResult> => ({ status: 'fulfilled', value: v }))
+      .catch((r): PromiseSettledResult<VerificationResult> => ({ status: 'rejected', reason: r }));
+    const lint = resolveResult(lintSettled, 'Lint');
+    const durationMs = Date.now() - wallStart;
+    console.info(`[Verifier] Lint: ${lint.passed ? 'PASS' : 'FAIL'} (${(lint.durationMs / 1000).toFixed(1)}s)`);
+    return { passed: lint.passed, errors: lint.errors, durationMs };
+  }
 
   // TypeScript build and test run in parallel (read-only on workspace)
   const [buildResult, testResult] = await Promise.allSettled([

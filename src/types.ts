@@ -71,7 +71,7 @@ export interface RetryConfig {
  * Result from a full retry-orchestrated run (may include multiple session attempts).
  */
 export interface RetryResult {
-  finalStatus: 'success' | 'failed' | 'timeout' | 'turn_limit' | 'max_retries_exhausted' | 'vetoed' | 'cancelled';
+  finalStatus: 'success' | 'failed' | 'timeout' | 'turn_limit' | 'max_retries_exhausted' | 'vetoed' | 'cancelled' | 'zero_diff';
   attempts: number;           // 1-indexed, always >= 1
   sessionResults: SessionResult[];
   verificationResults: VerificationResult[];

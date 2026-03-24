@@ -697,7 +697,7 @@ describe('RetryOrchestrator', () => {
   it('zero-3. zero_diff returns immediately on first attempt (no retry)', async () => {
     const { getWorkspaceDiff } = await import('./judge.js');
     const mockGetDiff = getWorkspaceDiff as ReturnType<typeof vi.fn>;
-    mockGetDiff.mockResolvedValue('');
+    mockGetDiff.mockResolvedValueOnce(''); // one-time empty diff — does not affect subsequent tests
 
     const verifier = vi.fn().mockResolvedValue({ passed: true, errors: [], durationMs: 50 });
     const session = createMockSession(makeSessionResult());
@@ -749,15 +749,17 @@ describe('RetryOrchestrator', () => {
     mockGetDiff.mockResolvedValue('substantial config diff content here');
 
     // Mock getChangedFilesFromBaseline via execFile — return only config file
+    // Note: promisify(execFile) resolves with the first non-error arg; for exec-style
+    // commands we must return { stdout, stderr } to match Node's execFile promise shape.
     const { execFile } = await import('node:child_process');
     const mockExecFile = execFile as unknown as ReturnType<typeof vi.fn>;
     mockExecFile.mockImplementation((...args: any[]) => {
       const cmdArgs = args[1] as string[];
       const callback = args[args.length - 1];
       if (args[0] === 'git' && cmdArgs[0] === 'diff' && cmdArgs.includes('--name-only')) {
-        if (typeof callback === 'function') callback(null, '.eslintrc.json\n', '');
+        if (typeof callback === 'function') callback(null, { stdout: '.eslintrc.json\n', stderr: '' });
       } else {
-        if (typeof callback === 'function') callback(null, '', '');
+        if (typeof callback === 'function') callback(null, { stdout: '', stderr: '' });
       }
     });
 
@@ -789,9 +791,9 @@ describe('RetryOrchestrator', () => {
       const cmdArgs = args[1] as string[];
       const callback = args[args.length - 1];
       if (args[0] === 'git' && cmdArgs[0] === 'diff' && cmdArgs.includes('--name-only')) {
-        if (typeof callback === 'function') callback(null, '.eslintrc.json\n', '');
+        if (typeof callback === 'function') callback(null, { stdout: '.eslintrc.json\n', stderr: '' });
       } else {
-        if (typeof callback === 'function') callback(null, '', '');
+        if (typeof callback === 'function') callback(null, { stdout: '', stderr: '' });
       }
     });
 
@@ -814,6 +816,19 @@ describe('RetryOrchestrator', () => {
   });
 
   it('14. retry message only includes last failed verification (not stale errors)', async () => {
+    // Ensure getWorkspaceDiff returns non-empty so zero-diff check doesn't short-circuit
+    const { getWorkspaceDiff } = await import('./judge.js');
+    const mockGetDiff = getWorkspaceDiff as ReturnType<typeof vi.fn>;
+    mockGetDiff.mockResolvedValue('substantial diff content here');
+
+    // Reset execFile to safe default so getChangedFilesFromBaseline returns [] (non-configOnly)
+    const { execFile } = await import('node:child_process');
+    const mockExecFileTmp = execFile as unknown as ReturnType<typeof vi.fn>;
+    mockExecFileTmp.mockImplementation((...args: any[]) => {
+      const callback = args[args.length - 1];
+      if (typeof callback === 'function') callback(null, { stdout: '', stderr: '' });
+    });
+
     const verifier = vi.fn()
       .mockResolvedValueOnce(makeFailedVerification('TS error from attempt 1'))
       .mockResolvedValueOnce(makeFailedVerification('Test failure from attempt 2'))

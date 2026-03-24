@@ -1,9 +1,11 @@
 import pino from 'pino';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
+import path from 'node:path';
 import { type SessionConfig, SessionResult, RetryConfig, RetryResult, VerificationResult, JudgeResult } from '../types.js';
 import { ClaudeCodeSession } from './claude-code-session.js';
-import { captureBaselineSha } from './judge.js';
+import { captureBaselineSha, getWorkspaceDiff, MIN_DIFF_CHARS } from './judge.js';
+import { compositeVerifier } from './verifier.js';
 import { ErrorSummarizer } from './summarizer.js';
 
 const execFileAsync = promisify(execFile);
@@ -17,6 +19,61 @@ export class PreVerifyError extends Error {
   constructor(message: string, public readonly retryable: boolean) {
     super(message);
     this.name = 'PreVerifyError';
+  }
+}
+
+/**
+ * File patterns that identify configuration files (as opposed to source files).
+ * Used by isConfigFile() to determine if all changed files are config-only.
+ */
+export const CONFIG_FILE_PATTERNS = [
+  /^\.eslintrc(\.[a-z]+)?$/,
+  /^\.prettierrc(\.[a-z]+)?$/,
+  /^tsconfig(\.[a-z.-]+)?\.json$/,
+  /^\.env(\.[a-z]+)?$/,
+  /^.*\.config\.(js|ts|mjs|cjs|mts|cts)$/,
+  /^jest\.config\.[a-z]+$/,
+  /^babel\.config\.[a-z]+$/,
+  /^\.babelrc(\.[a-z]+)?$/,
+  /^\.stylelintrc(\.[a-z]+)?$/,
+  /^\.editorconfig$/,
+  /^\.nvmrc$/,
+  /^\.node-version$/,
+  /^Dockerfile(\.[a-z]+)?$/,
+  /^docker-compose(\.[a-z.-]+)?\.ya?ml$/,
+  /^\.github\/.*\.ya?ml$/,
+  /^\.gitignore$/,
+  /^\.npmrc$/,
+  /^\.yarnrc(\.[a-z]+)?$/,
+];
+
+/**
+ * Returns true if the given filepath is a configuration file (not source code).
+ * Checks the basename for most patterns, and the full path for path-based patterns
+ * (e.g. .github/workflows/ci.yml). Nested config files like packages/foo/tsconfig.json
+ * are correctly identified as config. Source files in paths with "config" in the
+ * directory name (e.g. src/config/app.ts) are not config.
+ */
+export function isConfigFile(filepath: string): boolean {
+  const basename = path.basename(filepath);
+  // Normalize path separators to forward slashes for consistent pattern matching
+  const normalizedPath = filepath.replace(/\\/g, '/');
+  return CONFIG_FILE_PATTERNS.some(p => p.test(basename) || p.test(normalizedPath));
+}
+
+/**
+ * Get the list of files changed since baseline (committed changes only).
+ * Returns empty array if git is unavailable or no commits exist.
+ */
+export async function getChangedFilesFromBaseline(workspaceDir: string, baselineSha?: string): Promise<string[]> {
+  try {
+    const args = baselineSha
+      ? ['diff', baselineSha, '--name-only']
+      : ['diff', 'HEAD~1', 'HEAD', '--name-only'];
+    const { stdout } = await execFileAsync('git', args, { cwd: workspaceDir });
+    return stdout.trim().split('\n').filter(Boolean);
+  } catch {
+    return [];
   }
 }
 
@@ -141,6 +198,20 @@ export class RetryOrchestrator {
         };
       }
 
+      // Zero-diff check: if agent made no meaningful changes, surface immediately.
+      // Retrying with the same prompt will not produce different results.
+      const workspaceDiff = await getWorkspaceDiff(this.config.workspaceDir, baselineSha);
+      if (!workspaceDiff || workspaceDiff.length < MIN_DIFF_CHARS) {
+        logger?.info({ attempt }, 'Zero diff detected — agent produced no meaningful changes');
+        return {
+          finalStatus: 'zero_diff',
+          attempts: attempt,
+          sessionResults,
+          verificationResults,
+          judgeResults,
+        };
+      }
+
       // No verifier configured — treat session success as overall success.
       // Phase 5 verifiers will plug in here via retryConfig.verifier.
       if (!this.retryConfig.verifier) {
@@ -151,6 +222,14 @@ export class RetryOrchestrator {
           verificationResults,
           judgeResults,
         };
+      }
+
+      // Config-only classification: if all changed files are config files,
+      // skip build+test in the verifier (run lint only)
+      const changedFiles = await getChangedFilesFromBaseline(this.config.workspaceDir, baselineSha);
+      const configOnly = changedFiles.length > 0 && changedFiles.every(isConfigFile);
+      if (configOnly) {
+        logger?.info({ changedFiles }, 'Config-only change detected — will skip build and test verification');
       }
 
       // Run pre-verification hook (e.g., host-side npm install for lockfile regen).
@@ -190,7 +269,9 @@ export class RetryOrchestrator {
       // structured result instead of letting exceptions propagate unhandled
       let verification: VerificationResult;
       try {
-        verification = await this.retryConfig.verifier(this.config.workspaceDir);
+        verification = configOnly
+          ? await compositeVerifier(this.config.workspaceDir, { configOnly: true })
+          : await this.retryConfig.verifier(this.config.workspaceDir);
       } catch (err) {
         logger?.error({ attempt, err }, 'Verifier crashed');
         return {
