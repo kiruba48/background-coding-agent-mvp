@@ -93,10 +93,11 @@ Plans:
   2. Agent prompt incorporates repo context (detected language, build tool, manifest summary) alongside the verbatim user instruction
   3. User sees a confirmation display with the instruction summary and `taskCategory` label (e.g., "code-change") before execution begins — not just dep/version fields
   4. On retry, the second attempt receives the same scope-fenced prompt as the first attempt — the SCOPE block is not lost between retries
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 19-01: TBD
+- [ ] 19-01-PLAN.md — Generic prompt builder + async buildPrompt dispatch + agent caller wiring
+- [ ] 19-02-PLAN.md — Confirm loop display for generic tasks + PR creator adaptation
 
 ### Phase 20: Verification & Safety
 **Goal**: The verification pipeline handles generic task outcomes correctly — empty diffs are surfaced immediately, config-only changes skip the build pipeline, and the LLM Judge does not veto correct refactoring diffs
@@ -134,5 +135,5 @@ Plans:
 | 16. Interactive REPL | v2.1 | 2/2 | Complete | 2026-03-20 |
 | 17. Multi-Turn Session Context | v2.1 | 2/2 | Complete | 2026-03-22 |
 | 18. Intent Parser Generalization | 2/2 | Complete    | 2026-03-23 | - |
-| 19. Generic Prompt Builder | v2.2 | 0/? | Not started | - |
+| 19. Generic Prompt Builder | v2.2 | 0/2 | Not started | - |
 | 20. Verification & Safety | v2.2 | 0/? | Not started | - |
