@@ -234,6 +234,8 @@ export async function replCommand(): Promise<void> {
 
   // Build SessionCallbacks using the shared readline interface
 
+  const cancelWords = new Set(['exit', 'quit', 'cancel', 'abort', 'nevermind']);
+
   const confirmCb: SessionCallbacks['confirm'] = async (intent, reparse) => {
     let current = intent;
     let attempts = 0;
@@ -247,6 +249,7 @@ export async function replCommand(): Promise<void> {
       if (answer === '' || answer.toLowerCase() === 'y') return current;
 
       if (answer.toLowerCase() !== 'n') {
+        if (cancelWords.has(answer.trim().toLowerCase())) return null;
         // Treat any non-y/n input as inline correction
         current = await reparse(answer);
         attempts++;
@@ -260,7 +263,7 @@ export async function replCommand(): Promise<void> {
       }
 
       const correction = await askQuestion(rl, '  Correction: ', activeQuestionControllerRef);
-      if (correction === null) return null;
+      if (correction === null || !correction.trim() || cancelWords.has(correction.trim().toLowerCase())) return null;
       current = await reparse(correction);
     }
 

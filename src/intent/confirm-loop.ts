@@ -28,6 +28,8 @@ export function displayIntent(intent: ResolvedIntent): void {
   console.log('');
 }
 
+const CANCEL_WORDS = new Set(['exit', 'quit', 'cancel', 'abort', 'nevermind']);
+
 export async function confirmLoop(
   initialIntent: ResolvedIntent,
   reparse: (correction: string, prior: ResolvedIntent) => Promise<ResolvedIntent>,
@@ -49,6 +51,10 @@ export async function confirmLoop(
       }
 
       if (answer.toLowerCase() !== 'n') {
+        // Bail out on cancel words typed at the Proceed prompt
+        if (CANCEL_WORDS.has(answer.trim().toLowerCase())) {
+          return null;
+        }
         // Treat any non-y/n input as a correction directly
         current = await reparse(answer, current);
         attempts++;
@@ -62,6 +68,9 @@ export async function confirmLoop(
       }
 
       const correction = await rl.question('  Correction: ');
+      if (!correction.trim() || CANCEL_WORDS.has(correction.trim().toLowerCase())) {
+        return null;
+      }
       current = await reparse(correction, current);
     }
     // Final display after last correction — user gets one more chance to accept
