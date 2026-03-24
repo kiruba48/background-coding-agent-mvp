@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v2.2
 milestone_name: Deterministic Task Support
 status: executing
-stopped_at: Phase 19 context gathered
-last_updated: "2026-03-24T12:09:35.969Z"
-last_activity: "2026-03-23 — Completed 18-01: SDK bump to ^0.80.0 + REFACTORING_VERB_GUARD"
+stopped_at: "Completed 19-01: buildGenericPrompt + async buildPrompt dispatch"
+last_updated: "2026-03-24T15:22:56Z"
+last_activity: "2026-03-24 — Completed 19-01: scope-fenced generic prompt builder, async buildPrompt, 538 tests pass"
 progress:
   total_phases: 3
   completed_phases: 1
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-03-23)
 
 ## Current Position
 
-Phase: 18 of 20 (Intent Parser Generalization)
+Phase: 19 of 20 (Generic Prompt Builder)
 Plan: 01 complete, ready for Plan 02
 Status: In progress
-Last activity: 2026-03-23 — Completed 18-01: SDK bump to ^0.80.0 + REFACTORING_VERB_GUARD
+Last activity: 2026-03-24 — Completed 19-01: scope-fenced generic prompt builder, async buildPrompt, 538 tests pass
 
 Progress: [█░░░░░░░░░] 5% (v2.2)
 
@@ -54,6 +54,8 @@ Progress: [█░░░░░░░░░] 5% (v2.2)
 - [Phase 18]: IntentSchema uses 'generic' enum value directly — 'unknown' is removed entirely, keeping schema honest (18-02)
 - [Phase 18]: taskCategory required field in IntentSchema/OUTPUT_SCHEMA, flows through ResolvedIntent for phase-19 consumption (18-02)
 - [Phase 18]: GA API path: client.messages.create replaces client.beta.messages.create with zero type assertions (18-02)
+- [Phase 19]: buildGenericPrompt omits CONTEXT block when readManifestDeps returns 'No manifest found' — clean prompts for repos without manifests (19-01)
+- [Phase 19]: buildPrompt made async for manifest reading; repoPath passed from agent as options.repo (19-01)
 
 ### Pending Todos
 
@@ -65,7 +67,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-24T12:09:35.966Z
-Stopped at: Phase 19 context gathered
-Resume file: .planning/phases/19-generic-prompt-builder/19-CONTEXT.md
-Next action: `/gsd:execute-phase 18` (execute Plan 02)
+Last session: 2026-03-24T15:22:56Z
+Stopped at: Completed 19-01-PLAN.md
+Resume file: .planning/phases/19-generic-prompt-builder/19-01-SUMMARY.md
+Next action: `/gsd:execute-phase 19` (execute Plan 02)

@@ -135,5 +135,5 @@ Plans:
 | 16. Interactive REPL | v2.1 | 2/2 | Complete | 2026-03-20 |
 | 17. Multi-Turn Session Context | v2.1 | 2/2 | Complete | 2026-03-22 |
 | 18. Intent Parser Generalization | 2/2 | Complete    | 2026-03-23 | - |
-| 19. Generic Prompt Builder | v2.2 | 0/2 | Not started | - |
+| 19. Generic Prompt Builder | 1/2 | In Progress|  | - |
 | 20. Verification & Safety | v2.2 | 0/? | Not started | - |

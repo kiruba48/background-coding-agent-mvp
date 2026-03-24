@@ -15,8 +15,8 @@ Requirements for Deterministic Task Support milestone. Each maps to roadmap phas
 
 ### Prompt & Execution
 
-- [ ] **PROMPT-01**: Generic prompt builder constructs end-state prompt from user instruction + repo context (language, build tool, manifest summary)
-- [ ] **PROMPT-02**: Generic task system prompt includes explicit scope constraint preventing agent from touching unrelated files
+- [x] **PROMPT-01**: Generic prompt builder constructs end-state prompt from user instruction + repo context (language, build tool, manifest summary)
+- [x] **PROMPT-02**: Generic task system prompt includes explicit scope constraint preventing agent from touching unrelated files
 - [ ] **PROMPT-03**: Confirm loop displays instruction summary and planned approach for generic tasks (not just dep/version fields)
 
 ### Verification & Safety
@@ -60,8 +60,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | INTENT-01 | Phase 18 | Complete |
 | INTENT-02 | Phase 18 | Complete |
 | INTENT-03 | Phase 18 | Complete |
-| PROMPT-01 | Phase 19 | Pending |
-| PROMPT-02 | Phase 19 | Pending |
+| PROMPT-01 | Phase 19 | Complete |
+| PROMPT-02 | Phase 19 | Complete |
 | PROMPT-03 | Phase 19 | Pending |
 | VERIFY-01 | Phase 20 | Pending |
 | VERIFY-02 | Phase 20 | Pending |
