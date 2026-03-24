@@ -72,6 +72,7 @@ describe('parseIntent coordinator', () => {
       confidence: 'high',
       createPr: false,
       taskCategory: null,
+      project: null,
       clarifications: [],
     });
   });
@@ -137,6 +138,7 @@ describe('parseIntent coordinator', () => {
           confidence: 'high' as const,
           createPr: false,
           taskCategory: null,
+          project: null,
           clarifications: [],
         };
       });
@@ -191,6 +193,7 @@ describe('parseIntent coordinator', () => {
         confidence: 'high',
         createPr: false,
         taskCategory: 'refactor',
+        project: null,
         clarifications: [],
       });
 
@@ -238,6 +241,74 @@ describe('parseIntent coordinator', () => {
       // Explicit repoPath takes priority
       expect(result.repo).toBe('/explicit/path');
     });
+
+    it('resolves project name via registry on LLM path (generic tasks)', async () => {
+      const registry = makeRegistry({
+        resolve: vi.fn().mockReturnValue('/registered/strategic-planner'),
+      });
+
+      mockFastPathParse.mockReturnValue(null);
+      mockLlmParse.mockResolvedValue({
+        taskType: 'generic',
+        dep: null,
+        version: null,
+        confidence: 'high',
+        createPr: false,
+        taskCategory: 'code-change',
+        project: 'strategic-planner',
+        clarifications: [],
+      });
+
+      const result = await parseIntent('replace console.log with logger in strategic-planner', { registry });
+
+      expect((registry.resolve as MockedFunction<typeof registry.resolve>)).toHaveBeenCalledWith('strategic-planner');
+      expect(result.repo).toBe('/registered/strategic-planner');
+    });
+
+    it('uses options.repoPath over LLM project name when both present', async () => {
+      const registry = makeRegistry({
+        resolve: vi.fn().mockReturnValue('/from/registry'),
+      });
+
+      mockFastPathParse.mockReturnValue(null);
+      mockLlmParse.mockResolvedValue({
+        taskType: 'generic',
+        dep: null,
+        version: null,
+        confidence: 'high',
+        createPr: false,
+        taskCategory: 'code-change',
+        project: 'strategic-planner',
+        clarifications: [],
+      });
+
+      const result = await parseIntent('replace console.log in strategic-planner', { repoPath: '/explicit/path', registry });
+
+      expect(result.repo).toBe('/explicit/path');
+    });
+
+    it('falls back to cwd when LLM project not in registry', async () => {
+      const registry = makeRegistry({
+        resolve: vi.fn().mockReturnValue(undefined),
+      });
+
+      mockFastPathParse.mockReturnValue(null);
+      mockLlmParse.mockResolvedValue({
+        taskType: 'generic',
+        dep: null,
+        version: null,
+        confidence: 'high',
+        createPr: false,
+        taskCategory: 'code-change',
+        project: 'unknown-project',
+        clarifications: [],
+      });
+
+      const result = await parseIntent('fix bug in unknown-project', { registry });
+
+      // Falls back to cwd since registry doesn't know about it
+      expect(result.repo).toBe(process.cwd());
+    });
   });
 
   describe('clarifications passthrough', () => {
@@ -250,6 +321,7 @@ describe('parseIntent coordinator', () => {
         confidence: 'low',
         createPr: false,
         taskCategory: null,
+        project: null,
         clarifications: [
           { label: 'Update recharts to latest', intent: 'update recharts' },
           { label: 'Update react-charts', intent: 'update react-charts' },
@@ -275,6 +347,7 @@ describe('parseIntent coordinator', () => {
         confidence: 'high',
         createPr: false,
         taskCategory: null,
+        project: null,
         clarifications: [],
       });
 
@@ -294,6 +367,7 @@ describe('parseIntent coordinator', () => {
         confidence: 'low',
         createPr: false,
         taskCategory: 'code-change',
+        project: null,
         clarifications: [], // empty
       });
 

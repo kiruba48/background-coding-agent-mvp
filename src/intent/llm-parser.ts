@@ -14,6 +14,7 @@ const INTENT_SYSTEM_PROMPT = `You are an intent classifier for a coding agent CL
 5. createPr: true if the user asks to create/raise/open a PR or pull request, false otherwise
 6. clarifications: if confidence is 'low', provide 2-3 possible interpretations as {label, intent} pairs. Empty array if confidence is 'high'.
 7. taskCategory: for generic tasks, classify as 'code-change' (replace, add, remove code), 'config-edit' (edit config files, env vars), or 'refactor' (rename, move, extract, restructure). null for dependency updates.
+8. project: if the user mentions a target project/repo name (e.g. "in strategic-planner", "for my-app repo"), extract just the project name. null if not mentioned.
 
 Rules:
 - If the user mentions a dependency that exists in the manifest, set confidence to 'high'.
@@ -34,6 +35,7 @@ const OUTPUT_SCHEMA = {
       { type: 'string', enum: [...TASK_CATEGORIES] },
       { type: 'null' },
     ]},
+    project: { anyOf: [{ type: 'string' }, { type: 'null' }] },
     clarifications: {
       type: 'array',
       items: {
@@ -47,7 +49,7 @@ const OUTPUT_SCHEMA = {
       },
     },
   },
-  required: ['taskType', 'dep', 'version', 'confidence', 'createPr', 'taskCategory', 'clarifications'],
+  required: ['taskType', 'dep', 'version', 'confidence', 'createPr', 'taskCategory', 'project', 'clarifications'],
   additionalProperties: false,
 };
 

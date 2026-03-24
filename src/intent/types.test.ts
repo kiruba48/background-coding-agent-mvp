@@ -10,6 +10,7 @@ describe('IntentSchema', () => {
       confidence: 'high',
       createPr: false,
       taskCategory: null,
+      project: null,
       clarifications: [],
     });
     expect(result.taskType).toBe('npm-dependency-update');
@@ -27,6 +28,7 @@ describe('IntentSchema', () => {
       confidence: 'low',
       createPr: false,
       taskCategory: null,
+      project: null,
       clarifications: [{ label: 'Update spring-core', intent: 'update spring-core to latest' }],
     });
     expect(result.version).toBeNull();
@@ -40,6 +42,7 @@ describe('IntentSchema', () => {
       confidence: 'high',
       createPr: false,
       taskCategory: 'refactor',
+      project: null,
       clarifications: [],
     });
     expect(result.taskType).toBe('generic');
@@ -56,6 +59,7 @@ describe('IntentSchema', () => {
         confidence: 'high',
         createPr: false,
         taskCategory: null,
+        project: null,
         clarifications: [],
       })
     ).toThrow('taskCategory is required when taskType is generic');
@@ -84,6 +88,7 @@ describe('IntentSchema', () => {
         confidence: 'high',
         createPr: false,
         taskCategory: 'invalid',
+        project: null,
         clarifications: [],
       })
     ).toThrow();
@@ -139,6 +144,7 @@ describe('IntentSchema', () => {
       confidence: 'low',
       createPr: true,
       taskCategory: null,
+      project: null,
       clarifications: [
         { label: 'Update recharts', intent: 'update recharts to latest' },
         { label: 'Update react-chartjs', intent: 'update react-chartjs to latest' },

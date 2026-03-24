@@ -86,10 +86,11 @@ export async function parseIntent(
     if (resolved) repoPath = resolved;
   }
 
+  let usedCwdFallback = false;
   if (!repoPath) {
     // cwd fallback — CLI layer may have already prompted before calling us
     repoPath = process.cwd();
-    console.error(pc.yellow('  Warning: No repo path specified, using current directory'));
+    usedCwdFallback = true;
   }
 
   repoPath = path.resolve(repoPath);
@@ -113,11 +114,24 @@ export async function parseIntent(
     // Fast-path matched pattern but dep not found or task type ambiguous — fall through to LLM
   }
 
-  // Step 3: LLM path — read manifest context first (INTENT-03)
-  const manifestContext = await readManifestDeps(repoPath);
-  const llmResult = await llmParse(input, manifestContext, history);
+  // Step 3: LLM path — resolve project from LLM result before reading manifest
+  const llmPreResult = await llmParse(input, await readManifestDeps(repoPath), history);
+
+  // Step 3a: If LLM extracted a project name and we haven't resolved one yet, try registry
+  if (!options.repoPath && llmPreResult.project) {
+    const resolved = registry.resolve(llmPreResult.project);
+    if (resolved) {
+      repoPath = path.resolve(resolved);
+      usedCwdFallback = false;
+    }
+  }
+
+  if (usedCwdFallback) {
+    console.error(pc.yellow('  Warning: No repo path specified, using current directory'));
+  }
 
   // Step 4: Map LLM result to ResolvedIntent — pass through clarifications
+  const llmResult = llmPreResult;
   // Merge createPr from fast-path (if it matched pattern but fell through) or LLM
   const createPr = fastResult?.createPr || llmResult.createPr;
   const isGeneric = llmResult.taskType === 'generic';

@@ -14,6 +14,7 @@ export const IntentSchema = z.object({
   confidence: z.enum(['high', 'low']),
   createPr: z.boolean(),
   taskCategory: z.enum(TASK_CATEGORIES).nullable(),
+  project: z.string().nullable(),
   clarifications: z.array(z.object({
     label: z.string(),
     intent: z.string(),

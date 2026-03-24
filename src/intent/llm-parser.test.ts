@@ -27,6 +27,7 @@ const VALID_RESPONSE = {
   confidence: 'high',
   createPr: false,
   taskCategory: null,
+  project: null,
   clarifications: [],
 };
 
@@ -114,6 +115,7 @@ describe('llmParse', () => {
       confidence: 'low',
       createPr: false,
       taskCategory: null,
+      project: null,
       clarifications: [
         { label: 'Update recharts', intent: 'update recharts to latest' },
         { label: 'Update lodash', intent: 'update lodash to latest' },
