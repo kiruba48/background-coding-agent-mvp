@@ -8,7 +8,16 @@ export function displayIntent(intent: ResolvedIntent): void {
   console.log('');
   console.log(pc.bold('  Parsed Intent:'));
   const taskSuffix = intent.inheritedFields?.includes('taskType') ? fromSession : '';
-  console.log(`    Task:    ${pc.cyan(intent.taskType)}${taskSuffix}`);
+  const taskLabel = intent.taskType === 'generic'
+    ? (intent.taskCategory ?? 'generic')
+    : intent.taskType;
+  console.log(`    Task:    ${pc.cyan(taskLabel)}${taskSuffix}`);
+  if (intent.taskType === 'generic' && intent.description) {
+    const truncated = intent.description.length > 80
+      ? intent.description.slice(0, 80) + '...'
+      : intent.description;
+    console.log(`    Action:  ${pc.cyan(truncated)}`);
+  }
   const projSuffix = intent.inheritedFields?.includes('repo') ? fromSession : '';
   console.log(`    Project: ${pc.cyan(path.basename(intent.repo))}${projSuffix}`);
   if (intent.dep) console.log(`    Dep:     ${pc.cyan(intent.dep)}`);
