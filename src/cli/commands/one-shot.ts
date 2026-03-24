@@ -190,6 +190,7 @@ export async function oneShotCommand(
     dep: confirmed.dep ?? undefined,
     targetVersion: confirmed.version ?? undefined,
     description: confirmed.description,
+    taskCategory: confirmed.taskCategory ?? undefined,
     turnLimit,
     timeoutMs: timeout * 1000,
     maxRetries,

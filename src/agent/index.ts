@@ -41,6 +41,7 @@ export interface AgentOptions {
   dep?: string;
   targetVersion?: string;
   description?: string;     // raw NL task description for generic tasks
+  taskCategory?: string;    // category label for generic tasks (e.g. 'code-change')
 }
 
 /**
@@ -195,6 +196,8 @@ export async function runAgent(
         originalTask: prompt,
         retryResult,
         branchOverride: options.branchOverride,
+        description: options.description,
+        taskCategory: options.taskCategory,
       });
 
       if (prResult.error) {

@@ -312,6 +312,8 @@ export class GitHubPRCreator {
     originalTask: string;
     retryResult: RetryResult;
     branchOverride?: string;
+    description?: string;
+    taskCategory?: string;
   }): Promise<PRResult> {
     // Step 1: Require GITHUB_TOKEN — throws immediately (before any try/catch)
     const token = process.env.GITHUB_TOKEN;
@@ -331,7 +333,10 @@ export class GitHubPRCreator {
     }
     const { owner, repo } = parseGitHubRemote(remoteUrl);
 
-    const branchName = opts.branchOverride ?? generateBranchName(opts.taskType);
+    const branchInput = opts.taskType === 'generic' && opts.description
+      ? `${opts.taskCategory ?? 'generic'} ${opts.description.slice(0, 40)}`
+      : opts.taskType;
+    const branchName = opts.branchOverride ?? generateBranchName(branchInput);
 
     // Save original branch for restoration — don't leave user on agent branch
     let originalBranch: string | null = null;
@@ -380,8 +385,18 @@ export class GitHubPRCreator {
       const lastSession = opts.retryResult.sessionResults[opts.retryResult.sessionResults.length - 1];
       const finalResponse = lastSession.finalResponse ?? '';
 
+      // Build generic task prefix for PR body
+      const genericBodyPrefix = opts.taskType === 'generic' && opts.description
+        ? [
+            `**Task category:** ${opts.taskCategory ?? 'generic'}`,
+            '',
+            `**Instruction:** ${opts.description}`,
+            '',
+          ].join('\n')
+        : '';
+
       const prBody = buildPRBody({
-        task: opts.originalTask,
+        task: genericBodyPrefix + opts.originalTask,
         finalResponse,
         diffStat,
         verificationResults: opts.retryResult.verificationResults,
@@ -453,7 +468,11 @@ export class GitHubPRCreator {
       }
 
       // Create new PR
-      const title = `Agent: ${opts.taskType} ${new Date().toISOString().slice(0, 10)}`;
+      const title = opts.taskType === 'generic' && opts.description
+        ? (opts.description.length > 72
+          ? opts.description.slice(0, 72) + '...'
+          : opts.description)
+        : `Agent: ${opts.taskType} ${new Date().toISOString().slice(0, 10)}`;
       const { data: pr } = await octokit.rest.pulls.create({
         owner,
         repo,
