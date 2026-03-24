@@ -137,4 +137,4 @@ Plans:
 | 17. Multi-Turn Session Context | v2.1 | 2/2 | Complete | 2026-03-22 |
 | 18. Intent Parser Generalization | 2/2 | Complete    | 2026-03-23 | - |
 | 19. Generic Prompt Builder | 2/2 | Complete    | 2026-03-24 | - |
-| 20. Verification & Safety | 2/2 | Complete   | 2026-03-24 | - |
+| 20. Verification & Safety | 2/2 | Complete    | 2026-03-24 | - |
