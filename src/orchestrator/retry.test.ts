@@ -743,6 +743,61 @@ describe('RetryOrchestrator', () => {
     expect(isConfigFile('src/config/app.ts')).toBe(false);
   });
 
+  it('config-4b. isConfigFile rejects source files with .config.ts suffix (e.g. src/database.config.ts)', () => {
+    expect(isConfigFile('src/database.config.ts')).toBe(false);
+    expect(isConfigFile('database.config.ts')).toBe(false);
+    expect(isConfigFile('src/auth/session.config.js')).toBe(false);
+  });
+
+  it('config-4c. isConfigFile accepts known tool config files with .config.ts suffix', () => {
+    expect(isConfigFile('vite.config.ts')).toBe(true);
+    expect(isConfigFile('vitest.config.ts')).toBe(true);
+    expect(isConfigFile('webpack.config.js')).toBe(true);
+    expect(isConfigFile('tailwind.config.ts')).toBe(true);
+    expect(isConfigFile('next.config.mjs')).toBe(true);
+    expect(isConfigFile('postcss.config.cjs')).toBe(true);
+    expect(isConfigFile('eslint.config.mjs')).toBe(true);
+    expect(isConfigFile('packages/ui/vite.config.ts')).toBe(true);
+  });
+
+  it('config-4d. isConfigFile matches .github workflow files via path pattern', () => {
+    expect(isConfigFile('.github/workflows/ci.yml')).toBe(true);
+    expect(isConfigFile('.github/dependabot.yml')).toBe(true);
+  });
+
+  it('config-4e. mixed config+source changes result in configOnly=false (full pipeline)', async () => {
+    const { getWorkspaceDiff } = await import('./judge.js');
+    const mockGetDiff = getWorkspaceDiff as ReturnType<typeof vi.fn>;
+    mockGetDiff.mockResolvedValue('substantial mixed diff content here');
+
+    const { execFile } = await import('node:child_process');
+    const mockExecFile = execFile as unknown as ReturnType<typeof vi.fn>;
+    mockExecFile.mockImplementation((...args: any[]) => {
+      const cmdArgs = args[1] as string[];
+      const callback = args[args.length - 1];
+      if (args[0] === 'git' && cmdArgs[0] === 'diff' && cmdArgs.includes('--name-only')) {
+        // Mixed: one config file + one source file
+        if (typeof callback === 'function') callback(null, { stdout: '.eslintrc.json\nsrc/app.ts\n', stderr: '' });
+      } else {
+        if (typeof callback === 'function') callback(null, { stdout: '', stderr: '' });
+      }
+    });
+
+    const verifier = vi.fn().mockResolvedValue({ passed: true, errors: [], durationMs: 50 });
+    const session = createMockSession(makeSessionResult());
+    MockClaudeCodeSession.mockImplementationOnce(function() { return session; });
+
+    const orchestrator = new RetryOrchestrator(
+      { workspaceDir: '/tmp/workspace' },
+      { maxRetries: 3, verifier }
+    );
+
+    await orchestrator.run('update config and source');
+
+    // verifier (not compositeVerifier) should be called — full pipeline
+    expect(verifier).toHaveBeenCalledWith('/tmp/workspace');
+  });
+
   it('config-5. config-only changes invoke compositeVerifier with configOnly: true', async () => {
     const { getWorkspaceDiff } = await import('./judge.js');
     const mockGetDiff = getWorkspaceDiff as ReturnType<typeof vi.fn>;

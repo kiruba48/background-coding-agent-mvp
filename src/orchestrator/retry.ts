@@ -23,15 +23,16 @@ export class PreVerifyError extends Error {
 }
 
 /**
- * File patterns that identify configuration files (as opposed to source files).
- * Used by isConfigFile() to determine if all changed files are config-only.
+ * Basename-only patterns that identify configuration files (as opposed to source files).
+ * These are tested against path.basename(filepath) only — never the full path —
+ * to prevent false positives like `src/database.config.ts` matching `*.config.ts`.
  */
-export const CONFIG_FILE_PATTERNS = [
+export const CONFIG_BASENAME_PATTERNS = [
   /^\.eslintrc(\.[a-z]+)?$/,
   /^\.prettierrc(\.[a-z]+)?$/,
   /^tsconfig(\.[a-z.-]+)?\.json$/,
   /^\.env(\.[a-z]+)?$/,
-  /^.*\.config\.(js|ts|mjs|cjs|mts|cts)$/,
+  /^(vite|vitest|webpack|rollup|esbuild|postcss|tailwind|next|nuxt|svelte|astro|jest|babel|prettier|eslint|stylelint|commitlint|lint-staged|turbo|nx|renovate)\.config\.(js|ts|mjs|cjs|mts|cts)$/,
   /^jest\.config\.[a-z]+$/,
   /^babel\.config\.[a-z]+$/,
   /^\.babelrc(\.[a-z]+)?$/,
@@ -41,38 +42,50 @@ export const CONFIG_FILE_PATTERNS = [
   /^\.node-version$/,
   /^Dockerfile(\.[a-z]+)?$/,
   /^docker-compose(\.[a-z.-]+)?\.ya?ml$/,
-  /^\.github\/.*\.ya?ml$/,
   /^\.gitignore$/,
   /^\.npmrc$/,
   /^\.yarnrc(\.[a-z]+)?$/,
+  /^renovate\.json$/,
+  /^\.renovaterc(\.[a-z]+)?$/,
+  /^turbo\.json$/,
+  /^nx\.json$/,
+];
+
+/**
+ * Path patterns that require the full normalized filepath to match.
+ * Tested against the forward-slash-normalized full path.
+ */
+export const CONFIG_PATH_PATTERNS = [
+  /^\.github\/.*\.ya?ml$/,
+  /^\.husky\//,
 ];
 
 /**
  * Returns true if the given filepath is a configuration file (not source code).
- * Checks the basename for most patterns, and the full path for path-based patterns
- * (e.g. .github/workflows/ci.yml). Nested config files like packages/foo/tsconfig.json
- * are correctly identified as config. Source files in paths with "config" in the
- * directory name (e.g. src/config/app.ts) are not config.
+ * Basename patterns match against path.basename() only (prevents false positives
+ * like src/database.config.ts). Path patterns match against the full normalized path
+ * (for .github/workflows/*.yml etc.).
  */
 export function isConfigFile(filepath: string): boolean {
   const basename = path.basename(filepath);
-  // Normalize path separators to forward slashes for consistent pattern matching
+  if (CONFIG_BASENAME_PATTERNS.some(p => p.test(basename))) return true;
   const normalizedPath = filepath.replace(/\\/g, '/');
-  return CONFIG_FILE_PATTERNS.some(p => p.test(basename) || p.test(normalizedPath));
+  return CONFIG_PATH_PATTERNS.some(p => p.test(normalizedPath));
 }
 
 /**
  * Get the list of files changed since baseline (committed changes only).
  * Returns empty array if git is unavailable or no commits exist.
  */
-export async function getChangedFilesFromBaseline(workspaceDir: string, baselineSha?: string): Promise<string[]> {
+export async function getChangedFilesFromBaseline(workspaceDir: string, baselineSha?: string, logger?: pino.Logger): Promise<string[]> {
   try {
     const args = baselineSha
       ? ['diff', baselineSha, '--name-only']
       : ['diff', 'HEAD~1', 'HEAD', '--name-only'];
     const { stdout } = await execFileAsync('git', args, { cwd: workspaceDir });
     return stdout.trim().split('\n').filter(Boolean);
-  } catch {
+  } catch (err) {
+    logger?.warn({ err, workspaceDir, baselineSha }, 'Failed to list changed files from baseline — falling back to full verification');
     return [];
   }
 }
@@ -226,7 +239,7 @@ export class RetryOrchestrator {
 
       // Config-only classification: if all changed files are config files,
       // skip build+test in the verifier (run lint only)
-      const changedFiles = await getChangedFilesFromBaseline(this.config.workspaceDir, baselineSha);
+      const changedFiles = await getChangedFilesFromBaseline(this.config.workspaceDir, baselineSha, logger);
       const configOnly = changedFiles.length > 0 && changedFiles.every(isConfigFile);
       if (configOnly) {
         logger?.info({ changedFiles }, 'Config-only change detected — will skip build and test verification');

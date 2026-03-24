@@ -298,9 +298,10 @@ Return your analysis as JSON with:
       veto_reason: parsed.veto_reason,
       durationMs,
     };
-  } catch {
+  } catch (err) {
     const durationMs = Date.now() - startTime;
-    // Fail open — caller (RetryOrchestrator) logs judge crashes via structured logger
+    // Fail open — but log the error for observability (API errors vs schema violations vs bugs)
+    console.error('[Judge] Error during evaluation — failing open:', err instanceof Error ? err.message : err);
     return {
       verdict: 'APPROVE',
       reasoning: 'Judge unavailable — failing open due to API error',
