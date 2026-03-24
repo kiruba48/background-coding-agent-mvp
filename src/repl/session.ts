@@ -118,6 +118,7 @@ export async function processInput(
     dep: confirmed.dep ?? undefined,
     targetVersion: confirmed.version ?? undefined,
     description: confirmed.description,
+    taskCategory: confirmed.taskCategory ?? undefined,
     createPr: confirmed.createPr ?? false,
     turnLimit: REPL_TURN_LIMIT,
     timeoutMs: REPL_TIMEOUT_MS,

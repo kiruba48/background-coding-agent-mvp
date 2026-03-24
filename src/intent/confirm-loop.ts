@@ -3,6 +3,8 @@ import pc from 'picocolors';
 import path from 'node:path';
 import type { ResolvedIntent } from './types.js';
 
+const MAX_DISPLAY_DESCRIPTION_LENGTH = 80;
+
 export function displayIntent(intent: ResolvedIntent): void {
   const fromSession = pc.dim(' (from session)');
   console.log('');
@@ -13,8 +15,8 @@ export function displayIntent(intent: ResolvedIntent): void {
     : intent.taskType;
   console.log(`    Task:    ${pc.cyan(taskLabel)}${taskSuffix}`);
   if (intent.taskType === 'generic' && intent.description) {
-    const truncated = intent.description.length > 80
-      ? intent.description.slice(0, 80) + '...'
+    const truncated = intent.description.length > MAX_DISPLAY_DESCRIPTION_LENGTH
+      ? intent.description.slice(0, MAX_DISPLAY_DESCRIPTION_LENGTH) + '...'
       : intent.description;
     console.log(`    Action:  ${pc.cyan(truncated)}`);
   }

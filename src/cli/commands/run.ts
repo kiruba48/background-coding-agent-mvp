@@ -54,6 +54,12 @@ export async function runCommand(options: CLIRunOptions, signal?: AbortSignal): 
   const logger = createLogger();
   const childLogger = logger.child({ taskType: options.taskType, repo: options.repo });
 
+  if (options.taskType === 'generic') {
+    throw new Error(
+      "Generic tasks require a description. Use the one-shot command or REPL instead of 'run --task-type generic'."
+    );
+  }
+
   const agentOptions: AgentOptions = {
     taskType: options.taskType,
     repo: options.repo,

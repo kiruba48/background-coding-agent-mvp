@@ -35,14 +35,18 @@ export async function buildGenericPrompt(
   ];
 
   if (repoPath) {
-    const manifestDeps = await readManifestDeps(repoPath);
-    if (manifestDeps !== 'No manifest found') {
-      // Insert CONTEXT block before the trailing empty line
-      lines.splice(lines.length - 1, 0,
-        `CONTEXT:`,
-        manifestDeps,
-        '',
-      );
+    try {
+      const manifestDeps = await readManifestDeps(repoPath);
+      if (manifestDeps !== 'No manifest found') {
+        // Insert CONTEXT block before the trailing empty line
+        lines.splice(lines.length - 1, 0,
+          `CONTEXT:`,
+          manifestDeps,
+          '',
+        );
+      }
+    } catch {
+      // Non-fatal — prompt is still usable without context
     }
   }
 

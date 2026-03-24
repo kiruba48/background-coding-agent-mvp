@@ -22,6 +22,7 @@ import { GitHubPRCreator } from '../orchestrator/pr-creator.js';
 import { buildPrompt } from '../prompts/index.js';
 import { assertDockerRunning, ensureNetworkExists, buildImageIfNeeded } from '../cli/docker/index.js';
 import type { RetryResult } from '../types.js';
+import type { TaskCategory } from '../intent/types.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -41,7 +42,7 @@ export interface AgentOptions {
   dep?: string;
   targetVersion?: string;
   description?: string;     // raw NL task description for generic tasks
-  taskCategory?: string;    // category label for generic tasks (e.g. 'code-change')
+  taskCategory?: TaskCategory;    // category label for generic tasks (e.g. 'code-change')
 }
 
 /**

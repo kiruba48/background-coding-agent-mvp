@@ -21,6 +21,11 @@ import { randomBytes } from 'node:crypto';
 import { simpleGit } from 'simple-git';
 import { Octokit } from 'octokit';
 import type { RetryResult, PRResult, VerificationResult, JudgeResult } from '../types.js';
+import type { TaskCategory } from '../intent/types.js';
+
+const MAX_BRANCH_DESC_LENGTH = 40;
+const MAX_PR_TITLE_LENGTH = 72;
+const MAX_DISPLAY_DESCRIPTION_LENGTH = 80;
 
 // ---------------------------------------------------------------------------
 // generateBranchName
@@ -313,7 +318,7 @@ export class GitHubPRCreator {
     retryResult: RetryResult;
     branchOverride?: string;
     description?: string;
-    taskCategory?: string;
+    taskCategory?: TaskCategory;
   }): Promise<PRResult> {
     // Step 1: Require GITHUB_TOKEN — throws immediately (before any try/catch)
     const token = process.env.GITHUB_TOKEN;
@@ -333,8 +338,10 @@ export class GitHubPRCreator {
     }
     const { owner, repo } = parseGitHubRemote(remoteUrl);
 
-    const branchInput = opts.taskType === 'generic' && opts.description
-      ? `${opts.taskCategory ?? 'generic'} ${opts.description.slice(0, 40)}`
+    const isGenericTask = opts.taskType === 'generic' && !!opts.description;
+
+    const branchInput = isGenericTask
+      ? `${opts.taskCategory ?? 'generic'} ${opts.description!.slice(0, MAX_BRANCH_DESC_LENGTH)}`
       : opts.taskType;
     const branchName = opts.branchOverride ?? generateBranchName(branchInput);
 
@@ -385,18 +392,17 @@ export class GitHubPRCreator {
       const lastSession = opts.retryResult.sessionResults[opts.retryResult.sessionResults.length - 1];
       const finalResponse = lastSession.finalResponse ?? '';
 
-      // Build generic task prefix for PR body
-      const genericBodyPrefix = opts.taskType === 'generic' && opts.description
+      // For generic tasks, show category + instruction instead of the full expanded prompt
+      const taskContent = isGenericTask
         ? [
             `**Task category:** ${opts.taskCategory ?? 'generic'}`,
             '',
             `**Instruction:** ${opts.description}`,
-            '',
           ].join('\n')
-        : '';
+        : opts.originalTask;
 
       const prBody = buildPRBody({
-        task: genericBodyPrefix + opts.originalTask,
+        task: taskContent,
         finalResponse,
         diffStat,
         verificationResults: opts.retryResult.verificationResults,
@@ -468,10 +474,10 @@ export class GitHubPRCreator {
       }
 
       // Create new PR
-      const title = opts.taskType === 'generic' && opts.description
-        ? (opts.description.length > 72
-          ? opts.description.slice(0, 72) + '...'
-          : opts.description)
+      const title = isGenericTask
+        ? (opts.description!.length > MAX_PR_TITLE_LENGTH
+          ? opts.description!.slice(0, MAX_PR_TITLE_LENGTH) + '...'
+          : opts.description!)
         : `Agent: ${opts.taskType} ${new Date().toISOString().slice(0, 10)}`;
       const { data: pr } = await octokit.rest.pulls.create({
         owner,

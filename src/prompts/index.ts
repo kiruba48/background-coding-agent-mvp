@@ -33,7 +33,10 @@ export async function buildPrompt(options: PromptOptions): Promise<string> {
       return buildNpmPrompt(options.dep, options.targetVersion ?? 'latest');
     }
     case 'generic': {
-      return buildGenericPrompt(options.description ?? '', options.repoPath);
+      if (!options.description) {
+        throw new Error('description is required for generic tasks');
+      }
+      return buildGenericPrompt(options.description, options.repoPath);
     }
     default:
       return `You are a coding agent. Your task: ${options.description ?? options.taskType}. Work in the current directory.`;
