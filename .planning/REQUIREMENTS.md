@@ -21,8 +21,8 @@ Requirements for Deterministic Task Support milestone. Each maps to roadmap phas
 
 ### Verification & Safety
 
-- [ ] **VERIFY-01**: Zero-diff detection runs after agent completes but before verifier — empty diff produces a distinct `zero_diff` outcome with clear user message
-- [ ] **VERIFY-02**: Change-type-aware verification inspects modified file extensions — config-only changes skip build+test, source changes get full composite verifier
+- [x] **VERIFY-01**: Zero-diff detection runs after agent completes but before verifier — empty diff produces a distinct `zero_diff` outcome with clear user message
+- [x] **VERIFY-02**: Change-type-aware verification inspects modified file extensions — config-only changes skip build+test, source changes get full composite verifier
 - [x] **VERIFY-03**: LLM Judge prompt is enriched to distinguish legitimate refactoring side-effects (test updates, import changes) from actual scope creep
 
 ## Future Requirements
@@ -63,8 +63,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PROMPT-01 | Phase 19 | Complete |
 | PROMPT-02 | Phase 19 | Complete |
 | PROMPT-03 | Phase 19 | Complete |
-| VERIFY-01 | Phase 20 | Pending |
-| VERIFY-02 | Phase 20 | Pending |
+| VERIFY-01 | Phase 20 | Complete |
+| VERIFY-02 | Phase 20 | Complete |
 | VERIFY-03 | Phase 20 | Complete |
 
 **Coverage:**

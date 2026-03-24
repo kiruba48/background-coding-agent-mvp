@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.2
 milestone_name: Deterministic Task Support
 status: executing
-stopped_at: Completed 20-02-PLAN.md
-last_updated: "2026-03-24T23:18:29.755Z"
+stopped_at: Completed 20-01-PLAN.md
+last_updated: "2026-03-24T23:23:03.238Z"
 last_activity: "2026-03-24 — Completed 19-02: taskCategory display, Action line, generic PR title/branch/body, 553 tests pass"
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 6
-  completed_plans: 5
+  completed_plans: 6
   percent: 10
 ---
 
@@ -61,6 +61,9 @@ Progress: [██░░░░░░░░] 10% (v2.2)
 - [Phase 19]: PR title uses raw description text truncated at 72 chars for generic tasks — matches git commit subject convention (19-02)
 - [Phase 19]: Action line in displayIntent positioned after Task line, before Project line — groups task context together (19-02)
 - [Phase 20]: GA API (client.messages.create) replaces beta API in judge.ts — follows Phase 18 migration pattern; four new NOT-scope-creep entries cover mechanical rename consequences (tests, imports, types, docs)
+- [Phase 20]: zero_diff returned when agent produces empty/tiny diff — no retry, no verifier, no judge
+- [Phase 20]: Config-only changes (all files match CONFIG_FILE_PATTERNS) skip build+test but run lint and judge
+- [Phase 20]: isConfigFile checks both basename and full path — handles .github/**/*.yml pattern correctly
 
 ### Pending Todos
 
@@ -72,7 +75,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-24T23:18:29.754Z
-Stopped at: Completed 20-02-PLAN.md
+Last session: 2026-03-24T23:23:03.236Z
+Stopped at: Completed 20-01-PLAN.md
 Resume file: None
 Next action: `/gsd:execute-phase 20` (Phase 20: MCP verifier scope)

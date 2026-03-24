@@ -65,7 +65,7 @@ Full details: [v2.1-ROADMAP.md](milestones/v2.1-ROADMAP.md)
 
 - [x] **Phase 18: Intent Parser Generalization** - Add `generic` task type, refactoring verb guard, and migrate to GA structured outputs API (completed 2026-03-23)
 - [x] **Phase 19: Generic Prompt Builder** - Build scope-fenced prompt, wire dispatch, update confirm loop display (completed 2026-03-24)
-- [ ] **Phase 20: Verification & Safety** - Zero-diff detection, change-type-aware verification, LLM Judge calibration
+- [x] **Phase 20: Verification & Safety** - Zero-diff detection, change-type-aware verification, LLM Judge calibration (completed 2026-03-24)
 
 ## Phase Details
 
@@ -137,4 +137,4 @@ Plans:
 | 17. Multi-Turn Session Context | v2.1 | 2/2 | Complete | 2026-03-22 |
 | 18. Intent Parser Generalization | 2/2 | Complete    | 2026-03-23 | - |
 | 19. Generic Prompt Builder | 2/2 | Complete    | 2026-03-24 | - |
-| 20. Verification & Safety | 1/2 | In Progress|  | - |
+| 20. Verification & Safety | 2/2 | Complete   | 2026-03-24 | - |
