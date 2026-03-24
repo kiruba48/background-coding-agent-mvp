@@ -108,6 +108,130 @@ describe('displayIntent', () => {
     const allOutput = logs.join('\n');
     expect(allOutput).not.toContain('from session');
   });
+
+  // --- Generic task display tests ---
+
+  const GENERIC_INTENT: ResolvedIntent = {
+    taskType: 'generic',
+    repo: '/home/user/projects/myapp',
+    dep: null,
+    version: null,
+    confidence: 'high',
+    description: 'replace axios with fetch',
+    taskCategory: 'code-change',
+  };
+
+  it('shows taskCategory label instead of raw "generic" on Task line when taskCategory is set', () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(' '));
+    });
+
+    displayIntent(GENERIC_INTENT);
+
+    vi.restoreAllMocks();
+    const allOutput = logs.join('\n');
+    expect(allOutput).toContain('code-change');
+    expect(allOutput).not.toContain('generic');
+  });
+
+  it('shows taskCategory "refactor" on Task line when taskCategory is refactor', () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(' '));
+    });
+
+    displayIntent({ ...GENERIC_INTENT, taskCategory: 'refactor' });
+
+    vi.restoreAllMocks();
+    const allOutput = logs.join('\n');
+    expect(allOutput).toContain('refactor');
+    expect(allOutput).not.toContain('generic');
+  });
+
+  it('falls back to "generic" on Task line when taskCategory is null', () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(' '));
+    });
+
+    displayIntent({ ...GENERIC_INTENT, taskCategory: null });
+
+    vi.restoreAllMocks();
+    const allOutput = logs.join('\n');
+    expect(allOutput).toContain('generic');
+  });
+
+  it('shows Action line with description text for generic task', () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(' '));
+    });
+
+    displayIntent(GENERIC_INTENT);
+
+    vi.restoreAllMocks();
+    const allOutput = logs.join('\n');
+    expect(allOutput).toContain('Action:');
+    expect(allOutput).toContain('replace axios with fetch');
+  });
+
+  it('truncates description at 80 characters with ellipsis when description is longer than 80 chars', () => {
+    const longDescription = 'a'.repeat(85);
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(' '));
+    });
+
+    displayIntent({ ...GENERIC_INTENT, description: longDescription });
+
+    vi.restoreAllMocks();
+    const allOutput = logs.join('\n');
+    expect(allOutput).toContain('...');
+    expect(allOutput).toContain('a'.repeat(80));
+    expect(allOutput).not.toContain('a'.repeat(85));
+  });
+
+  it('shows full description without ellipsis when description is exactly 80 chars', () => {
+    const exactDescription = 'b'.repeat(80);
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(' '));
+    });
+
+    displayIntent({ ...GENERIC_INTENT, description: exactDescription });
+
+    vi.restoreAllMocks();
+    const allOutput = logs.join('\n');
+    expect(allOutput).toContain('b'.repeat(80));
+    expect(allOutput).not.toContain('...');
+  });
+
+  it('non-generic task still shows raw taskType on Task line', () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(' '));
+    });
+
+    displayIntent(SAMPLE_INTENT);
+
+    vi.restoreAllMocks();
+    const allOutput = logs.join('\n');
+    expect(allOutput).toContain('npm-dependency-update');
+  });
+
+  it('non-generic task does NOT show Action line', () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(' '));
+    });
+
+    displayIntent(SAMPLE_INTENT);
+
+    vi.restoreAllMocks();
+    const allOutput = logs.join('\n');
+    expect(allOutput).not.toContain('Action:');
+  });
 });
 
 describe('confirmLoop', () => {
