@@ -59,8 +59,8 @@ describe('buildMavenPrompt', () => {
 });
 
 describe('buildPrompt', () => {
-  it('dispatches maven-dependency-update to buildMavenPrompt', () => {
-    const result = buildPrompt({
+  it('dispatches maven-dependency-update to buildMavenPrompt', async () => {
+    const result = await buildPrompt({
       taskType: 'maven-dependency-update',
       dep: 'com.google.guava:guava',
       targetVersion: '33.0.0',
@@ -69,20 +69,20 @@ describe('buildPrompt', () => {
     expect(result).toContain('33.0.0');
   });
 
-  it('throws when maven-dependency-update is missing dep', () => {
-    expect(() =>
+  it('throws when maven-dependency-update is missing dep', async () => {
+    await expect(
       buildPrompt({ taskType: 'maven-dependency-update', targetVersion: '1.0' })
-    ).toThrow();
+    ).rejects.toThrow();
   });
 
-  it('defaults targetVersion to "latest" when omitted for maven-dependency-update', () => {
+  it('defaults targetVersion to "latest" when omitted for maven-dependency-update', async () => {
     // Should NOT throw — defaults to latest
-    const result = buildPrompt({ taskType: 'maven-dependency-update', dep: 'g:a' });
+    const result = await buildPrompt({ taskType: 'maven-dependency-update', dep: 'g:a' });
     expect(result).toContain('latest available version');
   });
 
-  it('handles "latest" sentinel in buildPrompt for maven', () => {
-    const result = buildPrompt({
+  it('handles "latest" sentinel in buildPrompt for maven', async () => {
+    const result = await buildPrompt({
       taskType: 'maven-dependency-update',
       dep: 'org.springframework:spring-core',
       targetVersion: 'latest',
@@ -90,8 +90,8 @@ describe('buildPrompt', () => {
     expect(result).toContain('latest available version');
   });
 
-  it('returns generic fallback for unknown task types', () => {
-    const result = buildPrompt({ taskType: 'some-other-task' });
+  it('returns generic fallback for unknown task types', async () => {
+    const result = await buildPrompt({ taskType: 'some-other-task' });
     expect(result).toContain('some-other-task');
     expect(result).toContain('Work in the current directory');
   });

@@ -166,11 +166,12 @@ export async function runAgent(
   }
 
   // Construct prompt from task type
-  const prompt = buildPrompt({
+  const prompt = await buildPrompt({
     taskType: options.taskType,
     dep: options.dep,
     targetVersion: resolvedVersion,
     description: options.description,
+    repoPath: options.repo,
   });
 
   // Run the retry orchestration loop

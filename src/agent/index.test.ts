@@ -14,9 +14,9 @@ vi.mock('../orchestrator/retry.js', () => {
   return { RetryOrchestrator: MockRetryOrchestrator };
 });
 
-// Mock buildPrompt to return deterministic string
+// Mock buildPrompt to return deterministic string (async — now returns Promise)
 vi.mock('../prompts/index.js', () => ({
-  buildPrompt: vi.fn().mockReturnValue('Fix the bug'),
+  buildPrompt: vi.fn().mockResolvedValue('Fix the bug'),
 }));
 
 // Mock llmJudge and captureBaselineSha

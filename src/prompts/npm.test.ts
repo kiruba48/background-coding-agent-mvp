@@ -66,8 +66,8 @@ describe('buildNpmPrompt', () => {
 });
 
 describe('buildPrompt npm-dependency-update dispatch', () => {
-  it('dispatches npm-dependency-update to buildNpmPrompt', () => {
-    const result = buildPrompt({
+  it('dispatches npm-dependency-update to buildNpmPrompt', async () => {
+    const result = await buildPrompt({
       taskType: 'npm-dependency-update',
       dep: 'lodash',
       targetVersion: '5.0.0',
@@ -76,20 +76,20 @@ describe('buildPrompt npm-dependency-update dispatch', () => {
     expect(result).toContain('5.0.0');
   });
 
-  it('throws when npm-dependency-update is missing dep', () => {
-    expect(() =>
+  it('throws when npm-dependency-update is missing dep', async () => {
+    await expect(
       buildPrompt({ taskType: 'npm-dependency-update', targetVersion: '5.0.0' })
-    ).toThrow();
+    ).rejects.toThrow();
   });
 
-  it('defaults targetVersion to "latest" when omitted for npm-dependency-update', () => {
+  it('defaults targetVersion to "latest" when omitted for npm-dependency-update', async () => {
     // Should NOT throw — defaults to latest
-    const result = buildPrompt({ taskType: 'npm-dependency-update', dep: 'lodash' });
+    const result = await buildPrompt({ taskType: 'npm-dependency-update', dep: 'lodash' });
     expect(result).toContain('latest available version');
   });
 
-  it('handles "latest" sentinel in buildPrompt for npm', () => {
-    const result = buildPrompt({
+  it('handles "latest" sentinel in buildPrompt for npm', async () => {
+    const result = await buildPrompt({
       taskType: 'npm-dependency-update',
       dep: 'recharts',
       targetVersion: 'latest',
