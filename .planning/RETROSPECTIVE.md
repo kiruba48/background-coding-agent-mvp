@@ -172,6 +172,52 @@
 
 ---
 
+## Milestone: v2.2 — Deterministic Task Support
+
+**Shipped:** 2026-03-25
+**Phases:** 3 | **Plans:** 6 | **Timeline:** 3 days
+
+### What Was Built
+- Generic task type with `buildGenericPrompt` — scope-fenced end-state prompts for any explicit code change instruction
+- Intent parser generalization — `generic` taskType replacing `unknown`, refactoring verb guard, taskCategory classification
+- Zero-diff detection — empty diffs caught before verifier/judge with distinct `zero_diff` status through entire stack
+- Config-only verification routing — config changes skip build+test, run lint+judge only
+- LLM Judge enrichment — four NOT-scope-creep entries for mechanical rename consequences (tests, imports, types, docs)
+- GA structured outputs API migration for both intent parser and judge (off deprecated beta endpoint)
+
+### What Worked
+- Single generic execution path: one `buildGenericPrompt` function handles all non-dep-update tasks without category-specific handlers
+- Verb guard placement: before PR_SUFFIX strip prevents false positive on "replace X and create PR" compound instructions
+- Zero-diff as terminal status: same prompt can't produce different result, so retry is pointless — clean early exit
+- Config-only routing preserves judge invocation while skipping build+test — catches config syntax errors without false failures
+- TDD RED/GREEN pattern continued from v2.0: every plan started with failing tests
+
+### What Was Inefficient
+- SUMMARY frontmatter `requirements_completed` still not populated for Phases 19-20 (same gap as v1.0-v2.1)
+- Some one-liner fields missing from SUMMARY.md files — inconsistent frontmatter across plans
+- Latent coupling: retry.ts calls compositeVerifier directly for configOnly path rather than through retryConfig.verifier
+- Nyquist validation only partial for all three phases
+
+### Patterns Established
+- Generic prompt pattern: `buildGenericPrompt(description, repoPath?)` with conditional CONTEXT block
+- Change-type routing: `isConfigFile` helper + `getChangedFilesFromBaseline` for config-vs-code classification
+- NOT-scope-creep guidance: explicit entries in judge prompt for mechanical refactoring consequences
+- GA API migration pattern: `client.messages.create` with `output_config.format` replacing `client.beta.messages.create`
+
+### Key Lessons
+1. Generic execution path with good prompting outperforms per-category handlers (SWE-bench data confirmed)
+2. Refactoring verb guard must fire before other regex patterns — ordering matters in fast-path
+3. Zero-diff should be a terminal status (no retry) — saves time and API costs
+4. Config-only routing needs both basename and full-path checking for patterns like `.github/workflows/*.yml`
+5. SUMMARY frontmatter consistency remains the #1 documentation gap — should be enforced by tooling
+
+### Cost Observations
+- Model mix: balanced profile (sonnet for execution, haiku for intent parsing + judge)
+- Plan execution: 6 plans in 3 days (~0.5 days/plan)
+- Notable: Fastest milestone yet by wall-clock time — well-scoped 3-phase structure with clear dependencies
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -182,6 +228,7 @@
 | v1.1 | 9 days | 3 | 8 | End-state prompting, task types |
 | v2.0 | 3 days | 4 | 8 | SDK migration, 1,989 lines deleted |
 | v2.1 | 4 days | 4 | 10 | Conversational interface (REPL + intent parser) |
+| v2.2 | 3 days | 3 | 6 | Generic task support, verification routing |
 
 ### Cumulative Quality
 
@@ -191,6 +238,7 @@
 | v1.1 | ~120 | Vitest | ~7,060 |
 | v2.0 | 271 | Vitest | 8,167 |
 | v2.1 | 513 | Vitest | 13,780 |
+| v2.2 | 575 | Vitest | 15,941 |
 
 ### Top Lessons (Verified Across Milestones)
 
@@ -198,5 +246,6 @@
 2. Deterministic verification beats LLM-based checking for structured output (build errors, test failures)
 3. SUMMARY frontmatter `requirements_completed` must be populated during execution, not retrofitted
 4. End-state prompting outperforms step-by-step instructions for agent tasks
-5. SDK abstractions dramatically reduce per-plan execution time (2.3 → 1.1 → 0.4 → 0.4 days/plan)
+5. SDK abstractions dramatically reduce per-plan execution time (2.3 → 1.1 → 0.4 → 0.4 → 0.5 days/plan)
 6. Channel-agnostic architecture (callback injection) pays off immediately — enables multiple entry points without duplication
+7. Generic execution path with scope-fenced prompting outperforms per-category handlers for code change tasks
