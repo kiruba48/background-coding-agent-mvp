@@ -207,6 +207,14 @@ describe('renderResultBlock', () => {
     const allOutput = logSpy.mock.calls.flat().join('\n');
     expect(allOutput).toContain('APPROVE');
   });
+
+  it('displays zero_diff status and actionable message when agent made no changes', () => {
+    renderResultBlock(makeResult({ finalStatus: 'zero_diff' }));
+    const allOutput = logSpy.mock.calls.flat().join('\n');
+    expect(allOutput).toContain('zero_diff');
+    expect(allOutput).toContain('No changes detected');
+    expect(allOutput).toContain('Try rephrasing');
+  });
 });
 
 // ─── createProgressIndicator ─────────────────────────────────────────────────

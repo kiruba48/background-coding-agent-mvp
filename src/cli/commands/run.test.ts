@@ -63,6 +63,10 @@ describe('mapStatusToExitCode', () => {
   it('maps turn_limit to 1', () => {
     expect(mapStatusToExitCode('turn_limit')).toBe(1);
   });
+
+  it('maps zero_diff to 0 (agent completed cleanly with no changes)', () => {
+    expect(mapStatusToExitCode('zero_diff')).toBe(0);
+  });
 });
 
 describe('runCommand', () => {
