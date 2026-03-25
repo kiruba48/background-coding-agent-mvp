@@ -1,5 +1,28 @@
 # Milestones
 
+## v2.2 Deterministic Task Support (Shipped: 2026-03-25)
+
+**Phases completed:** 3 phases (18-20), 6 plans, ~11 tasks
+**Timeline:** 3 days (2026-03-22 → 2026-03-25)
+**LOC:** 15,941 TypeScript (+4,704 lines) | **Tests:** 575 unit tests (+62 from v2.1)
+
+**Key accomplishments:**
+- Generic task type with scope-fenced end-state prompting (`buildGenericPrompt`) for any explicit code change instruction
+- Intent parser generalization — `generic` taskType, refactoring verb guard, taskCategory classification, GA structured outputs API
+- Zero-diff detection — empty diffs caught before verifier/judge with distinct `zero_diff` status through CLI/REPL
+- Config-only verification routing — config changes skip build+test, run lint+judge only
+- LLM Judge enrichment — four NOT-scope-creep entries for refactoring side-effects (test updates, imports, types, docs)
+- PR creator adapted for generic tasks — category-based branch names, raw description titles, task category in PR body
+
+**Known gaps (accepted as tech debt):**
+- SUMMARY frontmatter missing `requirements_completed` for PROMPT-01..03, VERIFY-01..03 (verified in VERIFICATION.md)
+- Latent coupling: retry.ts calls compositeVerifier directly for configOnly path rather than through retryConfig.verifier
+- Nyquist validation partial for phases 18-20
+
+**Archives:** [v2.2-ROADMAP.md](milestones/v2.2-ROADMAP.md) | [v2.2-REQUIREMENTS.md](milestones/v2.2-REQUIREMENTS.md) | [v2.2-MILESTONE-AUDIT.md](milestones/v2.2-MILESTONE-AUDIT.md)
+
+---
+
 ## v2.1 Conversational Mode (Shipped: 2026-03-22)
 
 **Phases completed:** 4 phases (14-17), 10 plans
