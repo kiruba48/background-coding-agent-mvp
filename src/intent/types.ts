@@ -19,10 +19,7 @@ export const IntentSchema = z.object({
     label: z.string(),
     intent: z.string(),
   })),
-}).refine(
-  (data) => data.taskType !== 'generic' || data.taskCategory !== null,
-  { message: 'taskCategory is required when taskType is generic', path: ['taskCategory'] },
-);
+});
 
 export type IntentResult = z.infer<typeof IntentSchema>;
 

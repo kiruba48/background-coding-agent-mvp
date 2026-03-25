@@ -1,4 +1,5 @@
 import { parseIntent } from '../intent/index.js';
+import { LlmParseError } from '../intent/llm-parser.js';
 import { runAgent, type AgentOptions, type AgentContext } from '../agent/index.js';
 import { autoRegisterCwd } from '../cli/auto-register.js';
 import { ProjectRegistry } from '../agent/registry.js';
@@ -72,11 +73,22 @@ export async function processInput(
   const historySnapshot = [...state.history];
 
   // Step 1: Parse intent — use currentProject as repo context if available
-  let intent = await parseIntent(trimmed, {
-    repoPath: state.currentProject ?? undefined,
-    registry,
-    history: historySnapshot,
-  });
+  let intent;
+  try {
+    intent = await parseIntent(trimmed, {
+      repoPath: state.currentProject ?? undefined,
+      registry,
+      history: historySnapshot,
+    });
+  } catch (err) {
+    if (err instanceof LlmParseError) {
+      console.error(pc.yellow('  Could not understand that request. This tool handles concrete code changes'));
+      console.error(pc.yellow('  (e.g., "rename X to Y", "update lodash", "add error handling to auth.ts").'));
+      console.error(pc.yellow('  Try rephrasing as a specific action.'));
+      return { action: 'continue', result: null };
+    }
+    throw err;
+  }
 
   // Step 2: Handle low-confidence with clarifications
   if (intent.confidence === 'low' && intent.clarifications && intent.clarifications.length > 0) {

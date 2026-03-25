@@ -50,19 +50,19 @@ describe('IntentSchema', () => {
     expect(result.dep).toBeNull();
   });
 
-  it('rejects taskType: generic with taskCategory: null', () => {
-    expect(() =>
-      IntentSchema.parse({
-        taskType: 'generic',
-        dep: null,
-        version: null,
-        confidence: 'high',
-        createPr: false,
-        taskCategory: null,
-        project: null,
-        clarifications: [],
-      })
-    ).toThrow('taskCategory is required when taskType is generic');
+  it('accepts taskType: generic with taskCategory: null (analysis/read-only tasks)', () => {
+    const result = IntentSchema.parse({
+      taskType: 'generic',
+      dep: null,
+      version: null,
+      confidence: 'high',
+      createPr: false,
+      taskCategory: null,
+      project: null,
+      clarifications: [],
+    });
+    expect(result.taskType).toBe('generic');
+    expect(result.taskCategory).toBeNull();
   });
 
   it('rejects taskType: unknown', () => {
