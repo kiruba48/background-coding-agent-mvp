@@ -1,17 +1,17 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.2
-milestone_name: Deterministic Task Support
-status: completed
-stopped_at: Milestone v2.2 archived
-last_updated: "2026-03-25T11:00:00.000Z"
-last_activity: "2026-03-25 — Milestone v2.2 Deterministic Task Support completed and archived"
+milestone: v2.3
+milestone_name: Conversational Scoping & REPL Enhancements
+status: active
+stopped_at: Defining requirements
+last_updated: "2026-03-25T12:00:00.000Z"
+last_activity: "2026-03-25 — Milestone v2.3 started"
 progress:
-  total_phases: 3
-  completed_phases: 3
-  total_plans: 6
-  completed_plans: 6
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -21,13 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-25)
 
 **Core value:** The full verification loop must work: agent changes code, deterministic verifiers catch failures, LLM Judge catches scope creep, and only verified changes proceed.
-**Current focus:** Planning next milestone
+**Current focus:** Milestone v2.3 — Conversational Scoping & REPL Enhancements
 
 ## Current Position
 
-Milestone: v2.2 Deterministic Task Support — SHIPPED 2026-03-25
-Status: Complete
-Next: `/gsd:new-milestone` to start next milestone
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-03-25 — Milestone v2.3 started
 
 ## Performance Metrics
 
@@ -55,6 +56,6 @@ None.
 ## Session Continuity
 
 Last session: 2026-03-25
-Stopped at: Milestone v2.2 archived
+Stopped at: Defining requirements for v2.3
 Resume file: None
-Next action: `/gsd:new-milestone`
+Next action: Define requirements → create roadmap

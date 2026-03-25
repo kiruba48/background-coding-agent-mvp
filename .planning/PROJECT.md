@@ -46,12 +46,20 @@ The full verification loop must work: agent changes code, deterministic verifier
 
 ### Active
 
-#### Deferred (next milestone)
+#### Current Milestone: v2.3 Conversational Scoping & REPL Enhancements
 
+**Goal:** Improve agent effectiveness through pre-execution scoping dialogue, post-hoc PR creation, follow-up task referencing, and Slack bot interface.
+
+**Target features:**
+- [ ] Conversational scoping dialogue — REPL asks follow-up questions for generic tasks to tighten scope constraints
+- [ ] REPL post-hoc PR creation — create PR for last completed task without upfront request
 - [ ] Follow-up tasks can explicitly reference previous task results
+- [ ] Slack bot interface using same intent parser and project registry
+
+#### Deferred (future milestone)
+
 - [ ] Tab completion for project names and common task patterns
 - [ ] --yes flag for auto-proceed on high-confidence parses (CI/scripting)
-- [ ] Slack bot interface using same intent parser and project registry
 - [ ] Multi-file migration support with scoped planning phase before execution
 - [ ] Task discovery mode — separate analysis mode that identifies where changes are needed
 
@@ -135,4 +143,4 @@ Replaced the custom agent loop with the Claude Agent SDK. Deleted 1,989 lines of
 | Zero-diff as distinct status | Empty diffs are not retried (same prompt can't produce different result) | ✓ Good — clean signal through CLI/REPL |
 
 ---
-*Last updated: 2026-03-25 after v2.2 milestone*
+*Last updated: 2026-03-25 after v2.3 milestone started*
