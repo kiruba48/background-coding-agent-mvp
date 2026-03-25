@@ -81,31 +81,31 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PR-01 | — | Pending |
-| PR-02 | — | Pending |
-| PR-03 | — | Pending |
-| PR-04 | — | Pending |
-| SCOPE-01 | — | Pending |
-| SCOPE-02 | — | Pending |
-| SCOPE-03 | — | Pending |
-| SCOPE-04 | — | Pending |
-| SCOPE-05 | — | Pending |
-| FLLW-01 | — | Pending |
-| FLLW-02 | — | Pending |
-| FLLW-03 | — | Pending |
-| SLCK-01 | — | Pending |
-| SLCK-02 | — | Pending |
-| SLCK-03 | — | Pending |
-| SLCK-04 | — | Pending |
-| SLCK-05 | — | Pending |
-| SLCK-06 | — | Pending |
-| SLCK-07 | — | Pending |
+| PR-01 | Phase 21 | Pending |
+| PR-02 | Phase 21 | Pending |
+| PR-03 | Phase 21 | Pending |
+| PR-04 | Phase 21 | Pending |
+| SCOPE-01 | Phase 22 | Pending |
+| SCOPE-02 | Phase 22 | Pending |
+| SCOPE-03 | Phase 22 | Pending |
+| SCOPE-04 | Phase 22 | Pending |
+| SCOPE-05 | Phase 22 | Pending |
+| FLLW-01 | Phase 21 | Pending |
+| FLLW-02 | Phase 21 | Pending |
+| FLLW-03 | Phase 23 | Pending |
+| SLCK-01 | Phase 24 | Pending |
+| SLCK-02 | Phase 24 | Pending |
+| SLCK-03 | Phase 24 | Pending |
+| SLCK-04 | Phase 24 | Pending |
+| SLCK-05 | Phase 24 | Pending |
+| SLCK-06 | Phase 24 | Pending |
+| SLCK-07 | Phase 24 | Pending |
 
 **Coverage:**
 - v2.3 requirements: 19 total
-- Mapped to phases: 0
-- Unmapped: 19 ⚠️
+- Mapped to phases: 19
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-03-25*
-*Last updated: 2026-03-25 after initial definition*
+*Last updated: 2026-03-25 after roadmap creation*
