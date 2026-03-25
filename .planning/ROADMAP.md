@@ -71,7 +71,7 @@ Full details: [v2.2-ROADMAP.md](milestones/v2.2-ROADMAP.md)
 
 </details>
 
-### 🚧 v2.3 Conversational Scoping & REPL Enhancements (In Progress)
+### v2.3 Conversational Scoping & REPL Enhancements (In Progress)
 
 **Milestone Goal:** Improve agent effectiveness through pre-execution scoping dialogue, post-hoc PR creation, follow-up task referencing, and Slack bot interface.
 
@@ -92,11 +92,11 @@ Full details: [v2.2-ROADMAP.md](milestones/v2.2-ROADMAP.md)
   3. User sees a task summary line ("Creating PR for: [description] ([project])") before the PR is created, giving them a chance to verify intent
   4. User types "create a PR for that" in the REPL and it is handled as the post-hoc PR meta-command, not dispatched to the Docker agent
   5. TaskHistoryEntry records include task description and the stored RetryResult so subsequent phases can reference them
-**Plans**: TBD
+**Plans:** 2 plans
 
 Plans:
-- [ ] 21-01: Meta-command intercept + ReplState/TaskHistoryEntry schema extension
-- [ ] 21-02: Post-hoc GitHubPRCreator invocation with git state guard + onPrCreated callback
+- [ ] 21-01-PLAN.md — ReplState/TaskHistoryEntry schema extension + state retention after runAgent
+- [ ] 21-02-PLAN.md — PR meta-command handler in processInput() + repl.ts display
 
 ### Phase 22: Conversational Scoping Dialogue
 **Goal**: Users running generic tasks in the REPL are asked up to 3 optional scoping questions (target files, test updates, exclusions) before the confirm step, and their answers are merged into the agent prompt SCOPE block
