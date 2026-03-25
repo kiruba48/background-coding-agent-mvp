@@ -1,507 +1,801 @@
 # Architecture Research
 
-**Domain:** Generic task execution — background coding agent v2.2
-**Researched:** 2026-03-23
-**Confidence:** HIGH (first-party codebase analysis, no external dependencies required)
+**Domain:** Conversational REPL enhancements + Slack bot interface — background coding agent v2.3
+**Researched:** 2026-03-25
+**Confidence:** HIGH (first-party codebase analysis, all integration points verified in source)
 
 ## Context: What This Research Is
 
-This is an integration analysis for v2.2. The system is fully operational (v2.1). The question is: how does generic task support — config edits, simple refactors, method replacements — slot into the existing `IntentParser → prompt builder → verifier` pipeline without breaking the dependency-update path or requiring a new execution model?
+This is an integration analysis for v2.3. The system is fully operational (v2.2). The question is: how do four new features — conversational scoping dialogue, REPL post-hoc PR creation, follow-up task referencing, and Slack bot interface — slot into the existing architecture without breaking existing flows or violating the established `SessionCallbacks` decoupling pattern?
 
-This document maps every touch point: what changes, what is new, what is untouched, and in what order to build it.
+This document maps every touch point: what is new, what is modified, what is untouched, and the recommended build order with dependency rationale.
 
 ---
 
-## Existing Architecture (v2.1 — What Already Works)
+## Existing Architecture (v2.2 — What Already Works)
 
 ```
 User input (REPL or one-shot)
   └─> parseIntent(input, options)
        ├─> fastPathParse()       regex: "update|upgrade|bump <dep>"
        ├─> validateDepInManifest()
-       ├─> detectTaskType()      pom.xml / package.json presence
-       └─> llmParse()            Haiku 4.5, structured output
-            schema: { taskType: enum('npm-dep-update','maven-dep-update','unknown'), dep, version, confidence, createPr, clarifications }
-            unknown → mapped to 'generic' with description = raw input
-  └─> ResolvedIntent { taskType, repo, dep, version, confidence, createPr, description?, clarifications? }
-  └─> confirmLoop()              user sees plan, confirms or corrects
-  └─> runAgent(AgentOptions)
+       ├─> detectTaskType()
+       └─> llmParse()            Haiku 4.5, GA structured output
+            schema: { taskType, dep, version, confidence, createPr, taskCategory, project, clarifications }
+  └─> ResolvedIntent { taskType, repo, dep, version, confidence, createPr, description?, taskCategory? }
+  └─> processInput() [repl/session.ts]
+       ├─> clarify via callbacks.clarify()     (low-confidence menu)
+       └─> confirm via callbacks.confirm()     (intent display + Y/n + inline correction)
+  └─> runAgent(AgentOptions, AgentContext)
        └─> buildPrompt(options)
-            ├─> buildMavenPrompt(dep, version)  task-specific template
-            ├─> buildNpmPrompt(dep, version)     task-specific template
-            └─> default: `Your task: ${description ?? taskType}`   CURRENT GENERIC STUB
+            ├─> buildMavenPrompt()
+            ├─> buildNpmPrompt()
+            └─> buildGenericPrompt()   end-state prompt with SCOPE fence
        └─> RetryOrchestrator
-            └─> ClaudeCodeSession.run(prompt)    Docker + iptables
-            └─> compositeVerifier(workspaceDir)  build+test+lint, all build systems
-            └─> llmJudge(workspaceDir, originalTask, baselineSha)
-       └─> GitHubPRCreator (optional)
+            └─> ClaudeCodeSession.query()    Docker + iptables
+            └─> compositeVerifier()          build+test+lint (or lint-only for config)
+            └─> llmJudge()                   refactoring-aware
+       └─> GitHubPRCreator (createPr: true only)
+  └─> RetryResult returned to processInput() → rendered in REPL → discarded
 ```
 
-### Current State of Generic Tasks
+### Key Integration Hooks That Already Exist
 
-`taskType: 'generic'` already exists in the flow. The `IntentParser` maps `unknown` LLM output to `'generic'` and stores the raw input in `description`. `buildPrompt()` has a default case that passes `description` through as a bare instruction. The stub is:
-
-```typescript
-default:
-  return `You are a coding agent. Your task: ${options.description ?? options.taskType}. Work in the current directory.`;
-```
-
-This is functional but inadequate: it gives the agent no scope constraints, no end-state success criteria, no context about the repo structure, and no guidance on commit hygiene.
-
-**v2.2 turns this stub into a proper generic prompt builder** and adds verification that adapts to what kind of change was made (code vs config-only).
+| Hook | Location | Relevance to v2.3 |
+|------|----------|-------------------|
+| `SessionCallbacks` interface | `src/repl/types.ts` | I/O decoupling — Slack adapter replaces CLI callbacks here |
+| `ReplState.history` | `src/repl/types.ts` | Follow-up referencing already reads from here |
+| `processInput()` | `src/repl/session.ts` | All four features extend or wrap this function |
+| `GitHubPRCreator.create()` | `src/orchestrator/pr-creator.ts` | Post-hoc PR invokes this directly with stored context |
+| `buildGenericPrompt()` | `src/prompts/generic.ts` | Scoping dialogue feeds scope constraints into this |
+| `TaskHistoryEntry` | `src/repl/types.ts` | Follow-up referencing extends this struct |
 
 ---
 
-## What Changes in v2.2
+## Feature 1: Conversational Scoping Dialogue
 
-### Layer-by-layer summary
+### What It Does
 
-| Layer | Status | What Changes |
-|-------|--------|--------------|
-| Intent parser (`src/intent/`) | Minor modification | LLM schema adds `taskCategory` field (code-change vs config-only); fast-path stays dep-only |
-| Prompt builder (`src/prompts/`) | New module | `generic.ts` replaces the stub default case |
-| Agent execution (`src/agent/index.ts`) | Minor modification | No `preVerify` hook for generic tasks; version resolution skipped for non-dep tasks |
-| Verifier (`src/orchestrator/verifier.ts`) | No change | compositeVerifier already adapts to build system by presence detection |
-| LLM Judge (`src/orchestrator/judge.ts`) | No change | Already evaluates any diff against any original task — generic tasks are already handled |
-| REPL session (`src/repl/session.ts`) | No change | Already passes `description` through to `AgentOptions` |
-| Types (`src/types.ts`, `src/intent/types.ts`) | Additive | Add `taskCategory` to `IntentResult`/`ResolvedIntent` |
+Before executing a `generic` task, the REPL asks 1-3 focused scope-narrowing questions. Answers are injected into the `buildGenericPrompt()` SCOPE block as user-provided constraints. Dependency-update tasks are unaffected.
 
----
+### Where It Lives
 
-## Target Architecture (v2.2)
+**New file:** `src/repl/scoping.ts`
 
-The execution layer (`RetryOrchestrator` and below) is **entirely unchanged**. All changes are in the input-to-prompt path.
+Owns the question-answer loop. Takes a `ResolvedIntent` and `SessionCallbacks`, returns a `ScopingResult` with collected answers. Pure logic — no readline, no console output (those go through callbacks).
+
+**Modified:** `src/prompts/generic.ts` — `buildGenericPrompt()` gains optional `scopeHints` parameter.
+
+**Modified:** `src/repl/session.ts` — `processInput()` calls `runScopingDialogue()` between confirm and `runAgent()`.
+
+**New callback:** `SessionCallbacks.askQuestion(prompt: string): Promise<string | null>` — single-question I/O primitive. CLI adapter implements with readline. Slack adapter implements with thread reply + message wait.
+
+### Data Flow
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                        INPUT LAYER                                     │
-│                                                                        │
-│  parseIntent(input)                                                    │
-│    fastPathParse()      dep-update patterns only (unchanged)          │
-│    llmParse()           MODIFIED: schema gains taskCategory field      │
-│                                                                        │
-│  ResolvedIntent         ADDITIVE: taskCategory propagated through      │
-│  confirmLoop()          shows "generic change" label (minor update)   │
-│                                                                        │
-└──────────────────────────┬───────────────────────────────────────────┘
-                           │
-┌──────────────────────────▼───────────────────────────────────────────┐
-│                        PROMPT LAYER                                    │
-│                                                                        │
-│  buildPrompt(options)                                                  │
-│    'maven-dependency-update' → buildMavenPrompt()    (unchanged)      │
-│    'npm-dependency-update'   → buildNpmPrompt()      (unchanged)      │
-│    'generic'                 → buildGenericPrompt()  NEW              │
-│                              (replaces one-liner stub)                │
-│                                                                        │
-└──────────────────────────┬───────────────────────────────────────────┘
-                           │
-┌──────────────────────────▼───────────────────────────────────────────┐
-│                     EXECUTION LAYER (unchanged)                        │
-│                                                                        │
-│  runAgent(AgentOptions)                                                │
-│    preVerify: undefined for generic tasks                              │
-│    version resolution: skipped for generic tasks                       │
-│    RetryOrchestrator                                                   │
-│    ClaudeCodeSession (Docker + iptables)                               │
-│    compositeVerifier (already build-system agnostic)                  │
-│    llmJudge (already handles any diff + any task description)         │
-│    GitHubPRCreator (optional)                                          │
-│                                                                        │
-└──────────────────────────────────────────────────────────────────────┘
+processInput(input, state, callbacks)
+  └─> parseIntent()               (unchanged)
+  └─> clarify()                   (unchanged)
+  └─> callbacks.confirm()         (unchanged)
+  └─> runScopingDialogue()        NEW — only if taskType === 'generic'
+       ├─> callbacks.askQuestion("Which files/dirs should this touch? (Enter to skip)")
+       ├─> callbacks.askQuestion("Should tests be updated? (Enter to skip)")
+       └─> returns ScopingResult { fileScope?, updateTests?, exclusions? }
+  └─> buildPrompt({ ...agentOptions, scopeHints: scopingResult })
+       └─> buildGenericPrompt(description, scopeHints)
+            ├─> existing SCOPE fence
+            └─> if scopeHints.fileScope: "SCOPE: Only touch: <fileScope>"
+               if scopeHints.updateTests === false: "Do NOT modify test files."
+  └─> runAgent()                  (unchanged)
 ```
 
----
-
-## New Component: `buildGenericPrompt()`
-
-### Location
-
-`src/prompts/generic.ts`
-
-### What it replaces
-
-The default case stub in `src/prompts/index.ts`:
-```typescript
-default:
-  return `You are a coding agent. Your task: ${options.description ?? options.taskType}. Work in the current directory.`;
-```
-
-### What it must produce
-
-An end-state prompt following the established pattern from `maven.ts` and `npm.ts`:
-1. One-line task statement (what the desired end state is)
-2. SCOPE block: explicit constraints on what NOT to change
-3. After-your-changes block: verifiable success criteria in present-tense assertions
-4. Context hint: "Work in the current directory"
-
-The key challenge: generic tasks have no structured parameters (no `dep`, no `version`). The entire task lives in `description`. The prompt must translate that free text into end-state language while adding scope guardrails.
+### Interface Additions
 
 ```typescript
-export function buildGenericPrompt(description: string): string {
-  return [
-    `You are a coding agent. ${description}`,
-    '',
-    `SCOPE: Make only the changes necessary to complete the task above. Do NOT:`,
-    `- Modify files unrelated to the task`,
-    `- Refactor, reformat, or reorganize code beyond what the task requires`,
-    `- Add new dependencies, features, or abstractions not requested`,
-    `- Change tests unless the task explicitly requires it`,
-    '',
-    `After your changes, the following should be true:`,
-    `- The task described above is complete`,
-    `- The codebase compiles and all existing tests pass`,
-    `- Only the files necessary for the task have been modified`,
-    '',
-    `Work in the current directory.`,
-  ].join('\n');
+// src/repl/types.ts — SessionCallbacks gains one method
+interface SessionCallbacks {
+  // ... existing methods ...
+  /** Ask user a single question; return response string or null if skipped/cancelled. */
+  askQuestion?: (prompt: string) => Promise<string | null>;
+}
+
+// src/repl/scoping.ts — new types
+interface ScopingResult {
+  fileScope?: string;       // "src/users/, src/auth/" user-provided path constraints
+  updateTests?: boolean;    // true/false/undefined (undefined = skip question)
+  exclusions?: string;      // "do not touch migrations/"
 }
 ```
 
-The scope block is intentionally generic. It reuses the "minimal-footprint" constraint pattern from the dependency prompts, which prevents the agent from gold-plating, refactoring unrelated code, or expanding scope.
-
-### Wire-up in `buildPrompt()`
+### Modified: `buildGenericPrompt()`
 
 ```typescript
-// src/prompts/index.ts
-case 'generic': {
-  if (!options.description) {
-    throw new Error('description is required for generic tasks');
+// src/prompts/generic.ts — signature change
+export async function buildGenericPrompt(
+  description: string,
+  repoPath?: string,
+  scopeHints?: ScopingResult,   // NEW optional parameter
+): Promise<string>
+```
+
+The `ScopingResult` fields append to the SCOPE block when present. The function remains fully backward compatible — callers that pass no `scopeHints` get identical output to v2.2.
+
+### What Is Unchanged
+
+- Intent parser — scoping is post-parse
+- Confirm loop — scoping is post-confirm
+- `runAgent()` — receives `description` + `scopeHints` encoded in prompt, no new params
+- Verifier, judge, PR creator — entirely unaffected
+
+### Integration Points
+
+| Boundary | Change |
+|----------|--------|
+| `SessionCallbacks` | Add optional `askQuestion?` method |
+| `buildGenericPrompt()` | Add optional `scopeHints` parameter |
+| `processInput()` | Insert `runScopingDialogue()` call after confirm, before `runAgent()` |
+| CLI `repl.ts` | Implement `askQuestion` callback using existing readline `rl.question()` |
+
+---
+
+## Feature 2: REPL Post-Hoc PR Creation
+
+### What It Does
+
+After a task completes successfully, the user can type `pr` or `create pr` in the REPL to create a GitHub PR for the last completed task, without having requested it upfront. The REPL stores the last `RetryResult` + context on `ReplState` and the command invokes `GitHubPRCreator` with that stored context.
+
+### The Gap (Why It Doesn't Work Today)
+
+`processInput()` returns `SessionOutput { result: RetryResult | null }`. The REPL loop in `repl.ts` calls `renderResultBlock(output.result)` then discards it. `GitHubPRCreator` needs `RetryResult` + the original prompt + task options to build the PR body. A follow-up `"create PR"` input currently reaches `parseIntent()` as a new task, where it fails (no repo context, no code change instruction).
+
+### Where It Lives
+
+**Modified:** `src/repl/types.ts` — `ReplState` gains `lastResult` field.
+
+**Modified:** `src/repl/session.ts` — `processInput()` stores result on state after successful run; adds `pr`/`create pr` command handling before `parseIntent()`.
+
+**No new files required.**
+
+### Data Flow
+
+```
+Task completes successfully:
+  processInput() → RetryResult
+    state.lastResult = {
+      retryResult,
+      prompt,           // the string passed to RetryOrchestrator
+      agentOptions,     // AgentOptions (has taskType, repo, description, taskCategory)
+    }
+  renderResultBlock(result)
+  REPL re-prompts
+
+User types "pr" or "create pr":
+  processInput("pr", state, callbacks)
+    BEFORE parseIntent() — command intercept
+    if isCreatePrCommand(trimmed):
+      if !state.lastResult || state.lastResult.agentOptions.createPr:
+        callbacks.onMessage("No completed task to create PR for, or PR already created.")
+        return { action: 'continue', result: null }
+      if state.lastResult.retryResult.finalStatus !== 'success':
+        callbacks.onMessage("Last task did not succeed. PR creation requires a successful run.")
+        return { action: 'continue', result: null }
+      creator = new GitHubPRCreator(state.lastResult.agentOptions.repo)
+      prResult = await creator.create({
+        taskType: state.lastResult.agentOptions.taskType,
+        originalTask: state.lastResult.prompt,
+        retryResult: state.lastResult.retryResult,
+        description: state.lastResult.agentOptions.description,
+        taskCategory: state.lastResult.agentOptions.taskCategory,
+      })
+      callbacks.onPrCreated(prResult)
+      state.lastResult = null   // consumed
+      return { action: 'continue', result: null }
+```
+
+### Type Changes
+
+```typescript
+// src/repl/types.ts — ReplState extension
+interface LastTaskContext {
+  retryResult: RetryResult;
+  prompt: string;           // string sent to RetryOrchestrator (for PR body)
+  agentOptions: AgentOptions;
+}
+
+interface ReplState {
+  currentProject: string | null;
+  currentProjectName: string | null;
+  history: TaskHistoryEntry[];
+  lastResult: LastTaskContext | null;   // NEW — null until first successful task
+}
+```
+
+### New Callback Method
+
+```typescript
+// src/repl/types.ts — SessionCallbacks
+interface SessionCallbacks {
+  // ... existing methods ...
+  /** Display a non-interactive message (PR URL, status notice). */
+  onMessage?: (message: string) => void;
+  /** Called after PR creation with the PRResult. CLI adapter displays URL. */
+  onPrCreated?: (result: PRResult) => void;
+}
+```
+
+### `processInput()` Change: Where the Prompt Is Stored
+
+Currently `processInput()` builds `agentOptions` and passes them to `runAgent()` but the `prompt` string is built inside `runAgent()` (`buildPrompt(options)`) and never surfaced. Two options:
+
+**Option A (recommended):** Export `buildPrompt()` call from `agent/index.ts` and call it in `processInput()` before `runAgent()`. Store the result on `lastResult.prompt`. `runAgent()` then takes the pre-built prompt as an optional parameter (falls back to building it internally if not provided).
+
+**Option B:** Re-build the prompt string inside the `pr` command handler using the stored `agentOptions`. This duplicates logic but avoids changing `runAgent()`.
+
+Option A is cleaner. The prompt string is the same object in both `lastResult` and `runAgent()` — no duplication, no divergence risk.
+
+### What Is Unchanged
+
+- `GitHubPRCreator` — called with the same interface it already has
+- `parseIntent()` — `pr` command is intercepted before parsing reaches it
+- Intent parser, verifier, judge — entirely unaffected
+- `processInput()` shape — `SessionOutput` type unchanged; `pr` command returns `{ action: 'continue', result: null }`
+
+---
+
+## Feature 3: Follow-Up Task Referencing
+
+### What It Means
+
+Users can say "now fix the test that broke" or "also do it for the auth module" and the system resolves the reference to the previous task's result (branch, diff, files changed). This is richer than the current follow-up detection (`"also X"` inherits repo/taskType) — it can reference *what the last task changed*.
+
+### What Already Exists
+
+`ReplState.history` stores `TaskHistoryEntry[]` (taskType, dep, version, repo, status). The intent parser already receives `history` and uses it to inherit `taskType`/`repo` for `"also X"` patterns. The fast-path follow-up detection (`FOLLOW_UP_PREFIX`, `FOLLOW_UP_TOO_SUFFIX`) already handles simple "also" patterns.
+
+### What Is Missing
+
+`TaskHistoryEntry` carries no information about *what changed* — no branch name, no files modified, no summary of agent changes. Follow-up references like "fix the test that broke" require knowing what test broke (from the last `RetryResult`).
+
+### Where It Lives
+
+**Modified:** `src/repl/types.ts` — `TaskHistoryEntry` gains optional rich fields.
+
+**Modified:** `src/repl/session.ts` — `appendHistory()` populates the new fields from `RetryResult`.
+
+**Modified:** `src/intent/llm-parser.ts` — `buildHistoryBlock()` includes the new fields in the LLM context block (if present).
+
+**No new files required.**
+
+### Type Changes
+
+```typescript
+// src/repl/types.ts — TaskHistoryEntry extension
+interface TaskHistoryEntry {
+  taskType: TaskType;
+  dep: string | null;
+  version: string | null;
+  repo: string;
+  status: 'success' | 'failed' | 'cancelled' | 'zero_diff';
+  // NEW optional fields — populated only for completed (non-cancelled) runs
+  branch?: string;            // git branch created by agent (if PR was created)
+  finalResponse?: string;     // agent's last message (summary of changes made)
+  filesChanged?: string[];    // list of files in the diff (from git diff --name-only)
+}
+```
+
+### `appendHistory()` Change
+
+`appendHistory()` currently takes only `TaskHistoryEntry`. The session core needs `RetryResult` to extract `finalResponse` and (optionally) file list. `appendHistory()` is an internal helper, so the signature change is contained.
+
+```typescript
+// src/repl/session.ts — internal helper
+function appendHistory(
+  state: ReplState,
+  entry: TaskHistoryEntry,
+  retryResult?: RetryResult,  // NEW optional
+): void {
+  if (retryResult) {
+    const lastSession = retryResult.sessionResults.at(-1);
+    if (lastSession) {
+      entry.finalResponse = lastSession.finalResponse?.slice(0, 300);
+    }
   }
-  return buildGenericPrompt(options.description);
+  // branch: populated if state.lastResult was set (PR was created)
+  // filesChanged: requires git diff --name-only — defer to Phase 3 if needed
+  state.history.push(entry);
 }
 ```
 
+### LLM Context Block Change
+
+`buildHistoryBlock()` in `llm-parser.ts` currently emits one line per entry. With `finalResponse` available, it can include a brief summary:
+
+```
+<session_history>
+Previous tasks this session (most recent last):
+  1. generic | dep: none | repo: my-app | status: success
+     Changes: "Renamed getUserById to fetchUserById in users/service.ts"
+  2. generic | dep: none | repo: my-app | status: failed
+</session_history>
+```
+
+This enriches the LLM's context for natural follow-up references like "fix what you broke" or "also apply this to the function you just renamed."
+
+### Boundary: What `filesChanged` Requires
+
+Extracting `filesChanged` requires a `git diff --name-only` call against the workspace after the agent run. This is feasible (simple-git is already a dependency, used in `pr-creator.ts`) but adds async work to the already-synchronous `appendHistory()`. Recommendation: defer `filesChanged` to a follow-up iteration; `finalResponse` alone covers most follow-up reference cases.
+
+### What Is Unchanged
+
+- Fast-path follow-up detection — still handles `"also X"` pattern
+- `parseIntent()` coordinator — receives enriched history but its structure is unchanged
+- `processInput()` flow — only `appendHistory()` internal call changes
+
 ---
 
-## Modified Component: `llmParse()` — taskCategory
+## Feature 4: Slack Bot Interface
 
-### Why
+### What It Does
 
-The verifier already adapts to build systems by presence detection (pom.xml → Maven, package.json → npm, tsconfig.json → tsc). For generic tasks, this is sufficient — no new verification logic is needed.
+A Slack adapter wraps the existing `processInput()` / `runAgent()` pipeline with Slack-specific I/O. Intent parsing, confirmation, scoping, agent execution, verification, and PR creation all reuse existing code. The Slack adapter is a thin I/O layer, not a new backend.
 
-However, the intent parser currently has no way to distinguish "rename this method" (code change, needs build+test) from "update the log level in config.yaml" (config-only, build verification irrelevant). While the verifier's graceful skip-on-missing-config handles this already, surfacing the category in the intent improves the confirmation display and sets up future verification hints.
+### Architecture: SessionCallbacks as the Adapter Contract
 
-**Decision: `taskCategory` is optional and additive.** The verifier does NOT change. The category is metadata for the UI layer (confirmLoop) and future use.
+The `SessionCallbacks` interface is precisely the seam designed for this. The CLI REPL implements it with readline. The Slack adapter implements it with Slack API calls.
 
-### Schema change
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Adapters (I/O Layer)                      │
+│                                                             │
+│  ┌─────────────────────┐    ┌──────────────────────────┐   │
+│  │   CLI REPL Adapter  │    │    Slack Bot Adapter      │   │
+│  │   (repl.ts)         │    │    (slack/adapter.ts)     │   │
+│  │                     │    │                           │   │
+│  │  confirm: readline  │    │  confirm: interactive msg │   │
+│  │  clarify: menu list │    │  clarify: button menu     │   │
+│  │  askQuestion: rl    │    │  askQuestion: thread msg  │   │
+│  │  onMessage: console │    │  onMessage: thread reply  │   │
+│  │  onPrCreated: log   │    │  onPrCreated: link reply  │   │
+│  └──────────┬──────────┘    └───────────┬──────────────┘   │
+└─────────────┼────────────────────────────┼──────────────────┘
+              │                            │
+              └──────────────┬─────────────┘
+                             │
+              ┌──────────────▼─────────────────────────────────┐
+              │           Session Core (Channel-Agnostic)       │
+              │                                                  │
+              │  processInput(input, state, callbacks, registry) │
+              │    parseIntent() → clarify → confirm             │
+              │    runScopingDialogue()  [v2.3]                  │
+              │    runAgent()                                    │
+              │    appendHistory()                               │
+              └──────────────────────────────────────────────────┘
+```
+
+### Where It Lives
+
+**New directory:** `src/slack/`
+
+```
+src/slack/
+├── adapter.ts        SessionCallbacks implementation for Slack
+├── bot.ts            Slack event listener, routes mentions to processInput()
+├── state.ts          ReplState per-channel or per-user (in-memory or Redis)
+└── index.ts          exports
+```
+
+**No changes to session core, intent parser, agent, verifier, or judge.**
+
+### Slack-Specific Implementation Notes
+
+**Confirmation flow:** Slack interactive messages (Block Kit buttons: "Proceed" / "Cancel" / text input for correction). The `confirm` callback posts a message and blocks until the user clicks or the timeout fires.
+
+**Clarification flow:** Same pattern — Button blocks for each clarification option.
+
+**`askQuestion` (scoping dialogue):** Post a message, await a thread reply within a timeout window (e.g. 60 seconds). If no reply, treat as empty string (skip).
+
+**State management:** `ReplState` is per-channel (one agent session per Slack channel) or per-user (private DM context). An in-memory Map keyed by channel/user ID is sufficient for an initial implementation. Redis persistence is a future enhancement.
+
+**AbortSignal:** The Slack adapter creates an `AbortController` per task. A "Cancel" button or timeout aborts the signal.
+
+**Running agent:** The Slack adapter calls `processInput()` the same way the REPL loop does. The agent runs in Docker on the host where the bot process is running.
+
+### `SessionCallbacks` Interface After v2.3
 
 ```typescript
-// src/intent/types.ts — IntentSchema
-taskCategory: z.enum(['dependency-update', 'code-change', 'config-change']).optional(),
+interface SessionCallbacks {
+  // EXISTING (v2.1)
+  confirm: (intent: ResolvedIntent, reparse: (correction: string) => Promise<ResolvedIntent>) => Promise<ResolvedIntent | null>;
+  clarify: (clarifications: ClarificationOption[]) => Promise<string | null>;
+  getSignal: () => AbortSignal;
+  onAgentStart?: () => void;
+  onAgentEnd?: () => void;
+  // NEW (v2.3)
+  askQuestion?: (prompt: string) => Promise<string | null>;   // scoping dialogue
+  onMessage?: (message: string) => void;                      // post-hoc PR status
+  onPrCreated?: (result: PRResult) => void;                   // PR URL delivery
+}
 ```
 
-The LLM parser system prompt gains one sentence:
-> Set taskCategory to 'dependency-update' for dep updates, 'code-change' for source code modifications (refactors, method changes, feature additions), 'config-change' for non-code file edits (yaml, json, properties, env files). Set to undefined if unclear.
+All new methods are optional (`?`). The existing CLI adapter and one-shot adapter continue working without implementing them. `runScopingDialogue()` skips the dialogue if `callbacks.askQuestion` is undefined.
 
-`taskCategory` is OPTIONAL and nullable in the schema. The verifier never reads it. If the parser omits it, nothing breaks.
+### What Is Unchanged
 
-### confirmLoop display
-
-The confirm loop currently shows `taskType` as a label. For generic tasks, it shows `"generic"` which is unhelpful. With `taskCategory`:
-
-```
-Plan: generic change (code-change) in my-app
-Task: rename getUserById to fetchUserById in src/users/service.ts
-```
-
-vs the current:
-
-```
-Plan: generic task in my-app
-Task: rename getUserById to fetchUserById in src/users/service.ts
-```
-
-The change to `confirmLoop` is cosmetic — display only, no logic change.
+Everything in `src/orchestrator/`, `src/agent/`, `src/intent/`, `src/prompts/`, `src/mcp/`. The Slack adapter is purely additive.
 
 ---
 
-## Integration Points
+## System Overview: v2.3 Architecture
 
-### What is New
+```
+┌────────────────────────────────────────────────────────────────────┐
+│                         ADAPTERS (I/O)                              │
+│                                                                     │
+│   CLI REPL (repl.ts)           Slack Bot (slack/bot.ts)            │
+│   implements SessionCallbacks  implements SessionCallbacks          │
+│   via readline                 via Slack API (Block Kit)           │
+└──────────────────────────┬──────────────────────────┬─────────────┘
+                           │                          │
+                           └──────────┬───────────────┘
+                                      │
+┌─────────────────────────────────────▼──────────────────────────────┐
+│                      SESSION CORE (channel-agnostic)                │
+│                                                                     │
+│   processInput(input, state, callbacks, registry)                   │
+│     1. parseIntent()         intent / fast-path / LLM              │
+│     2. callbacks.clarify()   low-confidence menu                   │
+│     3. callbacks.confirm()   display plan + Y/n                    │
+│     4. runScopingDialogue()  NEW: scope questions (generic only)   │
+│     5. runAgent()            builds prompt, executes, verifies     │
+│     6. appendHistory()       stores result on ReplState            │
+│     7. "pr" command handler  NEW: post-hoc PR from lastResult      │
+│                                                                     │
+│   ReplState:                                                        │
+│     history: TaskHistoryEntry[]   (enriched with finalResponse)    │
+│     lastResult: LastTaskContext   NEW: stores last RetryResult      │
+└───────────────────────────┬────────────────────────────────────────┘
+                            │
+┌───────────────────────────▼────────────────────────────────────────┐
+│                      INTENT LAYER (unchanged)                       │
+│                                                                     │
+│   parseIntent()  →  fastPathParse  |  llmParse (Haiku 4.5)         │
+│   history context: enriched with finalResponse snippets             │
+└───────────────────────────┬────────────────────────────────────────┘
+                            │
+┌───────────────────────────▼────────────────────────────────────────┐
+│                      PROMPT LAYER (minor addition)                  │
+│                                                                     │
+│   buildGenericPrompt(description, repoPath, scopeHints?)           │
+│     scopeHints from scoping dialogue feed SCOPE block              │
+└───────────────────────────┬────────────────────────────────────────┘
+                            │
+┌───────────────────────────▼────────────────────────────────────────┐
+│                  EXECUTION LAYER (entirely unchanged)               │
+│                                                                     │
+│   RetryOrchestrator → ClaudeCodeSession (Docker + iptables)        │
+│   compositeVerifier → llmJudge → GitHubPRCreator                   │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## New vs Modified vs Unchanged
+
+### New Components
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| `buildGenericPrompt()` | `src/prompts/generic.ts` | End-state prompt for generic tasks. Replaces one-liner stub. |
+| `runScopingDialogue()` | `src/repl/scoping.ts` | Orchestrates scope question-answer loop for generic tasks |
+| `ScopingResult` type | `src/repl/scoping.ts` | Scope hints collected from user dialogue |
+| `LastTaskContext` type | `src/repl/types.ts` | Stored RetryResult + context for post-hoc PR |
+| Slack adapter | `src/slack/adapter.ts` | `SessionCallbacks` implementation for Slack |
+| Slack bot | `src/slack/bot.ts` | Event listener, state management, entry point |
+| Slack state | `src/slack/state.ts` | Per-channel/user ReplState management |
 
-### What is Modified
+### Modified Components
 
 | Component | File | Change | Scope |
 |-----------|------|--------|-------|
-| `buildPrompt()` dispatch | `src/prompts/index.ts` | Add `case 'generic'` calling `buildGenericPrompt()` | 5 lines |
-| `IntentSchema` | `src/intent/types.ts` | Add optional `taskCategory` field | Additive, nullable |
-| `IntentResult` / `ResolvedIntent` | `src/intent/types.ts` | Propagate `taskCategory` | Additive |
-| `llmParse()` system prompt | `src/intent/llm-parser.ts` | One sentence added to describe `taskCategory` field | Additive |
-| `OUTPUT_SCHEMA` | `src/intent/llm-parser.ts` | Add `taskCategory` as optional string enum | Additive |
-| `confirmLoop` display | `src/intent/confirm-loop.ts` | Show `taskCategory` when present for generic tasks | Display only |
-| `runAgent()` | `src/agent/index.ts` | Skip `preVerify` and version resolution for `taskType !== 'npm-dependency-update'` (already done by if-check, verify coverage) | Confirm existing guard covers generic |
+| `ReplState` | `src/repl/types.ts` | Add `lastResult: LastTaskContext \| null` | Additive field |
+| `TaskHistoryEntry` | `src/repl/types.ts` | Add optional `finalResponse?`, `branch?` | Additive fields |
+| `SessionCallbacks` | `src/repl/types.ts` | Add optional `askQuestion?`, `onMessage?`, `onPrCreated?` | Additive, optional |
+| `processInput()` | `src/repl/session.ts` | Add `pr` command handler; call `runScopingDialogue()`; store `lastResult` | ~40 lines |
+| `appendHistory()` | `src/repl/session.ts` | Accept optional `RetryResult` to populate `finalResponse` | ~10 lines |
+| `buildGenericPrompt()` | `src/prompts/generic.ts` | Add optional `scopeHints` parameter | Additive, backward-compatible |
+| `buildHistoryBlock()` | `src/intent/llm-parser.ts` | Include `finalResponse` snippet when present | Additive |
+| CLI `repl.ts` | `src/cli/commands/repl.ts` | Implement `askQuestion`, `onMessage`, `onPrCreated` callbacks | ~20 lines |
 
-### What is Unchanged
+### Entirely Unchanged
 
-Everything in the execution layer:
-- `RetryOrchestrator` (`src/orchestrator/retry.ts`)
-- `ClaudeCodeSession` (`src/orchestrator/claude-code-session.ts`)
-- `compositeVerifier` (`src/orchestrator/verifier.ts`) — already build-system agnostic
-- `llmJudge` (`src/orchestrator/judge.ts`) — already handles any task + any diff
-- `GitHubPRCreator` (`src/orchestrator/pr-creator.ts`)
-- `MCP verifier server` (`src/mcp/`)
-- `REPL session` (`src/repl/session.ts`) — already passes `description` through
-- `parseIntent` coordinator (`src/intent/index.ts`) — `'generic'` mapping already exists
-- `fastPathParse()` — dep-update patterns only, no change needed
-- `contextScanner` — reads manifest deps, unchanged
+- `src/orchestrator/` — all 6 files (retry, verifier, judge, pr-creator, claude-code-session, metrics)
+- `src/agent/index.ts` — `runAgent()` interface unchanged
+- `src/intent/` — `parseIntent()`, `fastPathParse()`, `contextScanner`, `confirmLoop` unchanged
+- `src/prompts/maven.ts`, `npm.ts` — dep-update prompts unchanged
+- `src/mcp/` — in-process MCP verifier unchanged
+- `src/cli/commands/one-shot.ts` — one-shot path unchanged (scoping is REPL-only)
+- `src/types.ts` — `RetryResult`, `SessionResult`, `VerificationResult` unchanged
 
 ---
 
-## Data Flow: Generic Task End-to-End
+## Data Flows
+
+### Scoping Dialogue Flow (new)
 
 ```
-User: "rename getUserById to fetchUserById in src/users/service.ts"
-         |
-         v
-parseIntent(input)
-  fastPathParse()  → null (no "update|upgrade|bump" keyword)
-  llmParse()
-    taskType: 'unknown'
-    dep: null
-    version: null
-    confidence: 'high'
-    taskCategory: 'code-change'   <- new field
-    clarifications: []
-  → ResolvedIntent {
-      taskType: 'generic',
-      repo: '/path/to/project',
-      dep: null,
-      version: null,
-      confidence: 'high',
-      description: 'rename getUserById to fetchUserById in src/users/service.ts',
-      taskCategory: 'code-change'
-    }
-         |
-         v
-confirmLoop()
-  Displays: "Plan: generic change (code-change) in project"
-  Task: rename getUserById to fetchUserById in src/users/service.ts
-  [Y/n]
-         |
-         v
-runAgent({ taskType: 'generic', description: '...', repo: '/path/to/project' })
-  preVerify: undefined  (not npm-dep-update — existing guard)
-  version resolution: skipped (not npm-dep-update — existing guard)
-         |
-         v
-buildPrompt({ taskType: 'generic', description: 'rename getUserById to fetchUserById in src/users/service.ts' })
-  → buildGenericPrompt(description)
-  → "You are a coding agent. rename getUserById to fetchUserById...
-     SCOPE: Make only the changes necessary...
-     After your changes, the following should be true:..."
-         |
-         v
-RetryOrchestrator.run(prompt)
-  ClaudeCodeSession (Docker, iptables)
-    Agent reads service.ts, renames function, updates call sites
-  compositeVerifier(workspaceDir)
-    tsc --noEmit → PASS
-    vitest run → PASS (or FAIL → retry with error context)
-    eslint → PASS
-  llmJudge(workspaceDir, originalTask, baselineSha)
-    diff: only service.ts and call sites changed → APPROVE
-         |
-         v
-GitHubPRCreator (if createPr: true)
+User: "extract the payment logic from checkout.ts into a separate service"
+
+processInput()
+  └─> parseIntent() → taskType: 'generic', confidence: 'high'
+  └─> callbacks.confirm() → user confirms
+  └─> runScopingDialogue(intent, callbacks)
+       ├─> callbacks.askQuestion("Which files/dirs should this touch? (Enter to skip)")
+       │     User: "src/checkout.ts, src/payments/"
+       ├─> callbacks.askQuestion("Should tests be updated? [y/N/skip]")
+       │     User: "y"
+       └─> ScopingResult { fileScope: "src/checkout.ts, src/payments/", updateTests: true }
+  └─> buildGenericPrompt(description, repoPath, scopeHints)
+       → "You are a coding agent. extract the payment logic from checkout.ts into a separate service
+          SCOPE: Only touch: src/checkout.ts, src/payments/
+          SCOPE: Update tests to reflect the changes."
+  └─> runAgent({ description, ... })   → Docker execution
 ```
 
-### Config-Only Flow (Verification Adapts Automatically)
+### Post-Hoc PR Flow (new)
 
 ```
-User: "set LOG_LEVEL to debug in config/app.yaml"
-         |
-parseIntent → taskType: 'generic', taskCategory: 'config-change', description: '...'
-         |
-buildGenericPrompt(description)
-         |
-RetryOrchestrator.run(prompt)
-  ClaudeCodeSession: edits config/app.yaml
-  compositeVerifier(workspaceDir)
-    tsc --noEmit: No tsconfig.json → skipped (logged: "skipping build verification")
-    vitest run:   No vitest config → skipped
-    mvn compile:  No pom.xml → skipped
-    eslint:       No eslint config → skipped
-    Result: passed: true (all verifiers skipped gracefully)
-  llmJudge: diff shows only config/app.yaml changed → APPROVE
+Task completes:
+  processInput() → RetryResult (finalStatus: 'success')
+    state.lastResult = { retryResult, prompt, agentOptions }
+    renderResultBlock()
+    re-prompt
+
+User: "pr"
+  processInput("pr", state, callbacks)
+    isCreatePrCommand("pr") → true
+    state.lastResult is set, status is 'success'
+    GitHubPRCreator(state.lastResult.agentOptions.repo).create({
+      taskType: ...,
+      originalTask: state.lastResult.prompt,
+      retryResult: state.lastResult.retryResult,
+    })
+    callbacks.onPrCreated(prResult)  → CLI prints PR URL
+    state.lastResult = null
 ```
 
-No new verification logic required. The existing graceful-skip-on-missing-config behavior handles pure config repos correctly.
+### Follow-Up With Enriched History (enriched existing flow)
+
+```
+Task 1 completes:
+  appendHistory(state, entry, retryResult)
+    entry.finalResponse = "Renamed getUserById to fetchUserById in users/service.ts"
+
+User: "also rename in tests"
+  parseIntent("also rename in tests", { history: state.history })
+    llmParse() receives:
+      <session_history>
+        1. generic | repo: my-app | status: success
+           Changes: "Renamed getUserById to fetchUserById in users/service.ts"
+      </session_history>
+    LLM understands "also rename in tests" refers to getUserById→fetchUserById rename
+    → taskType: 'generic', repo: inherited, confidence: 'high'
+```
+
+### Slack Flow (new channel, same core)
+
+```
+Slack @mention: "@agent rename getUserById to fetchUserById in my-app"
+
+slack/bot.ts
+  └─> extractMessage(event)
+  └─> getOrCreateState(channelId)   per-channel ReplState
+  └─> SlackCallbacks implements SessionCallbacks:
+       confirm: post Block Kit message, await button click
+       clarify: post numbered button menu
+       askQuestion: post thread message, await reply
+       onPrCreated: reply with PR URL
+  └─> processInput(messageText, state, slackCallbacks, registry)
+       (identical to REPL path from here)
+```
 
 ---
 
 ## Build Order
 
 ```
-Phase 1: buildGenericPrompt() + prompt dispatch
-  (pure function, no deps, testable in isolation)
+Phase 1: Post-Hoc PR Creation
+  (Self-contained, no new callbacks needed)
        |
        v
-Phase 2: Intent schema + llmParse() taskCategory field
-  (additive schema change, backward compatible)
+Phase 2: Scoping Dialogue
+  (Adds askQuestion callback; buildGenericPrompt extension)
        |
        v
-Phase 3: confirmLoop display update + end-to-end integration test
-  (wires up the display; validates full flow generic → PR)
+Phase 3: Follow-Up Task Referencing
+  (TaskHistoryEntry enrichment; llm-parser history block update)
+       |
+       v
+Phase 4: Slack Bot
+  (Requires SessionCallbacks complete; all core features tested)
 ```
 
-**Phase 1 must come first.** The prompt builder is the core output of generic task support. It can be built and tested without touching the intent parser. The one-liner stub already routes to `buildPrompt()` — swapping the default case is a one-phase change.
+### Phase 1 First: Post-Hoc PR Creation
 
-**Phase 2 is additive.** The `taskCategory` field is optional and nullable everywhere. The LLM returning it or omitting it does not break existing behavior. This can be added independently of Phase 1 but logically belongs after the prompt builder is proven.
+No new callback methods. The change is contained to:
+- `ReplState.lastResult` storage in `processInput()`
+- `"pr"` command intercept in `processInput()`
+- CLI `repl.ts` adds `onPrCreated` callback (render PR URL)
 
-**Phase 3 closes the loop.** The integration test runs the full pipeline: NL input → intent parse → confirm → agent session (Docker) → verifier → judge → result. This is the quality gate for the milestone.
+This is the most self-contained feature. It establishes the `lastResult` field on `ReplState` that Phase 2 (scoping) also benefits from, and tests the `pr` command intercept pattern before more complex features add intercept logic.
 
-**No phase touches the execution layer.** If a phase requires changes to `retry.ts`, `claude-code-session.ts`, or `verifier.ts`, the design has gone wrong.
+### Phase 2 Second: Scoping Dialogue
+
+Requires `askQuestion` callback to be defined. CLI `repl.ts` implements it with readline (same `askQuestion()` helper already in repl.ts, just needs to be exposed through callbacks). `buildGenericPrompt()` extension is backward-compatible — no existing tests break. `runScopingDialogue()` is a pure function (input: intent + callbacks, output: ScopingResult) — testable in isolation with mock callbacks.
+
+### Phase 3 Third: Follow-Up Task Referencing
+
+Low-risk enrichment of existing `TaskHistoryEntry`. The `finalResponse` field is populated from `RetryResult` already in scope after Phase 1. The LLM prompt block change in `llm-parser.ts` is additive. No existing tests break — the history block includes more text when the field is present.
+
+### Phase 4 Last: Slack Bot
+
+Depends on all `SessionCallbacks` additions being complete and stable. The Slack adapter is a new directory with no modifications to existing code. The adapter can be built and tested in isolation using mock `processInput()` calls. Full integration tests require a Slack workspace — unit tests mock the Slack API.
 
 ---
 
 ## Architectural Patterns
 
-### Pattern 1: End-State Prompting for Generic Tasks
+### Pattern 1: SessionCallbacks as the Channel Abstraction
 
-**What:** `buildGenericPrompt()` follows the same end-state template as the dep-update builders: task statement + scope constraints + success criteria. The description becomes the task statement verbatim — no paraphrasing.
+**What:** Every piece of I/O that differs between CLI and Slack is behind a `SessionCallbacks` method. The session core (`processInput()`) never calls `console.log`, `rl.question()`, or any Slack API directly.
 
-**When to use:** Always for generic tasks. Do not try to parse or restructure the user's description.
+**When to use:** Any time a new v2.3 feature needs user interaction, add an optional method to `SessionCallbacks` rather than inlining the I/O.
 
-**Trade-offs:** The user's description quality directly determines prompt quality. A vague description ("fix the bug") produces a vague prompt. This is intentional — the confirmation loop surfaces the exact task text to the user before execution. If it looks wrong, the user corrects it at confirmation time.
+**Trade-offs:** More indirection in the session core. Offset by: every adapter (CLI, Slack, future MCP) gets the feature for free by implementing the callback.
 
 **Example:**
 ```typescript
-// buildGenericPrompt takes description verbatim — never rephrases
-buildGenericPrompt('rename getUserById to fetchUserById in src/users/service.ts')
-// → "You are a coding agent. rename getUserById to fetchUserById..."
-//    NOT: "You are a coding agent. Rename the getUserById function..."
+// WRONG: inline I/O in session core
+const answer = await rl.question("Which files?");  // breaks Slack
+
+// RIGHT: delegate through callbacks
+const answer = await callbacks.askQuestion?.("Which files/dirs should this touch?") ?? null;
 ```
 
-### Pattern 2: Additive Schema Extensions
+### Pattern 2: Optional Callbacks with Graceful Degradation
 
-**What:** New fields added to `IntentResult` and `ResolvedIntent` must be optional (nullable). Existing callers should never need to handle the new field to continue working.
+**What:** New `SessionCallbacks` methods are always optional (`?`). The session core proceeds without them — scoping is skipped if `askQuestion` is absent, PR creation notice is skipped if `onPrCreated` is absent.
 
-**When to use:** Any time the intent parser schema gains a new output field.
+**When to use:** Always for new callback methods. Never require a callback that an existing adapter doesn't implement.
 
-**Trade-offs:** Optional fields require defensive access everywhere they're used (`intent.taskCategory ?? 'unknown'`). This is the correct tradeoff — it preserves existing behavior while enabling new display logic.
+**Trade-offs:** Features are silently skipped when callbacks are absent. Mitigated by: the feature is always visible in adapters that implement it; absence is an explicit adapter-level choice.
+
+### Pattern 3: State Fields as Additive, Nullable
+
+**What:** New fields on `ReplState` and `TaskHistoryEntry` are always nullable (`| null`) or optional (`?`). State initialization sets them to `null` or omits them. No code that reads existing fields needs to change.
+
+**When to use:** Any state extension. Do not require new fields to be populated for existing features to work.
 
 **Example:**
 ```typescript
-// BAD: required field breaks existing callers
-taskCategory: z.enum(['dependency-update', 'code-change', 'config-change'])
+// WRONG: required field on ReplState
+lastResult: LastTaskContext;  // breaks createSessionState(), all tests
 
-// GOOD: optional, callers handle absence
-taskCategory: z.enum(['dependency-update', 'code-change', 'config-change']).optional()
+// RIGHT: nullable with null default
+lastResult: LastTaskContext | null;  // null until first successful task
 ```
 
-### Pattern 3: Verifier Remains Build-System Agnostic
+### Pattern 4: Command Intercept Before `parseIntent()`
 
-**What:** The `compositeVerifier` already skips verifiers that don't apply (no pom.xml → skip Maven, no tsconfig.json → skip tsc). Generic tasks with config-only changes pass verification because all verifiers skip gracefully on a config-only repo.
+**What:** Built-in REPL commands (`"pr"`, `"history"`, `"exit"`) are handled before `parseIntent()` is called. This prevents the LLM from misclassifying a command as a coding task.
 
-**When to use:** Never add task-type-specific verification logic. The composite verifier detects build system by presence, not by task type.
-
-**Trade-offs:** A repo with TypeScript source AND a task that only edits YAML still runs tsc. This is correct — the agent might have accidentally touched source files, and the build check catches that.
+**When to use:** Any single-word or short-phrase command that should not reach the intent parser.
 
 **Example:**
 ```typescript
-// WRONG: skip TypeScript check for config-change tasks
-if (options.taskType !== 'generic' || taskCategory !== 'config-change') {
-  await buildVerifier(workspaceDir);
+// src/repl/session.ts — command dispatch at top of processInput()
+if (isCreatePrCommand(trimmed)) {
+  return handlePostHocPr(state, callbacks);
 }
-
-// RIGHT: always run compositeVerifier; verifier skips on missing config files
-await compositeVerifier(workspaceDir);
+// ... existing history, exit, empty checks ...
+// Only then: parseIntent()
 ```
 
 ---
 
 ## Anti-Patterns
 
-### Anti-Pattern 1: A New Task Type Per Generic Category
+### Anti-Pattern 1: New Execution Path for Slack
 
-**What people do:** Add `'config-change'`, `'refactor'`, `'method-rename'` as first-class task types with their own prompt builders and verifier configurations.
+**What people do:** Build a separate Slack-specific task runner that calls `runAgent()` directly, bypassing `processInput()`.
 
-**Why it's wrong:** It reintroduces the hardcoded-handler problem that v2.2 is specifically designed to avoid (PROJECT.md explicitly lists "Hardcoded task-type handlers per category — generic execution path preferred" as out of scope). Each new category requires a new phase of work, new tests, and new maintenance. The generic path handles all of these with one prompt builder.
+**Why it's wrong:** `processInput()` owns the full flow: parse → clarify → confirm → scope → run → history. Bypassing it means the Slack bot gets none of that behavior for free, and diverges from CLI behavior. Every new feature added to `processInput()` would need to be replicated in the Slack path.
 
-**Do this instead:** One `'generic'` task type with one `buildGenericPrompt()`. The user's description provides all the specificity needed. The agent adapts.
+**Do this instead:** The Slack adapter calls `processInput()` with Slack-specific `SessionCallbacks`. The core pipeline is shared.
 
-### Anti-Pattern 2: Enriching the Generic Prompt with Repo Analysis
+### Anti-Pattern 2: Storing `RetryResult` Outside `ReplState`
 
-**What people do:** Have `buildGenericPrompt()` call the filesystem — read the file tree, grep for the function name, inject relevant file paths into the prompt.
+**What people do:** Store the last `RetryResult` in a module-level variable or closure in `repl.ts`.
 
-**Why it's wrong:** The agent already has `Read`, `Grep`, `Glob` tools. It discovers context itself. Pre-scanning the repo in `buildGenericPrompt()` duplicates work, adds latency to the prompt-building step (which runs synchronously in `runAgent()`), and risks passing stale or incorrect context.
+**Why it's wrong:** `ReplState` is explicitly the container for all mutable session state. Module-level variables are not injectable, not testable, and break multiple-session scenarios (e.g. Slack with per-channel state).
 
-**Do this instead:** The prompt instructs the agent to work in the current directory. The agent uses its tools to discover the relevant files. This is the existing pattern for dep-update tasks — the maven prompt doesn't inject the current pom.xml content.
+**Do this instead:** `state.lastResult` on `ReplState`. The Slack adapter has one `ReplState` per channel — each stores its own `lastResult`.
 
-### Anti-Pattern 3: Requiring taskCategory to Route Verification
+### Anti-Pattern 3: Making `askQuestion` Required
 
-**What people do:** Use `taskCategory: 'config-change'` to skip the build verifier entirely for config-only tasks, reducing verification time.
+**What people do:** Add `askQuestion` as a required method on `SessionCallbacks` and update all existing adapters to implement it.
 
-**Why it's wrong:** The agent may have edited source files unexpectedly. Skipping the build check because the task was *intended* to be config-only removes a safety net. The compositeVerifier's skip-on-missing-config is structural (repo has no tsconfig) not intentional (agent was supposed to skip source files).
+**Why it's wrong:** The one-shot CLI path has no user interaction loop — it cannot implement `askQuestion`. Requiring it breaks the one-shot adapter and forces a stub implementation that returns `null`.
 
-**Do this instead:** Always run the full compositeVerifier. Config-only repos naturally skip build/test verifiers. Repos with source code always get build+test checked regardless of task category.
+**Do this instead:** `askQuestion?` is optional. `runScopingDialogue()` checks `if (!callbacks.askQuestion) return {}` and skips silently. The one-shot path gets no scoping dialogue — which is correct behavior for a non-interactive command.
 
-### Anti-Pattern 4: Allowing Version Resolution for Generic Tasks
+### Anti-Pattern 4: Writing Slack Adapter Logic Inside `processInput()`
 
-**What people do:** Keep the `npm show <dep> version` resolution logic running for all tasks, even when `taskType === 'generic'` and `dep` is null.
+**What people do:** Add `if (channel === 'slack') { ... }` branching inside `processInput()`.
 
-**Why it's wrong:** The version resolution block in `runAgent()` is already guarded by `taskType === 'npm-dependency-update'`. This is correct. Generic tasks have no `dep` and should never trigger the host-side npm registry call.
+**Why it's wrong:** The session core becomes channel-aware, defeating the purpose of the `SessionCallbacks` abstraction. Every new channel requires modifying `processInput()`.
 
-**Do this instead:** Verify the existing guard covers the generic case. No new code needed — just confirm the existing `if (options.taskType === 'npm-dependency-update' && options.dep ...)` guard is sufficient.
+**Do this instead:** All channel-specific behavior lives in the adapter's `SessionCallbacks` implementation. `processInput()` calls callbacks without knowing what channel it's running on.
 
 ---
 
-## Component Boundaries
+## Component Boundaries (v2.3 Target)
 
 ```
 src/
 ├── intent/
-│   ├── types.ts              MODIFY: add optional taskCategory to IntentResult, ResolvedIntent
-│   ├── llm-parser.ts         MODIFY: add taskCategory to OUTPUT_SCHEMA + system prompt (additive)
+│   ├── types.ts              NO CHANGE
+│   ├── llm-parser.ts         MODIFY: buildHistoryBlock() includes finalResponse when present
 │   ├── fast-path.ts          NO CHANGE
 │   ├── context-scanner.ts    NO CHANGE
-│   ├── confirm-loop.ts       MODIFY: display taskCategory label for generic tasks (cosmetic)
-│   └── index.ts              NO CHANGE (generic mapping already exists)
+│   ├── confirm-loop.ts       NO CHANGE
+│   └── index.ts              NO CHANGE
 ├── prompts/
-│   ├── generic.ts            NEW: buildGenericPrompt(description: string): string
-│   ├── index.ts              MODIFY: case 'generic' → buildGenericPrompt(); guard on description
+│   ├── generic.ts            MODIFY: add optional scopeHints parameter
+│   ├── index.ts              MODIFY: pass scopeHints from buildPrompt options to buildGenericPrompt
 │   ├── maven.ts              NO CHANGE
 │   └── npm.ts                NO CHANGE
+├── repl/
+│   ├── types.ts              MODIFY: ReplState.lastResult, TaskHistoryEntry rich fields, SessionCallbacks additions
+│   ├── session.ts            MODIFY: pr command handler, runScopingDialogue call, lastResult storage, appendHistory enrichment
+│   └── scoping.ts            NEW: runScopingDialogue(), ScopingResult type
+├── slack/                    NEW DIRECTORY
+│   ├── adapter.ts            NEW: SessionCallbacks for Slack
+│   ├── bot.ts                NEW: event listener + state management
+│   └── index.ts              NEW: exports
 ├── agent/
-│   └── index.ts              VERIFY: existing preVerify/version guards cover generic tasks
+│   └── index.ts              VERIFY: pre-built prompt optional param (for lastResult.prompt storage)
 ├── orchestrator/             NO CHANGE (all 6 files)
-├── repl/                     NO CHANGE (description already propagated)
-├── cli/                      NO CHANGE
+├── cli/
+│   └── commands/
+│       └── repl.ts           MODIFY: implement askQuestion, onMessage, onPrCreated callbacks
 ├── mcp/                      NO CHANGE
-└── types.ts                  NO CHANGE (AgentOptions.description already exists)
+└── types.ts                  NO CHANGE
 ```
 
 ---
 
-## Integration with Existing Boundaries
+## Integration Boundaries
 
 | Boundary | Communication | Notes |
 |----------|---------------|-------|
-| `parseIntent` → `buildPrompt` | `taskType: 'generic'` + `description: string` | Both already exist. v2.2 only improves what `buildPrompt` does with them. |
-| `buildPrompt` → `RetryOrchestrator` | `string` prompt | Unchanged interface. Generic prompt is just a better string. |
-| `compositeVerifier` → generic tasks | No change needed | Verifier detects build system from workspace, not from task type. |
-| `llmJudge` → generic tasks | No change needed | Judge receives git diff + original task description. Works for any task. |
-| `ResolvedIntent.taskCategory` → `confirmLoop` | Optional field, display only | If missing, confirmLoop shows existing behavior. |
+| Session core → scoping | `runScopingDialogue(intent, callbacks)` → `ScopingResult` | Only called for `taskType === 'generic'`; returns `{}` if `askQuestion` absent |
+| Session core → prompt | `buildPrompt({ ...options, scopeHints })` | `scopeHints` threaded through `AgentOptions` (new optional field) or passed directly |
+| Session core → PR creator | `GitHubPRCreator.create(state.lastResult)` | No interface change to `GitHubPRCreator` — called with existing params |
+| Slack adapter → session core | `processInput(text, channelState, slackCallbacks, registry)` | Identical call signature to CLI |
+| Slack adapter → state | `Map<channelId, ReplState>` | In-memory; Slack bot owns lifecycle |
 
 ---
 
 ## Sources
 
-- `src/prompts/index.ts` — existing stub default case confirms the gap, HIGH confidence
-- `src/prompts/maven.ts`, `src/prompts/npm.ts` — end-state prompt pattern to follow, HIGH confidence
-- `src/intent/types.ts` — `description?: string` in `ResolvedIntent` already wired, HIGH confidence
-- `src/intent/index.ts` — `isGeneric ? 'generic' : llmResult.taskType` mapping already ships, HIGH confidence
-- `src/intent/llm-parser.ts` — `OUTPUT_SCHEMA` structure, additive pattern clear, HIGH confidence
-- `src/orchestrator/verifier.ts` — compositeVerifier skip-on-missing pattern confirmed, HIGH confidence
-- `src/orchestrator/judge.ts` — judge uses raw task description, works for any task, HIGH confidence
-- `src/agent/index.ts` — `preVerify` and version resolution guarded by `taskType === 'npm-dependency-update'`, HIGH confidence
-- `.planning/PROJECT.md` v2.2 milestone spec — "generic execution path preferred", "no hardcoded handlers per category", HIGH confidence
+- `src/repl/session.ts` — `processInput()` flow, `appendHistory()` internals, HIGH confidence
+- `src/repl/types.ts` — `ReplState`, `SessionCallbacks`, `TaskHistoryEntry` interfaces, HIGH confidence
+- `src/cli/commands/repl.ts` — CLI callback implementations, `askQuestion()` helper already present, HIGH confidence
+- `src/orchestrator/pr-creator.ts` — `GitHubPRCreator.create()` interface, called with `RetryResult` + prompt + options, HIGH confidence
+- `src/prompts/generic.ts` — `buildGenericPrompt()` signature, SCOPE block structure, HIGH confidence
+- `src/intent/llm-parser.ts` — `buildHistoryBlock()` structure, session history XML format, HIGH confidence
+- `.planning/PROJECT.md` v2.3 milestone spec — four target features, SessionCallbacks architecture note, HIGH confidence
+- Memory files: `project_conversational_interface.md`, `project_repl_post_hoc_pr.md`, `project_generic_task_prompts.md` — implementation notes, HIGH confidence
 
 ---
-*Architecture research for: Generic task execution (v2.2) — background coding agent*
-*Researched: 2026-03-23*
+*Architecture research for: v2.3 REPL enhancements + Slack bot integration — background coding agent*
+*Researched: 2026-03-25*

@@ -1,192 +1,132 @@
 # Stack Research
 
-**Domain:** Generic deterministic task support — background-coding-agent v2.2
-**Researched:** 2026-03-23
-**Confidence:** HIGH — primary sources are official Anthropic docs, live model API, and direct codebase inspection
+**Domain:** Conversational scoping dialogue, REPL post-hoc PR creation, follow-up task referencing, Slack bot interface — background-coding-agent v2.3
+**Researched:** 2026-03-25
+**Confidence:** HIGH — npm registry live checks, official Slack docs, and direct codebase inspection
 
 ---
 
 ## Scope
 
-This file covers ONLY what changes for the v2.2 milestone: generic task type, prompt enrichment for arbitrary code changes, and verification flexibility for config-only changes.
+This file covers ONLY what changes for the v2.3 milestone. The validated existing stack is NOT re-researched:
 
-Validated existing stack (Node.js 20, TypeScript ESM/NodeNext, `@anthropic-ai/claude-agent-sdk@^0.2.77`, `@anthropic-ai/sdk@^0.80.0`, Commander.js, Pino, Vitest, ESLint v10, Zod 4, conf@15, simple-git, write-file-atomic, picocolors, octokit) is NOT re-researched here.
+- Node.js 20, TypeScript (NodeNext / ESM `"type": "module"`)
+- `@anthropic-ai/claude-agent-sdk@^0.2.77`, `@anthropic-ai/sdk@^0.80.0`
+- Commander.js, Pino, Vitest, ESLint v10, Zod 4, conf@15
+- Interactive REPL with readline, intent parser (fast-path regex + LLM)
+- SessionCallbacks injection pattern, GitHubPRCreator (Octokit)
+- simple-git, write-file-atomic, picocolors, nanospinner
 
 ---
 
-## New Stack Additions
+## New Stack Addition
 
-**None.** No new npm packages are required. Every capability needed for v2.2 is already in the dependency tree.
+One new package is needed for the Slack bot interface. All other v2.3 features are pure TypeScript logic changes to existing modules.
 
-The work for this milestone is entirely in TypeScript logic changes to existing modules.
+### `@slack/bolt@^4.6.0`
+
+| Field | Value |
+|-------|-------|
+| Current version | 4.6.0 (released 2025-10-28) |
+| Node.js requirement | >=18 (project runs Node.js 20 — compatible) |
+| Module format | CommonJS — compatible with ESM host via `esModuleInterop: true` (already enabled in tsconfig.json) |
+| Bundled dependencies | `@slack/socket-mode@^2.0.5`, `@slack/web-api@^7.12.0` — no separate install needed |
+| Peer dependency | `@types/express@^5.0.0` — install as devDependency for TypeScript types on the receiver |
+
+**Why Bolt over raw `@slack/events-api`:** Bolt is the official Slack SDK for building apps. It ships a `SocketModeReceiver` that handles WebSocket lifecycle, reconnection, and payload acknowledgement — the same concerns that `SessionCallbacks.getSignal()` handles for the REPL. Raw events-api is the legacy SDK, last updated 2022, and does not support Socket Mode or Block Kit interactivity.
+
+**Why Socket Mode over HTTP receiver:** The agent is an internal tool, not a public Slack Marketplace app. Socket Mode requires no public HTTPS URL, no reverse proxy, no ngrok. An app-level token with `connections:write` scope opens a WebSocket to Slack's infrastructure. The bot listens for `app_mention` events and slash commands without exposing any port. Socket Mode is explicitly recommended by Slack for internal tools — official docs confirm marketplace distribution is not allowed via Socket Mode, which is fine for this use case.
+
+**ESM interop:** `@slack/bolt` ships as CommonJS. The project uses `"type": "module"` with `"module": "NodeNext"` and `"esModuleInterop": true` in tsconfig.json. Named imports work: `import { App } from '@slack/bolt'`. The official Slack Bolt TypeScript starter template (bolt-ts-starter-template on GitHub) also uses `"type": "module"` with `@slack/bolt@^4.6.0` and TypeScript — confirmed working pattern.
 
 ---
 
 ## Changes to Existing Modules
 
-### 1. Intent Parser — Add `generic` Task Type
+### 1. REPL State — Store `RetryResult` for Post-Hoc PR Creation
 
-**File:** `src/intent/types.ts` and `src/intent/llm-parser.ts`
+**File:** `src/repl/types.ts`
 
-**What changes:** `IntentSchema.taskType` currently enumerates `'npm-dependency-update' | 'maven-dependency-update' | 'unknown'`. Add `'generic'` as an explicit task type. `'unknown'` remains for genuinely ambiguous parses; `'generic'` means the LLM recognized a valid code change instruction that isn't a dependency update.
-
-**Why not just use `'unknown'`:** The existing code treats `unknown` as a pass-through fallback. Making `generic` explicit lets the intent display, confirm loop, and prompt builder handle it distinctly — showing the user's raw instruction in the confirmation screen and routing to the enriched generic prompt builder without confusion with error cases.
-
-**What the Zod schema change looks like:**
+**What changes:** `ReplState` currently tracks `currentProject`, `currentProjectName`, and `history`. Add a `lastResult` field to hold the most recent completed `RetryResult` plus the options and prompt used to produce it.
 
 ```typescript
-export const IntentSchema = z.object({
-  taskType: z.enum([
-    'npm-dependency-update',
-    'maven-dependency-update',
-    'generic',   // <-- new
-    'unknown',
-  ]),
-  dep: z.string().nullable(),
-  version: z.enum(['latest']).nullable(),
-  confidence: z.enum(['high', 'low']),
-  createPr: z.boolean(),
-  clarifications: z.array(z.object({ label: z.string(), intent: z.string() })),
-  description: z.string().nullable(),  // <-- new: raw instruction for generic tasks
-});
-```
+export interface LastRunContext {
+  result: RetryResult;
+  options: AgentOptions;  // needed to reconstruct PR body
+  prompt: string;         // the full prompt sent to the agent
+}
 
-The `description` field carries the normalized user instruction through to `buildPrompt()`. It must be `nullable()` to preserve backward compatibility (dependency tasks set it `null`).
-
-**LLM parser system prompt addition:** Extend `INTENT_SYSTEM_PROMPT` with rules for when to emit `'generic'`: use it for explicit code change instructions (refactors, method replacements, config edits, etc.) where the intent is clear but it is not a dependency update. Keep `'unknown'` for genuinely ambiguous input. Set `description` to the user's instruction verbatim (normalized, not paraphrased) when `taskType` is `'generic'`.
-
----
-
-### 2. Structured Outputs API — Migrate Off Beta Header
-
-**File:** `src/intent/llm-parser.ts`
-
-**Current code** (line 91–103 in the existing file):
-```typescript
-response = await client.beta.messages.create({
-  // ...
-  betas: ['structured-outputs-2025-11-13'],
-  output_config: { format: { type: 'json_schema', schema: OUTPUT_SCHEMA } },
-} as any) as BetaMessage;
-```
-
-**What changes:** Structured outputs reached GA in November 2025. The beta header `structured-outputs-2025-11-13` and `client.beta.messages.create()` are deprecated. Migrate to the standard `client.messages.create()` with `output_config.format`.
-
-**Why this matters for v2.2:** The `any` cast and `BetaMessage` import are tech debt that will break when Anthropic removes the beta endpoint. v2.2 adds a more complex `IntentSchema` (with `generic` + `description`); migrating to GA now avoids the risk of the deprecated API rejecting larger schemas.
-
-**Replacement pattern:**
-```typescript
-import Anthropic from '@anthropic-ai/sdk';
-import type { Message } from '@anthropic-ai/sdk/resources/messages.js';
-
-// No beta import needed
-const response = await client.messages.create({
-  model: 'claude-haiku-4-5-20251001',
-  max_tokens: 512,
-  stream: false,
-  system: systemPrompt,
-  messages: [{ role: 'user', content: userContent }],
-  output_config: {
-    format: {
-      type: 'json_schema',
-      schema: OUTPUT_SCHEMA,
-    },
-  },
-}) as Message;
-```
-
-**Confidence:** HIGH — verified against [official structured outputs docs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs) and Anthropic blog post confirming GA with no beta header required. The `output_format` → `output_config.format` rename is confirmed in Anthropic release notes and [verified in a Vercel AI SDK issue](https://github.com/vercel/ai/issues/12298) showing both old and new parameter names.
-
-**Model stays the same:** `claude-haiku-4-5-20251001` is the current fastest model. Claude Haiku 3 (`claude-3-haiku-20240307`) is deprecated and will be retired April 19, 2026 — confirmed from [official model docs](https://platform.claude.com/docs/en/about-claude/models/overview).
-
----
-
-### 3. Prompt Builder — Enriched Generic Prompt
-
-**File:** `src/prompts/index.ts` (and new `src/prompts/generic.ts`)
-
-**Current state:** The `default` branch in `buildPrompt()` emits a thin one-liner:
-```typescript
-return `You are a coding agent. Your task: ${options.description ?? options.taskType}. Work in the current directory.`;
-```
-
-This is insufficient for arbitrary code changes. The agent has no context about what kind of change it is, what scope is acceptable, or what success looks like.
-
-**What changes:** Extract a `buildGenericPrompt(description: string, repoContext?: GenericRepoContext)` function in a new `src/prompts/generic.ts` file. The prompt follows the same end-state prompting discipline established for Maven and npm tasks (Spotify research, TASK-04): describe desired outcome state, explicit scope constraints, and what "done" looks like.
-
-**`GenericRepoContext` shape** (populated by context scanner before calling `buildPrompt()`):
-```typescript
-interface GenericRepoContext {
-  hasTypeScript: boolean;    // tsconfig.json present → tsc will run
-  hasTests: boolean;         // vitest/jest config or test script present
-  changeScope: 'config-only' | 'code';  // influences verifier selection
+export interface ReplState {
+  currentProject: string | null;
+  currentProjectName: string | null;
+  history: TaskHistoryEntry[];
+  lastResult: LastRunContext | null;  // new
 }
 ```
 
-**Prompt structure for generic tasks:**
-```
-You are a coding agent. Your task: <description>
+The `LastRunContext` shape gives `GitHubPRCreator` exactly what it needs: the `RetryResult` (verification results, judge verdict, session results) plus the `AgentOptions` (repo, taskType, dep) to derive branch name and PR body. No new data structures required beyond the types already defined in `src/types.ts`.
 
-SCOPE: Make only the changes necessary to accomplish this task. Do NOT:
-- Modify files unrelated to the task
-- Refactor, reformat, or reorganize code beyond what is required
-- Add, remove, or update dependencies unless explicitly instructed
+**Why this is the right place:** `ReplState` is already the mutable session container owned by the REPL loop. Storing `lastResult` here follows the pattern for `history` and `currentProject`. `processInput()` in `src/repl/session.ts` has full access to update it after `runAgent()` returns.
 
-After your changes, the following should be true:
-- <description> has been accomplished
-- All existing tests still pass (if a test suite exists)
-- No new lint errors have been introduced
+### 2. REPL Session — `create pr` Command Handler
 
-Work in the current directory.
-```
+**File:** `src/repl/session.ts`
 
-The `description` is the user's verbatim normalized instruction from the intent parser — never paraphrased by LLM. This preserves the project invariant that version numbers and task specifics come from the user, not from LLM inference.
+**What changes:** Add a `create pr` / `pr` command branch in `processInput()`, evaluated before intent parsing. When the user types `create pr` (or `pr`):
+- If `state.lastResult` is null → print "No completed task in this session."
+- If `state.lastResult.result.finalStatus !== 'success'` → print "Last task did not succeed; cannot create PR."
+- Otherwise → call `GitHubPRCreator` with the stored context and post the PR URL.
 
-**Why a separate file:** Follows the existing pattern (`maven.ts`, `npm.ts`) and keeps `index.ts` as pure dispatch logic. Makes the generic prompt independently testable.
+No new callback signatures needed — `GitHubPRCreator` is already a direct call in `runAgent()`. The REPL invokes it directly here with the stored options.
 
----
+**Why not route through intent parser:** The memory file (`project_repl_post_hoc_pr.md`) identifies the core problem: "a follow-up 'create a PR' input parses as a new generic task instead of acting on the previous run." Adding a hardcoded command branch (like `history` and `exit`) bypasses intent parsing for known REPL meta-commands. This is the same pattern used for `history`, `exit`, and `quit` — consistent with existing session.ts structure.
 
-### 4. Verification — Config-Only Change Detection
+### 3. Intent Parser — Scoping Questions for Generic Tasks
 
-**File:** `src/orchestrator/verifier.ts`
+**Files:** `src/intent/types.ts`, `src/repl/types.ts`, `src/repl/session.ts`, `src/repl/confirm-loop.ts`
 
-**What changes:** Add a `changeScope` classifier that detects whether the agent's diff touches only config/non-code files (e.g., `.json`, `.yaml`, `.toml`, `.xml` property files, `.env`, docs) versus TypeScript/JavaScript source. When `changeScope` is `'config-only'`, skip the TypeScript build verifier and test verifier — they add 30–120 seconds of latency for changes that cannot affect compiled output.
-
-**Why this is safe:** The compositeVerifier already skips gracefully when no tsconfig/vitest config is present. Config-only detection extends this: when the changed files are only data/config formats, `tsc --noEmit` will pass trivially (no source changed) but wastes time. The lint verifier still runs — it catches JSON syntax errors and yaml formatting issues if ESLint is configured for them.
-
-**How to detect config-only scope:** Read the git diff from the workspace before running verifiers. Use `git diff --name-only HEAD` (or against stash baseline) and classify file extensions.
+**What changes:** After intent parsing returns a `generic` task, and before the confirm loop, inject a brief scoping dialogue that asks up to three questions and populates a `ScopingContext` object. The answers feed into the `SCOPE` block of `buildGenericPrompt()`.
 
 ```typescript
-const CONFIG_EXTENSIONS = new Set([
-  '.json', '.yaml', '.yml', '.toml', '.xml',
-  '.properties', '.env', '.ini', '.conf',
-  '.md', '.txt', '.rst',
-]);
-
-function classifyChangeScope(changedFiles: string[]): 'config-only' | 'code' {
-  const hasCodeFile = changedFiles.some(f => {
-    const ext = path.extname(f).toLowerCase();
-    return !CONFIG_EXTENSIONS.has(ext);
-  });
-  return hasCodeFile ? 'code' : 'config-only';
+// In src/intent/types.ts
+export interface ScopingContext {
+  fileScope?: string;       // "Which files/directories should this touch?"
+  updateTests?: boolean;    // "Should tests be updated?"
+  excludedFiles?: string;   // "Any files that must NOT change?"
 }
 ```
 
-**Integration:** `compositeVerifier()` already accepts an `options` parameter (`{ skipLint?: boolean }`). Extend this to `{ skipLint?: boolean; skipBuildAndTest?: boolean }`. The caller (retry orchestrator) passes `skipBuildAndTest: true` when `changeScope === 'config-only'`.
+The scoping dialogue is:
+- Only triggered for `generic` tasks (not dependency updates — those are already well-scoped)
+- Optional — the user can press Enter to skip any question and use auto-detected scope
+- Implemented with `readline/promises` (already imported in confirm-loop.ts)
+- Responses are appended to the `description` passed into `buildGenericPrompt()` as scope constraints
 
-**No new packages required:** `git diff --name-only` is already used in the codebase (lint verifier uses `git stash` for baseline detection). `simple-git` is already installed if a programmatic API is preferred over `execFileAsync`.
+**Why inline in the existing readline flow:** The existing `confirm-loop.ts` already manages a readline conversation with the user (`confirmLoop` function). The scoping dialogue uses the same `createInterface` pattern. No new readline instances, no new dependencies.
 
----
+**How ScopingContext feeds into buildGenericPrompt:** The generic prompt's `SCOPE` block accepts optional constraints. When `ScopingContext.fileScope` is set, it appends "Only modify files in: X" to the scope block. When `excludedFiles` is set, it appends "Do NOT modify: X". `updateTests: false` appends "Do NOT update test files."
 
-### 5. Context Scanner — Repo Context for Generic Prompt Enrichment
+### 4. Slack Adapter — Thin Wrapper Over processInput()
 
-**File:** `src/intent/context-scanner.ts`
+**File:** `src/slack/index.ts` (new module)
 
-**What changes:** The existing `readManifestDeps()` returns a string for LLM injection. Add a parallel `scanRepoContext(repoPath: string): Promise<GenericRepoContext>` function that returns the structured `GenericRepoContext` shape used by `buildGenericPrompt()`.
+**What it does:** Initializes `@slack/bolt` App with Socket Mode, listens for `app_mention` events and optionally a `/agent` slash command, and routes each message through the existing `processInput()` function with a Slack-specific `SessionCallbacks` implementation.
 
-This scanner reads the same files already accessed by the verifiers (tsconfig.json, vitest.config.*, package.json) — no new filesystem operations. It is a thin coordinator that assembles boolean flags from existing detection logic.
+**SessionCallbacks mapping for Slack:**
 
-**Why this is in context-scanner, not verifier:** The prompt builder needs this context at task setup time, before the agent runs. The verifier runs after. Placing detection in context-scanner keeps concerns separated: context-scanner answers "what does this repo look like?", verifier answers "did the agent break anything?".
+| Callback | Slack implementation |
+|----------|---------------------|
+| `confirm` | Post a message with Block Kit buttons (Approve / Correct). Listen for `action` event on the block. Return the resolved intent or null. |
+| `clarify` | Post an ephemeral message with Block Kit button options. Listen for `action` event. Return the selected intent string. |
+| `getSignal` | Create a fresh `AbortController` per message, stored in a per-channel map. |
+| `onAgentStart` | Post "Running agent..." update to the thread. |
+| `onAgentEnd` | Update the thread message with the result. |
+
+**Block Kit for confirmation:** Use `section` + `actions` blocks with button elements. Button `action_id` values encode the intent (Approve → proceed, Decline → cancel). The `ack()` call acknowledges within 3 seconds (Slack requirement). Actual agent execution runs after `ack()` in a deferred callback.
+
+**Thread-scoped state:** Each incoming message creates a pending `AgentRun` keyed by `channel:ts`. This is an in-memory `Map` on the adapter. No persistent store needed — concurrent runs per channel are sequential (one active run per channel, queue or reject if busy).
+
+**Why no separate queue library (Bull, BullMQ):** The agent runs in Docker containers on the same machine as the bot process. Concurrency control via an in-memory Map is sufficient for a team-internal tool. A full job queue would require Redis and adds operational complexity. If the bot process restarts, pending runs are lost — acceptable for an internal tool. If multi-machine deployment becomes needed, add a queue at that point.
 
 ---
 
@@ -194,33 +134,37 @@ This scanner reads the same files already accessed by the verifiers (tsconfig.js
 
 | Avoid | Why | Use Instead |
 |-------|-----|-------------|
-| AST parser (tree-sitter, @typescript-eslint/parser direct) | Config-only detection only needs file extension classification, not AST analysis. AST parsing adds 5–15MB of native binaries and build complexity. | `path.extname()` on `git diff --name-only` output |
-| LangChain / LLM orchestration frameworks | Generic task execution is still a single agent `query()` call. No chaining, no vector stores, no retrieval. | `@anthropic-ai/claude-agent-sdk` `query()` (already installed) |
-| `js-yaml` / `jsonschema` for config validation | Config-only changes go through LLM Judge for scope validation, not schema validation. Adding config-specific validators creates false confidence in a space the LLM Judge already covers. | LLM Judge (existing) |
-| Task queue / job system (Bull, BullMQ, pg-boss) | v2.2 is still synchronous CLI execution. Queue triggers are explicitly out of scope per PROJECT.md. | Direct `runAgent()` call (existing) |
-| Separate `generic` task-type handler module | PROJECT.md explicitly rejects "hardcoded task-type handlers per category." Generic execution path goes through the same `buildPrompt()` → `runAgent()` → `compositeVerifier()` pipeline as dependency tasks. | `buildGenericPrompt()` called from existing `buildPrompt()` dispatch |
-| Newer Claude model for intent parsing (Sonnet 4.6) | Haiku 4.5 is the fastest and cheapest model, appropriate for the interactive intent parse path (15s timeout). Sonnet 4.6 costs 3x more and adds latency. | `claude-haiku-4-5-20251001` (already in use) |
-
----
-
-## Version Compatibility
-
-| Package | Version in Use | Notes |
-|---------|----------------|-------|
-| `@anthropic-ai/sdk` | `^0.80.0` (latest as of 2026-03-23) | `messages.create()` with `output_config.format` — no beta header. Verified GA in official docs. |
-| `@anthropic-ai/claude-agent-sdk` | `^0.2.81` (latest as of 2026-03-23) | No changes to Agent SDK usage. `query()` remains the execution path for all task types. |
-| `zod` | `^4.3.6` (latest as of 2026-03-23) | `z.toJSONSchema()` used to convert `IntentSchema` for structured output. Adding `description: z.string().nullable()` is backward compatible — existing callers that omit it get `null`. |
-| `claude-haiku-4-5-20251001` | Current model, API alias `claude-haiku-4-5` | Confirmed current fastest model in [official model docs](https://platform.claude.com/docs/en/about-claude/models/overview). Claude Haiku 3 retiring April 19, 2026 — not relevant since project already uses Haiku 4.5. |
+| `@slack/events-api` | Legacy HTTP-only SDK, last updated 2022, no Socket Mode support, no Block Kit interactive message handling. | `@slack/bolt@^4.6.0` (bundles `@slack/socket-mode` and `@slack/web-api`) |
+| `@slack/web-api` (separate install) | Already bundled by `@slack/bolt`. Installing separately risks version mismatches between Bolt's internal `@slack/web-api` and a separately installed one. | Use `app.client` from the Bolt App instance |
+| `@slack/socket-mode` (separate install) | Bundled by `@slack/bolt@^4.6.0` as `@slack/socket-mode@^2.0.5`. Direct install not needed when using Bolt. | `socketMode: true` in Bolt App constructor |
+| Redis / BullMQ / pg-boss | v2.3 Slack bot is a single-process internal tool. Job queue adds Redis dependency, operational overhead, and persistence complexity for no benefit at this scale. | In-memory `Map` per channel in the Slack adapter |
+| ngrok / public HTTPS endpoint | Required for HTTP receiver mode but not needed with Socket Mode. Adds infrastructure complexity. | Socket Mode (app-level token with `connections:write`) |
+| Persistent cross-session context store | PROJECT.md explicitly rejects: "Persistent cross-session context — stale context causes misparses, sessions reset on restart." | In-memory `ReplState` per REPL session; Slack adapter uses per-message context |
+| `express` / HTTP server | Only needed for HTTP receiver mode. Socket Mode has no inbound port. | Bolt's built-in `SocketModeReceiver` (no HTTP server required) |
+| A conversation state database | Follow-up task referencing works within a session by extending `TaskHistoryEntry` with `RetryResult` reference (already tracked in `lastResult`). No cross-session persistence needed. | `ReplState.lastResult` + `ReplState.history` |
+| Separate LLM call for scoping questions | Scoping dialogue uses static question templates. Generating questions via LLM adds latency and cost for no accuracy benefit — the three canonical questions (file scope, test updates, exclusions) cover the useful space. | Static readline prompts in confirm-loop.ts |
 
 ---
 
 ## Installation
 
 ```bash
-# No new packages required for v2.2.
-# Ensure existing packages are at current versions:
-npm install
+# One new production dependency:
+npm install @slack/bolt@^4.6.0
+
+# One new dev dependency (TypeScript types for the Express receiver, peer dep of @slack/bolt):
+npm install -D @types/express@^5.0.0
 ```
+
+---
+
+## Version Compatibility
+
+| Package | Version | Notes |
+|---------|---------|-------|
+| `@slack/bolt` | `^4.6.0` (latest as of 2026-03-25) | Requires Node.js >=18 — project is Node.js 20, compatible. Bundles `@slack/socket-mode@^2.0.5` and `@slack/web-api@^7.12.0`. |
+| `@slack/bolt` + `"type": "module"` | CJS package in ESM project | Works with `esModuleInterop: true` (already in tsconfig.json). Named import `import { App } from '@slack/bolt'` is confirmed in official Bolt TypeScript starter template using the same `"type": "module"` setup. |
+| `@types/express` | `^5.0.0` | Peer dependency of `@slack/bolt@4.6.0`. Needed only for TypeScript to type-check the HTTP receiver code path (even if not using it). `skipLibCheck: true` is already in tsconfig.json but installing the types avoids potential downstream issues. |
 
 ---
 
@@ -228,23 +172,30 @@ npm install
 
 | Recommended | Alternative | Why Not |
 |-------------|-------------|---------|
-| File extension classification for config-only detection | Semantic analysis via AST or tree-sitter | Massive complexity increase for marginal accuracy gain. Extensions are accurate enough: `.ts`/`.js` files are code; `.json`/`.yaml`/`.toml` files are config. Edge cases (e.g., `jest.config.ts`) get classified as code — conservative and safe. |
-| `client.messages.create()` (GA structured outputs) | `client.beta.messages.create()` with beta header | Beta header is deprecated. Removal timeline unannounced but confirmed deprecated. Migrating now avoids a future breaking change. |
-| `generic` as explicit enum value in IntentSchema | Reusing `unknown` for generic tasks | `unknown` semantics are "couldn't classify." `generic` means "classified as a valid generic instruction." Conflating them breaks the confirm loop display and makes prompt dispatch ambiguous. |
-| Inline `GenericRepoContext` from context-scanner | Full repo analysis (file count, language stats) | Over-engineering. The prompt builder needs three boolean flags. Everything else is the LLM agent's job to discover at runtime via its built-in tools (Read, Glob, Grep). |
+| `@slack/bolt` with Socket Mode | Raw WebSocket to Slack (no SDK) | Slack's WebSocket protocol requires app-level token negotiation, heartbeat handling, reconnection logic, and payload envelope parsing. Bolt handles all of this. No benefit to reimplementing. |
+| `@slack/bolt` with Socket Mode | `@slack/bolt` with HTTP receiver + Express | HTTP receiver requires a public HTTPS endpoint with a valid SSL cert. Adds infrastructure dependency (load balancer, SSL termination) for an internal tool. Socket Mode is simpler and equally capable for this use case. |
+| `create pr` as hardcoded REPL command | Intent parser detection of "create PR for last task" | The memory file (`project_repl_post_hoc_pr.md`) identifies exactly this failure mode: "a follow-up 'create a PR' input parses as a new generic task." Hardcoded command is reliable. |
+| Static scoping questions (readline) | LLM-generated scoping questions | Static questions are deterministic, have zero latency, and cover the useful space. LLM-generated questions would require an API call, add 500ms–2s latency, and could produce inconsistent question phrasing that confuses users. |
+| In-memory `Map` for Slack concurrency | Redis + BullMQ | Adds Redis operational dependency with no benefit for a single-process internal tool. Job durability is not required — if the process restarts, the user retries. |
 
 ---
 
 ## Sources
 
-- [Anthropic Structured Outputs GA docs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs) — `output_config.format`, no beta header required, GA on Haiku 4.5 / Sonnet 4.5+ (HIGH confidence — official Anthropic docs, verified 2026-03-23)
-- [Anthropic Models Overview](https://platform.claude.com/docs/en/about-claude/models/overview) — `claude-haiku-4-5-20251001` confirmed current fastest model, Claude Haiku 3 deprecation April 19 2026 (HIGH confidence — official Anthropic docs, verified 2026-03-23)
-- [Anthropic structured outputs blog post](https://claude.com/blog/structured-outputs-on-the-claude-developer-platform) — GA announcement confirming `output_config.format` replaces `output_format`, no beta header (HIGH confidence — official Anthropic, verified 2026-03-23)
-- `src/intent/types.ts`, `src/intent/llm-parser.ts`, `src/prompts/index.ts`, `src/orchestrator/verifier.ts`, `src/intent/context-scanner.ts` — direct codebase inspection of current module boundaries and integration points (HIGH confidence — source of truth)
-- `package.json` — confirmed installed versions: `@anthropic-ai/sdk@^0.80.0`, `@anthropic-ai/claude-agent-sdk@^0.2.77`, `zod@^4.3.6` (HIGH confidence — live file)
-- npm registry (live) — `@anthropic-ai/sdk@0.80.0`, `@anthropic-ai/claude-agent-sdk@0.2.81`, `zod@4.3.6` as of 2026-03-23 (HIGH confidence — npm show commands executed in project)
-- [PROJECT.md constraint](../../.planning/PROJECT.md) — "Hardcoded task-type handlers per category — generic execution path preferred" (HIGH confidence — project decision, directly quoted)
+- npm registry live: `npm show @slack/bolt version` → `4.6.0`, released 2025-10-28 (HIGH confidence — live npm registry)
+- npm registry live: `npm show @slack/bolt engines` → `node: >=18` (HIGH confidence — live npm registry)
+- npm registry live: `npm show @slack/bolt dependencies` → `@slack/socket-mode@^2.0.5` bundled (HIGH confidence — live npm registry)
+- [Slack Bolt Socket Mode docs](https://docs.slack.dev/tools/bolt-js/concepts/socket-mode/) — `socketMode: true` + `appToken` init pattern, no public URL needed (HIGH confidence — official Slack docs)
+- [Slack Socket Mode overview](https://api.slack.com/apis/socket-mode) — internal tools appropriate use case, marketplace restriction confirmed (HIGH confidence — official Slack docs)
+- [bolt-ts-starter-template package.json](https://raw.githubusercontent.com/slack-samples/bolt-ts-starter-template/main/package.json) — `"type": "module"`, `@slack/bolt@^4.6.0`, TypeScript 5.9.3 confirmed working together (HIGH confidence — official Slack GitHub sample)
+- `tsconfig.json` (project): `"esModuleInterop": true`, `"module": "NodeNext"`, `"skipLibCheck": true` — CJS/ESM interop already configured (HIGH confidence — live project file)
+- `src/repl/types.ts` — `ReplState`, `SessionCallbacks`, `TaskHistoryEntry` interfaces (HIGH confidence — live source)
+- `src/types.ts` — `RetryResult`, `AgentOptions` interfaces (HIGH confidence — live source)
+- `src/repl/confirm-loop.ts` — readline pattern for REPL dialogue (HIGH confidence — live source)
+- `.claude/projects/memory/project_repl_post_hoc_pr.md` — "RetryResult discarded after renderResultBlock(); follow-up 'create a PR' misparses as generic task" (HIGH confidence — project memory)
+- `.claude/projects/memory/project_generic_task_prompts.md` — scoping questions and ScopingContext shape (HIGH confidence — project memory)
+- `.claude/projects/memory/project_conversational_interface.md` — Slack adapter as thin layer over processInput() (HIGH confidence — project memory)
 
 ---
-*Stack research for: Generic deterministic task support — config updates, refactors, method replacements (background-coding-agent v2.2)*
-*Researched: 2026-03-23*
+*Stack research for: Conversational scoping dialogue, REPL post-hoc PR creation, follow-up task referencing, Slack bot interface (background-coding-agent v2.3)*
+*Researched: 2026-03-25*
