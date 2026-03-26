@@ -2,16 +2,15 @@
 gsd_state_version: 1.0
 milestone: v2.3
 milestone_name: Conversational Scoping & REPL Enhancements
-status: active
-stopped_at: Roadmap created — ready to plan Phase 21
-last_updated: "2026-03-25T12:00:00.000Z"
-last_activity: "2026-03-25 — Roadmap created for v2.3 (Phases 21-24)"
+status: planning
+stopped_at: Completed 21-02-PLAN.md
+last_updated: "2026-03-26T02:09:17.788Z"
+last_activity: 2026-03-25 — Roadmap created, all 19 v2.3 requirements mapped
 progress:
   total_phases: 4
-  completed_phases: 0
-  total_plans: 7
-  completed_plans: 0
-  percent: 0
+  completed_phases: 1
+  total_plans: 2
+  completed_plans: 2
 ---
 
 # Project State
@@ -52,6 +51,10 @@ Progress [          ] 0% — 0/4 phases complete
 - **SessionCallbacks methods are always optional** — `askQuestion?`, `onMessage?`, `onPrCreated?` all use `?` with graceful degradation so adapters can implement only what they need
 - **Scoping dialogue intentionally skipped in Slack v2.3** — `callbacks.askQuestion?` optional design handles this cleanly; document as known v2.3 limitation
 - **Per-user ReplState in Slack** — `Map<userId, ReplState>` created per incoming Slack message; `createSessionState()` called per user, not at module load; prevents cross-user corruption
+- [Phase 21]: lastRetryResult and lastIntent assigned inside try block (success path only), not in finally
+- [Phase 21]: description for dep updates uses formatted string 'update {dep} to {version ?? latest}' rather than raw intent text
+- [Phase 21]: prResult slot added to SessionOutput now (Plan 02 prep) to define the type contract before Plan 02 implements it
+- [Phase 21]: vi.fn().mockImplementation with this-binding used for GitHubPRCreator mock (arrow function form fails as constructor in vitest)
 
 ### Pending Todos
 
@@ -64,7 +67,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-25
-Stopped at: Roadmap created for v2.3
+Last session: 2026-03-26T02:06:52.446Z
+Stopped at: Completed 21-02-PLAN.md
 Resume file: None
 Next action: `/gsd:plan-phase 21`

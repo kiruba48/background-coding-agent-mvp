@@ -336,6 +336,15 @@ export async function replCommand(): Promise<void> {
       } else if (output.result === null) {
         // User cancelled — re-prompt silently
       }
+
+      // Display post-hoc PR result
+      if (output.prResult) {
+        if (output.prResult.error) {
+          console.error(pc.red(`  PR creation failed: ${output.prResult.error}\n`));
+        } else {
+          console.log(pc.green(`  PR created: ${output.prResult.url}\n`));
+        }
+      }
     } catch (err) {
       progress.stop(); // Ensure progress indicator is cleared on error
       if ((err as Error).name === 'AbortError' || activeTaskController.signal.aborted) {

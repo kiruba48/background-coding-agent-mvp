@@ -4,13 +4,18 @@ import { runAgent, type AgentOptions, type AgentContext } from '../agent/index.j
 import { autoRegisterCwd } from '../cli/auto-register.js';
 import { ProjectRegistry } from '../agent/registry.js';
 import { createLogger } from '../cli/utils/logger.js';
+import { GitHubPRCreator } from '../orchestrator/pr-creator.js';
 import path from 'node:path';
 import pc from 'picocolors';
 import type { ReplState, SessionCallbacks, SessionOutput, TaskHistoryEntry } from './types.js';
+import type { PRResult } from '../types.js';
 import { MAX_HISTORY_ENTRIES } from './types.js';
 
 /** Maximum input length before LLM dispatch (characters) */
 const MAX_INPUT_LENGTH = 2000;
+
+/** PR meta-command pattern — matches "pr", "create pr", "create a pr", and trailing "for that/this/it" variants */
+const PR_COMMAND_RE = /^(create\s+a?\s*pr|pr)(\s+for\s+(that|this|it))?$/i;
 
 /** Default agent options for REPL sessions */
 const REPL_TURN_LIMIT = 30;
@@ -61,6 +66,36 @@ export async function processInput(
       console.log('');
     }
     return { action: 'continue' };
+  }
+
+  // Post-hoc PR command — intercept before parseIntent
+  if (PR_COMMAND_RE.test(trimmed)) {
+    if (!state.lastRetryResult || !state.lastIntent || state.lastRetryResult.finalStatus !== 'success') {
+      console.log(pc.yellow('\n  No completed task in this session.\n'));
+      return { action: 'continue' };
+    }
+    const projectName = state.currentProjectName ?? 'unknown';
+    const description = state.lastIntent?.description
+      ?? state.lastIntent?.dep
+      ?? state.lastIntent?.taskType
+      ?? 'task';
+    console.log(pc.dim(`\n  Creating PR for: ${description} (${projectName})`));
+    try {
+      const creator = new GitHubPRCreator(state.lastIntent!.repo);
+      const prResult: PRResult = await creator.create({
+        taskType: state.lastIntent!.taskType,
+        originalTask: description,
+        retryResult: state.lastRetryResult,
+        description: state.lastIntent?.description,
+        taskCategory: state.lastIntent?.taskCategory ?? undefined,
+      });
+      // Clear state to prevent duplicate PRs for the same task
+      state.lastRetryResult = undefined;
+      state.lastIntent = undefined;
+      return { action: 'continue', prResult };
+    } catch (err) {
+      return { action: 'continue', prResult: { url: '', created: false, branch: '', error: (err as Error).message } };
+    }
   }
 
   // Guard against excessively long input before LLM dispatch
@@ -147,6 +182,13 @@ export async function processInput(
   let historyStatus: TaskHistoryEntry['status'] = 'failed';
   try {
     const result = await runAgent(agentOptions, agentContext);
+    // Store for post-hoc PR and follow-up referencing (FLLW-02) — success path only.
+    // Non-success results must NOT overwrite a previous successful result,
+    // so the user can still `pr` after a subsequent failed task.
+    if (result.finalStatus === 'success') {
+      state.lastRetryResult = result;
+      state.lastIntent = confirmed;
+    }
     historyStatus = result.finalStatus === 'success'
       ? 'success'
       : result.finalStatus === 'zero_diff'
@@ -164,6 +206,11 @@ export async function processInput(
       version: confirmed.version ?? null,
       repo: confirmed.repo,
       status: historyStatus,
+      description: confirmed.taskType === 'generic'
+        ? confirmed.description
+        : confirmed.dep
+          ? `update ${confirmed.dep} to ${confirmed.version ?? 'latest'}`
+          : undefined,
     });
   }
 }

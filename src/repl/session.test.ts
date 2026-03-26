@@ -33,8 +33,20 @@ vi.mock('../cli/utils/logger.js', () => ({
   }),
 }));
 
+// Mock GitHubPRCreator — must use class/function syntax so `new GitHubPRCreator()` works
+vi.mock('../orchestrator/pr-creator.js', () => ({
+  GitHubPRCreator: vi.fn().mockImplementation(function (this: unknown) {
+    (this as { create: ReturnType<typeof vi.fn> }).create = vi.fn().mockResolvedValue({
+      url: 'https://github.com/org/repo/pull/42',
+      created: true,
+      branch: 'bg-agent/task-branch',
+    });
+  }),
+}));
+
 import { parseIntent } from '../intent/index.js';
 import { runAgent } from '../agent/index.js';
+import { GitHubPRCreator } from '../orchestrator/pr-creator.js';
 import { processInput, createSessionState } from './session.js';
 import { ProjectRegistry } from '../agent/registry.js';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -43,6 +55,7 @@ import path from 'node:path';
 
 const mockParseIntent = parseIntent as ReturnType<typeof vi.fn>;
 const mockRunAgent = runAgent as ReturnType<typeof vi.fn>;
+const MockGitHubPRCreator = GitHubPRCreator as unknown as ReturnType<typeof vi.fn>;
 
 function makeIntent(overrides: Partial<ResolvedIntent> = {}): ResolvedIntent {
   return {
@@ -554,5 +567,396 @@ describe('src/repl/session.ts', () => {
       expect.any(String),
       expect.objectContaining({ history: [] }),
     );
+  });
+
+  // FLLW-02 tests: lastRetryResult and lastIntent stored on state
+
+  // Test FLLW-02a: After successful runAgent, state.lastRetryResult equals the returned RetryResult object
+  it('FLLW-02a. state.lastRetryResult equals returned RetryResult after successful runAgent', async () => {
+    const intent = makeIntent();
+    const retryResult = makeRetryResult();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(retryResult);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await processInput('update lodash', state, callbacks, registry);
+
+    expect(state.lastRetryResult).toBe(retryResult);
+  });
+
+  // Test FLLW-02b: After successful runAgent, state.lastIntent equals the confirmed ResolvedIntent object
+  it('FLLW-02b. state.lastIntent equals confirmed intent after successful runAgent', async () => {
+    const intent = makeIntent();
+    const retryResult = makeRetryResult();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(retryResult);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await processInput('update lodash', state, callbacks, registry);
+
+    expect(state.lastIntent).toBe(intent);
+  });
+
+  // Test FLLW-02c: After runAgent throws (non-abort), state.lastRetryResult remains undefined
+  it('FLLW-02c. state.lastRetryResult remains undefined after runAgent throws non-abort error', async () => {
+    const intent = makeIntent();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockRejectedValue(new Error('agent crashed'));
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await expect(processInput('update lodash', state, callbacks, registry)).rejects.toThrow('agent crashed');
+
+    expect(state.lastRetryResult).toBeUndefined();
+  });
+
+  // Test FLLW-02d: After runAgent throws AbortError, state.lastRetryResult remains undefined
+  it('FLLW-02d. state.lastRetryResult remains undefined after runAgent throws AbortError', async () => {
+    const intent = makeIntent();
+    mockParseIntent.mockResolvedValue(intent);
+    const err = new Error('aborted');
+    err.name = 'AbortError';
+    mockRunAgent.mockRejectedValue(err);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await expect(processInput('update lodash', state, callbacks, registry)).rejects.toThrow('aborted');
+
+    expect(state.lastRetryResult).toBeUndefined();
+  });
+
+  // FLLW-01 tests: description populated on TaskHistoryEntry
+
+  // Test FLLW-01a: After successful generic task, state.history[0].description equals intent.description
+  it('FLLW-01a. history entry description equals intent.description for generic task', async () => {
+    const intent = makeIntent({
+      taskType: 'generic',
+      description: 'add error handling to auth.ts',
+      dep: null,
+      version: null,
+    });
+    const retryResult = makeRetryResult();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(retryResult);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await processInput('add error handling to auth.ts', state, callbacks, registry);
+
+    expect(state.history[0].description).toBe('add error handling to auth.ts');
+  });
+
+  // Test FLLW-01b: After successful dep update with dep='lodash' version='4.0.0', description is 'update lodash to 4.0.0'
+  it('FLLW-01b. history entry description is "update lodash to 4.0.0" for dep update with version', async () => {
+    const intent = makeIntent({
+      taskType: 'npm-dependency-update',
+      dep: 'lodash',
+      version: '4.0.0',
+    });
+    const retryResult = makeRetryResult();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(retryResult);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await processInput('update lodash to 4.0.0', state, callbacks, registry);
+
+    expect(state.history[0].description).toBe('update lodash to 4.0.0');
+  });
+
+  // Test FLLW-01c: After successful dep update with dep='lodash' version=null, description is 'update lodash to latest'
+  it('FLLW-01c. history entry description is "update lodash to latest" for dep update with null version', async () => {
+    const intent = makeIntent({
+      taskType: 'npm-dependency-update',
+      dep: 'lodash',
+      version: null,
+    });
+    const retryResult = makeRetryResult();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(retryResult);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await processInput('update lodash', state, callbacks, registry);
+
+    expect(state.history[0].description).toBe('update lodash to latest');
+  });
+
+  // Test FLLW-01d: After dep update with dep=null, state.history[0].description is undefined
+  it('FLLW-01d. history entry description is undefined when dep is null', async () => {
+    const intent = makeIntent({
+      taskType: 'npm-dependency-update',
+      dep: null,
+      version: null,
+    });
+    const retryResult = makeRetryResult();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(retryResult);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await processInput('update something', state, callbacks, registry);
+
+    expect(state.history[0].description).toBeUndefined();
+  });
+
+  // PR meta-command tests
+
+  // Test PR-01: processInput('pr') with valid state calls GitHubPRCreator and returns prResult
+  it('PR-01. processInput("pr") with valid state calls GitHubPRCreator and returns prResult', async () => {
+    const state = createSessionState();
+    state.lastRetryResult = makeRetryResult();
+    state.lastIntent = makeIntent({ repo: '/tmp/test-repo', description: 'add error handling' });
+    state.currentProjectName = 'test-repo';
+    const callbacks = makeCallbacks();
+
+    const output = await processInput('pr', state, callbacks, registry);
+
+    expect(output.action).toBe('continue');
+    expect(output.prResult?.url).toBe('https://github.com/org/repo/pull/42');
+    expect(mockParseIntent).not.toHaveBeenCalled();
+  });
+
+  // Test PR-02a: processInput('pr') with no lastRetryResult returns continue with no prResult and 'No completed task'
+  it('PR-02a. processInput("pr") with no lastRetryResult returns continue and logs "No completed task"', async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(' '));
+    });
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks();
+
+    const output = await processInput('pr', state, callbacks, registry);
+
+    vi.restoreAllMocks();
+    expect(output.action).toBe('continue');
+    expect(output.prResult).toBeUndefined();
+    expect(logs.join('\n')).toContain('No completed task in this session');
+    expect(MockGitHubPRCreator).not.toHaveBeenCalled();
+    expect(mockParseIntent).not.toHaveBeenCalled();
+  });
+
+  // Test PR-02b: processInput('pr') with lastRetryResult.finalStatus='failed' returns 'No completed task'
+  it('PR-02b. processInput("pr") with failed lastRetryResult logs "No completed task"', async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(' '));
+    });
+
+    const state = createSessionState();
+    state.lastRetryResult = makeRetryResult({ finalStatus: 'failed' });
+    state.lastIntent = makeIntent();
+    const callbacks = makeCallbacks();
+
+    const output = await processInput('pr', state, callbacks, registry);
+
+    vi.restoreAllMocks();
+    expect(output.action).toBe('continue');
+    expect(output.prResult).toBeUndefined();
+    expect(logs.join('\n')).toContain('No completed task in this session');
+    expect(MockGitHubPRCreator).not.toHaveBeenCalled();
+  });
+
+  // Test PR-03: processInput('pr') with valid state prints 'Creating PR for: ...' before create()
+  it('PR-03. processInput("pr") with valid state prints "Creating PR for:" summary line', async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(' '));
+    });
+
+    const state = createSessionState();
+    state.lastRetryResult = makeRetryResult();
+    state.lastIntent = makeIntent({ repo: '/tmp/test-repo', description: 'add error handling' });
+    state.currentProjectName = 'test-repo';
+    const callbacks = makeCallbacks();
+
+    await processInput('pr', state, callbacks, registry);
+
+    vi.restoreAllMocks();
+    const allOutput = logs.join('\n');
+    expect(allOutput).toContain('Creating PR for:');
+    expect(allOutput).toContain('add error handling');
+    expect(allOutput).toContain('test-repo');
+  });
+
+  // Test PR-04a: processInput('create pr') is intercepted; parseIntent NOT called
+  it('PR-04a. processInput("create pr") is intercepted and calls GitHubPRCreator; parseIntent NOT called', async () => {
+    const state = createSessionState();
+    state.lastRetryResult = makeRetryResult();
+    state.lastIntent = makeIntent({ repo: '/tmp/test-repo' });
+    state.currentProjectName = 'test-repo';
+    const callbacks = makeCallbacks();
+
+    const output = await processInput('create pr', state, callbacks, registry);
+
+    expect(mockParseIntent).not.toHaveBeenCalled();
+    expect(MockGitHubPRCreator).toHaveBeenCalled();
+    expect(output.prResult?.url).toBe('https://github.com/org/repo/pull/42');
+  });
+
+  // Test PR-04b: processInput('create a pr') is intercepted; parseIntent NOT called
+  it('PR-04b. processInput("create a pr") is intercepted and calls GitHubPRCreator; parseIntent NOT called', async () => {
+    const state = createSessionState();
+    state.lastRetryResult = makeRetryResult();
+    state.lastIntent = makeIntent({ repo: '/tmp/test-repo' });
+    state.currentProjectName = 'test-repo';
+    const callbacks = makeCallbacks();
+
+    const output = await processInput('create a pr', state, callbacks, registry);
+
+    expect(mockParseIntent).not.toHaveBeenCalled();
+    expect(MockGitHubPRCreator).toHaveBeenCalled();
+    expect(output.prResult?.url).toBe('https://github.com/org/repo/pull/42');
+  });
+
+  // Test PR-ERR: processInput('pr') where create() throws returns prResult with error (S1 unified error path)
+  it('PR-ERR. processInput("pr") where create() throws returns prResult with error field', async () => {
+    // Override create() to throw
+    MockGitHubPRCreator.mockImplementationOnce(() => ({
+      create: vi.fn().mockRejectedValue(new Error('GITHUB_TOKEN environment variable is required')),
+    }));
+
+    const state = createSessionState();
+    state.lastRetryResult = makeRetryResult();
+    state.lastIntent = makeIntent({ repo: '/tmp/test-repo' });
+    state.currentProjectName = 'test-repo';
+    const callbacks = makeCallbacks();
+
+    const output = await processInput('pr', state, callbacks, registry);
+
+    expect(output.action).toBe('continue');
+    expect(output.prResult).toBeDefined();
+    expect(output.prResult?.error).toContain('GITHUB_TOKEN');
+    expect(output.prResult?.created).toBe(false);
+  });
+
+  // Test PR-04c: processInput('create a pr for that') is intercepted (P1 fix — SC-04)
+  it('PR-04c. processInput("create a pr for that") is intercepted; parseIntent NOT called', async () => {
+    const state = createSessionState();
+    state.lastRetryResult = makeRetryResult();
+    state.lastIntent = makeIntent({ repo: '/tmp/test-repo' });
+    state.currentProjectName = 'test-repo';
+    const callbacks = makeCallbacks();
+
+    const output = await processInput('create a pr for that', state, callbacks, registry);
+
+    expect(mockParseIntent).not.toHaveBeenCalled();
+    expect(MockGitHubPRCreator).toHaveBeenCalled();
+    expect(output.prResult?.url).toBe('https://github.com/org/repo/pull/42');
+  });
+
+  // Test PR-04d: processInput('create pr for this') is intercepted
+  it('PR-04d. processInput("create pr for this") is intercepted; parseIntent NOT called', async () => {
+    const state = createSessionState();
+    state.lastRetryResult = makeRetryResult();
+    state.lastIntent = makeIntent({ repo: '/tmp/test-repo' });
+    state.currentProjectName = 'test-repo';
+    const callbacks = makeCallbacks();
+
+    const output = await processInput('create pr for this', state, callbacks, registry);
+
+    expect(mockParseIntent).not.toHaveBeenCalled();
+    expect(MockGitHubPRCreator).toHaveBeenCalled();
+    expect(output.prResult?.url).toBe('https://github.com/org/repo/pull/42');
+  });
+
+  // Test PR-DUP: second 'pr' after successful PR returns "No completed task" (P2 fix — duplicate prevention)
+  it('PR-DUP. second "pr" after successful PR returns "No completed task"', async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(' '));
+    });
+
+    const state = createSessionState();
+    state.lastRetryResult = makeRetryResult();
+    state.lastIntent = makeIntent({ repo: '/tmp/test-repo' });
+    state.currentProjectName = 'test-repo';
+    const callbacks = makeCallbacks();
+
+    // First PR — succeeds and clears state
+    const first = await processInput('pr', state, callbacks, registry);
+    expect(first.prResult?.url).toBe('https://github.com/org/repo/pull/42');
+
+    // Second PR — state cleared, should get "No completed task"
+    const second = await processInput('pr', state, callbacks, registry);
+    expect(second.prResult).toBeUndefined();
+
+    vi.restoreAllMocks();
+    expect(logs.join('\n')).toContain('No completed task');
+  });
+
+  // Test V1: failed runAgent does NOT overwrite previous successful lastRetryResult
+  it('V1. failed runAgent does NOT overwrite previous successful lastRetryResult', async () => {
+    const successResult = makeRetryResult({ finalStatus: 'success' });
+    const successIntent = makeIntent({ repo: '/tmp/repo-a', description: 'first task' });
+    const failedResult = makeRetryResult({ finalStatus: 'failed' });
+    const failedIntent = makeIntent({ repo: '/tmp/repo-b', description: 'second task' });
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks();
+
+    // First task succeeds
+    mockParseIntent.mockResolvedValueOnce(successIntent);
+    mockRunAgent.mockResolvedValueOnce(successResult);
+    (callbacks.confirm as ReturnType<typeof vi.fn>).mockResolvedValueOnce(successIntent);
+    await processInput('first task', state, callbacks, registry);
+
+    expect(state.lastRetryResult).toBe(successResult);
+    expect(state.lastIntent).toBe(successIntent);
+
+    // Second task fails — should NOT overwrite
+    mockParseIntent.mockResolvedValueOnce(failedIntent);
+    mockRunAgent.mockResolvedValueOnce(failedResult);
+    (callbacks.confirm as ReturnType<typeof vi.fn>).mockResolvedValueOnce(failedIntent);
+    await processInput('second task', state, callbacks, registry);
+
+    // State still holds the successful result
+    expect(state.lastRetryResult).toBe(successResult);
+    expect(state.lastIntent).toBe(successIntent);
+  });
+
+  // Test PR-PASSTHROUGH: processInput('fix the PR template') calls parseIntent (NOT intercepted)
+  it('PR-PASSTHROUGH. processInput("fix the PR template") is NOT intercepted; parseIntent IS called', async () => {
+    const intent = makeIntent({ description: 'fix the PR template' });
+    const retryResult = makeRetryResult();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(retryResult);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await processInput('fix the PR template', state, callbacks, registry);
+
+    expect(mockParseIntent).toHaveBeenCalled();
+    expect(MockGitHubPRCreator).not.toHaveBeenCalled();
   });
 });

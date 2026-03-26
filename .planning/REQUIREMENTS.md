@@ -9,10 +9,10 @@ Requirements for milestone v2.3 Conversational Scoping & REPL Enhancements. Each
 
 ### Post-Hoc PR Creation
 
-- [ ] **PR-01**: User can type `pr` or `create pr` in REPL to create a GitHub PR for the last completed task
-- [ ] **PR-02**: User sees clear error message when no completed task exists ("No completed task in this session")
-- [ ] **PR-03**: User sees task summary before PR is created ("Creating PR for: [description] ([project])")
-- [ ] **PR-04**: `create pr` / `create a pr` natural language input routes to post-hoc PR flow, not intent parser
+- [x] **PR-01**: User can type `pr` or `create pr` in REPL to create a GitHub PR for the last completed task
+- [x] **PR-02**: User sees clear error message when no completed task exists ("No completed task in this session")
+- [x] **PR-03**: User sees task summary before PR is created ("Creating PR for: [description] ([project])")
+- [x] **PR-04**: `create pr` / `create a pr` natural language input routes to post-hoc PR flow, not intent parser
 
 ### Conversational Scoping
 
@@ -24,8 +24,8 @@ Requirements for milestone v2.3 Conversational Scoping & REPL Enhancements. Each
 
 ### Follow-Up Referencing
 
-- [ ] **FLLW-01**: TaskHistoryEntry includes task description so follow-up inputs have context
-- [ ] **FLLW-02**: RetryResult is stored on ReplState after each task completion for cross-task referencing
+- [x] **FLLW-01**: TaskHistoryEntry includes task description so follow-up inputs have context
+- [x] **FLLW-02**: RetryResult is stored on ReplState after each task completion for cross-task referencing
 - [ ] **FLLW-03**: Follow-up inputs like "now add tests for that" can reference previous task outcome via enriched history
 
 ### Slack Bot
@@ -81,17 +81,17 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PR-01 | Phase 21 | Pending |
-| PR-02 | Phase 21 | Pending |
-| PR-03 | Phase 21 | Pending |
-| PR-04 | Phase 21 | Pending |
+| PR-01 | Phase 21 | Complete |
+| PR-02 | Phase 21 | Complete |
+| PR-03 | Phase 21 | Complete |
+| PR-04 | Phase 21 | Complete |
 | SCOPE-01 | Phase 22 | Pending |
 | SCOPE-02 | Phase 22 | Pending |
 | SCOPE-03 | Phase 22 | Pending |
 | SCOPE-04 | Phase 22 | Pending |
 | SCOPE-05 | Phase 22 | Pending |
-| FLLW-01 | Phase 21 | Pending |
-| FLLW-02 | Phase 21 | Pending |
+| FLLW-01 | Phase 21 | Complete |
+| FLLW-02 | Phase 21 | Complete |
 | FLLW-03 | Phase 23 | Pending |
 | SLCK-01 | Phase 24 | Pending |
 | SLCK-02 | Phase 24 | Pending |
