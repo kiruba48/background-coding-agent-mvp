@@ -95,8 +95,8 @@ Full details: [v2.2-ROADMAP.md](milestones/v2.2-ROADMAP.md)
 **Plans:** 2/2 plans complete
 
 Plans:
-- [ ] 21-01-PLAN.md — ReplState/TaskHistoryEntry schema extension + state retention after runAgent
-- [ ] 21-02-PLAN.md — PR meta-command handler in processInput() + repl.ts display
+- [x] 21-01-PLAN.md — ReplState/TaskHistoryEntry schema extension + state retention after runAgent
+- [x] 21-02-PLAN.md — PR meta-command handler in processInput() + repl.ts display
 
 ### Phase 22: Conversational Scoping Dialogue
 **Goal**: Users running generic tasks in the REPL are asked up to 3 optional scoping questions (target files, test updates, exclusions) before the confirm step, and their answers are merged into the agent prompt SCOPE block
@@ -108,11 +108,11 @@ Plans:
   3. User sees the assembled SCOPE block displayed at the confirm step so they can review the merged constraints before the agent runs
   4. User submitting a dependency update task (Maven or npm) receives no scoping questions — the dialogue is bypassed entirely
   5. Scoping I/O is routed through SessionCallbacks.askQuestion so Slack and other adapters can implement or skip it without touching session core
-**Plans**: TBD
+**Plans:** 2 plans
 
 Plans:
-- [ ] 22-01: runScopingDialogue() + SessionCallbacks.askQuestion? interface + buildGenericPrompt scopeHints parameter
-- [ ] 22-02: CLI readline implementation of askQuestion + confirm display of assembled SCOPE block
+- [ ] 22-01-PLAN.md — Intent schema extension + runScopingDialogue + buildGenericPrompt SCOPE HINTS + processInput integration
+- [ ] 22-02-PLAN.md — CLI askQuestion callback + displayIntent scope hints rendering
 
 ### Phase 23: Follow-Up Task Referencing
 **Goal**: Follow-up inputs like "now add tests for that" resolve correctly to the previous task because the LLM history block includes agent change summaries alongside task descriptions
@@ -168,7 +168,7 @@ Plans:
 | 18. Intent Parser Generalization | v2.2 | 2/2 | Complete | 2026-03-23 |
 | 19. Generic Prompt Builder | v2.2 | 2/2 | Complete | 2026-03-24 |
 | 20. Verification & Safety | v2.2 | 2/2 | Complete | 2026-03-24 |
-| 21. Post-Hoc PR & State Foundation | 2/2 | Complete    | 2026-03-26 | - |
-| 22. Conversational Scoping Dialogue | v2.3 | 0/2 | Not started | - |
+| 21. Post-Hoc PR & State Foundation | v2.3 | 2/2 | Complete | 2026-03-26 |
+| 22. Conversational Scoping Dialogue | v2.3 | 0/2 | Planning | - |
 | 23. Follow-Up Task Referencing | v2.3 | 0/1 | Not started | - |
 | 24. Slack Bot Adapter | v2.3 | 0/2 | Not started | - |
