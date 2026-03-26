@@ -45,10 +45,12 @@ export async function confirmLoop(
 
   let current = initialIntent;
   let attempts = 0;
+  // Scope hints become stale after a correction — track mutably
+  let activeHints = scopeHints;
 
   try {
     while (attempts < maxRedirects) {
-      displayIntent(current, scopeHints);
+      displayIntent(current, activeHints);
       const answer = await rl.question(pc.bold('  Proceed? [Y/n] '));
 
       if (answer === '' || answer.toLowerCase() === 'y') {
@@ -60,8 +62,9 @@ export async function confirmLoop(
         if (CANCEL_WORDS.has(answer.trim().toLowerCase())) {
           return null;
         }
-        // Treat any non-y/n input as a correction directly
+        // Treat any non-y/n input as a correction directly — clear stale hints
         current = await reparse(answer, current);
+        activeHints = undefined;
         attempts++;
         continue;
       }
@@ -77,9 +80,10 @@ export async function confirmLoop(
         return null;
       }
       current = await reparse(correction, current);
+      activeHints = undefined; // Clear stale hints after correction
     }
     // Final display after last correction — user gets one more chance to accept
-    displayIntent(current, scopeHints);
+    displayIntent(current, activeHints);
     const finalAnswer = await rl.question(pc.bold('  Proceed? [Y/n] '));
     if (finalAnswer === '' || finalAnswer.toLowerCase() === 'y') {
       return current;

@@ -47,6 +47,6 @@ export interface ResolvedIntent {
   description?: string;     // raw NL input when taskType is 'generic'
   taskCategory?: TaskCategory | null;
   clarifications?: ClarificationOption[];  // from LLM when confidence is low
-  scopingQuestions?: string[];             // LLM-generated scoping questions for generic tasks
+  scopingQuestions: string[];              // LLM-generated scoping questions for generic tasks (empty array when none)
   inheritedFields?: Array<'taskType' | 'repo'>; // fields inherited from session history (follow-up)
 }

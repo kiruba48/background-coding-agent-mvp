@@ -14,6 +14,12 @@ import { MAX_HISTORY_ENTRIES } from './types.js';
 /** Maximum input length before LLM dispatch (characters) */
 const MAX_INPUT_LENGTH = 2000;
 
+/** Maximum number of scoping questions to present */
+const MAX_SCOPING_QUESTIONS = 3;
+
+/** Maximum length per scoping answer (characters) */
+const MAX_SCOPE_ANSWER_LENGTH = 500;
+
 /** PR meta-command pattern — matches "pr", "create pr", "create a pr", and trailing "for that/this/it" variants */
 const PR_COMMAND_RE = /^(create\s+a?\s*pr|pr)(\s+for\s+(that|this|it))?$/i;
 
@@ -26,20 +32,30 @@ export function createSessionState(): ReplState {
   return { currentProject: null, currentProjectName: null, history: [] };
 }
 
+/** Strip ANSI escape sequences and terminal control characters */
+function sanitizeForDisplay(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]|\x1B\[[0-9;]*[A-Za-z]/g, '').trim();
+}
+
 /**
- * Run the scoping dialogue — ask up to 3 LLM-generated questions.
+ * Run the scoping dialogue — ask up to MAX_SCOPING_QUESTIONS LLM-generated questions.
  * Returns formatted hint strings ("question: answer") for non-empty answers.
- * Null returns (Ctrl+C) and empty strings (Enter) are skipped.
+ * Null returns (Ctrl+C) abort the entire dialogue. Empty strings (Enter) skip one question.
  */
 export async function runScopingDialogue(
   questions: string[],
   askQuestion: (prompt: string) => Promise<string | null>,
 ): Promise<string[]> {
   const hints: string[] = [];
-  for (const q of questions.slice(0, 3)) {
-    const answer = await askQuestion(`  ${q} `);
-    if (answer !== null && answer.trim() !== '') {
-      hints.push(`${q}: ${answer.trim()}`);
+  for (const q of questions.slice(0, MAX_SCOPING_QUESTIONS)) {
+    const sanitizedQ = sanitizeForDisplay(q).slice(0, 200);
+    if (!sanitizedQ) continue;
+    const answer = await askQuestion(`  ${sanitizedQ} `);
+    if (answer === null) break; // Ctrl+C aborts entire dialogue
+    const trimmed = answer.trim();
+    if (trimmed !== '') {
+      hints.push(`${sanitizedQ}: ${trimmed.slice(0, MAX_SCOPE_ANSWER_LENGTH)}`);
     }
   }
   return hints;
@@ -166,7 +182,6 @@ export async function processInput(
   let scopeHints: string[] = [];
   if (
     intent.taskType === 'generic' &&
-    intent.scopingQuestions &&
     intent.scopingQuestions.length > 0 &&
     callbacks.askQuestion
   ) {

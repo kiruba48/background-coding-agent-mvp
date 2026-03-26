@@ -55,6 +55,7 @@ const baseIntent: ResolvedIntent = {
   dep: 'recharts',
   version: 'latest',
   confidence: 'high',
+  scopingQuestions: [],
 };
 
 function makeRegistryInstance(overrides: Record<string, unknown> = {}) {

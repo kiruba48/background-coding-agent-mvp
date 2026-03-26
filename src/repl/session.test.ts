@@ -64,6 +64,7 @@ function makeIntent(overrides: Partial<ResolvedIntent> = {}): ResolvedIntent {
     dep: 'lodash',
     version: 'latest',
     confidence: 'high',
+    scopingQuestions: [],
     ...overrides,
   };
 }
@@ -104,13 +105,15 @@ describe('runScopingDialogue', () => {
     ]);
   });
 
-  it('skips questions where askQuestion returns null (Ctrl+C)', async () => {
+  it('aborts entire dialogue when askQuestion returns null (Ctrl+C)', async () => {
     const askQuestion = vi.fn()
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce('tests too');
     const questions = ['Which area?', 'Should tests be updated?'];
     const hints = await runScopingDialogue(questions, askQuestion);
-    expect(hints).toEqual(['Should tests be updated?: tests too']);
+    // Ctrl+C breaks out — second question never asked
+    expect(askQuestion).toHaveBeenCalledTimes(1);
+    expect(hints).toEqual([]);
   });
 
   it('skips questions where askQuestion returns empty string (Enter)', async () => {

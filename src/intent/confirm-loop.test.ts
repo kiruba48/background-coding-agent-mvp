@@ -22,6 +22,7 @@ const SAMPLE_INTENT: ResolvedIntent = {
   dep: 'recharts',
   version: 'latest',
   confidence: 'high',
+  scopingQuestions: [],
 };
 
 describe('displayIntent', () => {
@@ -119,6 +120,7 @@ describe('displayIntent', () => {
     confidence: 'high',
     description: 'replace axios with fetch',
     taskCategory: 'code-change',
+    scopingQuestions: [],
   };
 
   it('shows taskCategory label instead of raw "generic" on Task line when taskCategory is set', () => {
