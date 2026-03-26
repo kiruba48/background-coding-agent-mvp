@@ -18,6 +18,7 @@ import { readManifestDeps } from '../intent/context-scanner.js';
 export async function buildGenericPrompt(
   description: string,
   repoPath?: string,
+  scopeHints?: string[],
 ): Promise<string> {
   const lines: string[] = [
     `You are a coding agent. ${description}`,
@@ -48,6 +49,14 @@ export async function buildGenericPrompt(
     } catch {
       // Non-fatal — prompt is still usable without context
     }
+  }
+
+  if (scopeHints && scopeHints.length > 0) {
+    lines.push(
+      'SCOPE HINTS (from user):',
+      ...scopeHints.map(h => `- ${h}`),
+      '',
+    );
   }
 
   lines.push(`Work in the current directory.`);

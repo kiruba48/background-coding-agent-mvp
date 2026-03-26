@@ -26,6 +26,25 @@ export function createSessionState(): ReplState {
   return { currentProject: null, currentProjectName: null, history: [] };
 }
 
+/**
+ * Run the scoping dialogue — ask up to 3 LLM-generated questions.
+ * Returns formatted hint strings ("question: answer") for non-empty answers.
+ * Null returns (Ctrl+C) and empty strings (Enter) are skipped.
+ */
+export async function runScopingDialogue(
+  questions: string[],
+  askQuestion: (prompt: string) => Promise<string | null>,
+): Promise<string[]> {
+  const hints: string[] = [];
+  for (const q of questions.slice(0, 3)) {
+    const answer = await askQuestion(`  ${q} `);
+    if (answer !== null && answer.trim() !== '') {
+      hints.push(`${q}: ${answer.trim()}`);
+    }
+  }
+  return hints;
+}
+
 function appendHistory(state: ReplState, entry: TaskHistoryEntry): void {
   if (state.history.length >= MAX_HISTORY_ENTRIES) {
     state.history.shift();
@@ -143,10 +162,22 @@ export async function processInput(
     intent = reparsed;
   }
 
+  // Step 2.5: Scoping dialogue (generic tasks only, if adapter implements askQuestion)
+  let scopeHints: string[] = [];
+  if (
+    intent.taskType === 'generic' &&
+    intent.scopingQuestions &&
+    intent.scopingQuestions.length > 0 &&
+    callbacks.askQuestion
+  ) {
+    scopeHints = await runScopingDialogue(intent.scopingQuestions, callbacks.askQuestion);
+  }
+
   // Step 3: Confirm loop via callback (CLI adapter owns readline)
   const confirmed = await callbacks.confirm(
     intent,
     async (correction: string) => parseIntent(correction, { repoPath: intent.repo, registry, history: historySnapshot }),
+    scopeHints,
   );
   if (!confirmed) {
     return { action: 'continue', result: null, intent };
@@ -170,6 +201,7 @@ export async function processInput(
     turnLimit: REPL_TURN_LIMIT,
     timeoutMs: REPL_TIMEOUT_MS,
     maxRetries: REPL_MAX_RETRIES,
+    scopeHints: scopeHints.length > 0 ? scopeHints : undefined,
   };
 
   const agentContext: AgentContext = {

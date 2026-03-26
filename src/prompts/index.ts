@@ -9,6 +9,7 @@ export interface PromptOptions {
   targetVersion?: string;
   description?: string;  // raw NL task description for generic tasks
   repoPath?: string;     // optional repo path for manifest dependency injection
+  scopeHints?: string[]; // scoping dialogue answers for generic tasks
 }
 
 /**
@@ -36,7 +37,7 @@ export async function buildPrompt(options: PromptOptions): Promise<string> {
       if (!options.description) {
         throw new Error('description is required for generic tasks');
       }
-      return buildGenericPrompt(options.description, options.repoPath);
+      return buildGenericPrompt(options.description, options.repoPath, options.scopeHints);
     }
     default:
       return `You are a coding agent. Your task: ${options.description ?? options.taskType}. Work in the current directory.`;

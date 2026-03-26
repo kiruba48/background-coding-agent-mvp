@@ -47,7 +47,7 @@ vi.mock('../orchestrator/pr-creator.js', () => ({
 import { parseIntent } from '../intent/index.js';
 import { runAgent } from '../agent/index.js';
 import { GitHubPRCreator } from '../orchestrator/pr-creator.js';
-import { processInput, createSessionState } from './session.js';
+import { processInput, createSessionState, runScopingDialogue } from './session.js';
 import { ProjectRegistry } from '../agent/registry.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -89,6 +89,55 @@ function makeCallbacks(overrides: Partial<SessionCallbacks> = {}): SessionCallba
     ...overrides,
   };
 }
+
+describe('runScopingDialogue', () => {
+  it('calls askQuestion for each question and returns formatted hints', async () => {
+    const askQuestion = vi.fn()
+      .mockResolvedValueOnce('auth module')
+      .mockResolvedValueOnce('yes');
+    const questions = ['Which area should be refactored?', 'Should tests be updated?'];
+    const hints = await runScopingDialogue(questions, askQuestion);
+    expect(askQuestion).toHaveBeenCalledTimes(2);
+    expect(hints).toEqual([
+      'Which area should be refactored?: auth module',
+      'Should tests be updated?: yes',
+    ]);
+  });
+
+  it('skips questions where askQuestion returns null (Ctrl+C)', async () => {
+    const askQuestion = vi.fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce('tests too');
+    const questions = ['Which area?', 'Should tests be updated?'];
+    const hints = await runScopingDialogue(questions, askQuestion);
+    expect(hints).toEqual(['Should tests be updated?: tests too']);
+  });
+
+  it('skips questions where askQuestion returns empty string (Enter)', async () => {
+    const askQuestion = vi.fn()
+      .mockResolvedValueOnce('')
+      .mockResolvedValueOnce('  ')
+      .mockResolvedValueOnce('auth');
+    const questions = ['Q1', 'Q2', 'Q3'];
+    const hints = await runScopingDialogue(questions, askQuestion);
+    expect(hints).toEqual(['Q3: auth']);
+  });
+
+  it('caps at 3 questions even if more provided', async () => {
+    const askQuestion = vi.fn().mockResolvedValue('answer');
+    const questions = ['Q1', 'Q2', 'Q3', 'Q4', 'Q5'];
+    const hints = await runScopingDialogue(questions, askQuestion);
+    expect(askQuestion).toHaveBeenCalledTimes(3);
+    expect(hints).toHaveLength(3);
+  });
+
+  it('returns empty array when no questions provided', async () => {
+    const askQuestion = vi.fn();
+    const hints = await runScopingDialogue([], askQuestion);
+    expect(askQuestion).not.toHaveBeenCalled();
+    expect(hints).toEqual([]);
+  });
+});
 
 describe('src/repl/session.ts', () => {
   let tmpDir: string;
@@ -958,5 +1007,135 @@ describe('src/repl/session.ts', () => {
 
     expect(mockParseIntent).toHaveBeenCalled();
     expect(MockGitHubPRCreator).not.toHaveBeenCalled();
+  });
+
+  // Scoping dialogue tests
+
+  it('SCOPE-01. processInput for generic task with scopingQuestions calls askQuestion', async () => {
+    const intent = makeIntent({
+      taskType: 'generic',
+      dep: null,
+      version: null,
+      description: 'add error handling',
+      scopingQuestions: ['Which area should error handling focus on?'],
+    });
+    const retryResult = makeRetryResult();
+    const confirmedIntent = makeIntent({ taskType: 'generic', dep: null, version: null });
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(retryResult);
+
+    const askQuestion = vi.fn().mockResolvedValue('auth module');
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(confirmedIntent),
+      askQuestion,
+    });
+
+    await processInput('add error handling', state, callbacks, registry);
+
+    expect(askQuestion).toHaveBeenCalledOnce();
+  });
+
+  it('SCOPE-02. processInput for npm-dependency-update does NOT call askQuestion even if scopingQuestions present', async () => {
+    const intent = makeIntent({
+      taskType: 'npm-dependency-update',
+      dep: 'lodash',
+      version: 'latest',
+      scopingQuestions: ['Which files should be updated?'],
+    });
+    const retryResult = makeRetryResult();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(retryResult);
+
+    const askQuestion = vi.fn().mockResolvedValue('some answer');
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+      askQuestion,
+    });
+
+    await processInput('update lodash', state, callbacks, registry);
+
+    expect(askQuestion).not.toHaveBeenCalled();
+  });
+
+  it('SCOPE-03. processInput with no callbacks.askQuestion skips scoping silently', async () => {
+    const intent = makeIntent({
+      taskType: 'generic',
+      dep: null,
+      version: null,
+      description: 'add error handling',
+      scopingQuestions: ['Which area?'],
+    });
+    const retryResult = makeRetryResult();
+    const confirmedIntent = makeIntent({ taskType: 'generic', dep: null, version: null });
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(retryResult);
+
+    // No askQuestion in callbacks
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(confirmedIntent),
+    });
+
+    // Should not throw
+    const output = await processInput('add error handling', state, callbacks, registry);
+    expect(output.action).toBe('continue');
+    expect(mockRunAgent).toHaveBeenCalledOnce();
+  });
+
+  it('SCOPE-04. processInput passes scopeHints to runAgent agentOptions', async () => {
+    const intent = makeIntent({
+      taskType: 'generic',
+      dep: null,
+      version: null,
+      description: 'add error handling',
+      scopingQuestions: ['Which area?'],
+    });
+    const retryResult = makeRetryResult();
+    const confirmedIntent = makeIntent({ taskType: 'generic', dep: null, version: null });
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(retryResult);
+
+    const askQuestion = vi.fn().mockResolvedValue('auth module');
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(confirmedIntent),
+      askQuestion,
+    });
+
+    await processInput('add error handling', state, callbacks, registry);
+
+    expect(mockRunAgent).toHaveBeenCalledOnce();
+    const [agentOptions] = mockRunAgent.mock.calls[0];
+    expect(agentOptions.scopeHints).toEqual(['Which area?: auth module']);
+  });
+
+  it('SCOPE-05. processInput passes scopeHints to callbacks.confirm', async () => {
+    const intent = makeIntent({
+      taskType: 'generic',
+      dep: null,
+      version: null,
+      description: 'add error handling',
+      scopingQuestions: ['Which area?'],
+    });
+    const retryResult = makeRetryResult();
+    const confirmedIntent = makeIntent({ taskType: 'generic', dep: null, version: null });
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(retryResult);
+
+    const askQuestion = vi.fn().mockResolvedValue('auth module');
+    const confirmMock = vi.fn().mockResolvedValue(confirmedIntent);
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: confirmMock,
+      askQuestion,
+    });
+
+    await processInput('add error handling', state, callbacks, registry);
+
+    expect(confirmMock).toHaveBeenCalledOnce();
+    const [, , scopeHints] = confirmMock.mock.calls[0];
+    expect(scopeHints).toEqual(['Which area?: auth module']);
   });
 });

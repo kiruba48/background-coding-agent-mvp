@@ -26,7 +26,7 @@ export interface ReplState {
 /** Callbacks the CLI adapter provides to the session core for I/O that requires process interaction. */
 export interface SessionCallbacks {
   /** Display parsed intent and prompt user to confirm. Return confirmed intent or null if cancelled. */
-  confirm: (intent: ResolvedIntent, reparse: (correction: string) => Promise<ResolvedIntent>) => Promise<ResolvedIntent | null>;
+  confirm: (intent: ResolvedIntent, reparse: (correction: string) => Promise<ResolvedIntent>, scopeHints?: string[]) => Promise<ResolvedIntent | null>;
   /** Display clarification options and prompt user to pick one. Return selected intent string or null. */
   clarify: (clarifications: Array<{ label: string; intent: string }>) => Promise<string | null>;
   /** Get the AbortSignal for the current task. CLI adapter creates a fresh AbortController per task. */
@@ -35,6 +35,8 @@ export interface SessionCallbacks {
   onAgentStart?: () => void;
   /** Called when the agent run finishes (success or failure). CLI adapter can stop the progress indicator. */
   onAgentEnd?: () => void;
+  /** Ask one scoping question. Return null to skip (Enter or Ctrl+C). Optional — adapters omitting this bypass scoping. */
+  askQuestion?: (prompt: string) => Promise<string | null>;
 }
 
 /** Result of processing a single input line in the session core. */
