@@ -16,11 +16,11 @@ Requirements for milestone v2.3 Conversational Scoping & REPL Enhancements. Each
 
 ### Conversational Scoping
 
-- [ ] **SCOPE-01**: User is asked up to 3 optional scoping questions before confirm for generic tasks (target files, test update, exclusions)
-- [ ] **SCOPE-02**: User can skip any scoping question by pressing Enter (no constraint added)
-- [ ] **SCOPE-03**: Scoping answers are merged into buildGenericPrompt SCOPE block for agent execution
+- [x] **SCOPE-01**: User is asked up to 3 optional scoping questions before confirm for generic tasks (target files, test update, exclusions)
+- [x] **SCOPE-02**: User can skip any scoping question by pressing Enter (no constraint added)
+- [x] **SCOPE-03**: Scoping answers are merged into buildGenericPrompt SCOPE block for agent execution
 - [ ] **SCOPE-04**: Assembled SCOPE block is displayed at confirm step so user can review before proceeding
-- [ ] **SCOPE-05**: Scoping questions only trigger for generic taskType, not dependency updates
+- [x] **SCOPE-05**: Scoping questions only trigger for generic taskType, not dependency updates
 
 ### Follow-Up Referencing
 
@@ -85,11 +85,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PR-02 | Phase 21 | Complete |
 | PR-03 | Phase 21 | Complete |
 | PR-04 | Phase 21 | Complete |
-| SCOPE-01 | Phase 22 | Pending |
-| SCOPE-02 | Phase 22 | Pending |
-| SCOPE-03 | Phase 22 | Pending |
+| SCOPE-01 | Phase 22 | Complete |
+| SCOPE-02 | Phase 22 | Complete |
+| SCOPE-03 | Phase 22 | Complete |
 | SCOPE-04 | Phase 22 | Pending |
-| SCOPE-05 | Phase 22 | Pending |
+| SCOPE-05 | Phase 22 | Complete |
 | FLLW-01 | Phase 21 | Complete |
 | FLLW-02 | Phase 21 | Complete |
 | FLLW-03 | Phase 23 | Pending |

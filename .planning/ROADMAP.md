@@ -108,7 +108,7 @@ Plans:
   3. User sees the assembled SCOPE block displayed at the confirm step so they can review the merged constraints before the agent runs
   4. User submitting a dependency update task (Maven or npm) receives no scoping questions — the dialogue is bypassed entirely
   5. Scoping I/O is routed through SessionCallbacks.askQuestion so Slack and other adapters can implement or skip it without touching session core
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 
 Plans:
 - [ ] 22-01-PLAN.md — Intent schema extension + runScopingDialogue + buildGenericPrompt SCOPE HINTS + processInput integration
@@ -169,6 +169,6 @@ Plans:
 | 19. Generic Prompt Builder | v2.2 | 2/2 | Complete | 2026-03-24 |
 | 20. Verification & Safety | v2.2 | 2/2 | Complete | 2026-03-24 |
 | 21. Post-Hoc PR & State Foundation | v2.3 | 2/2 | Complete | 2026-03-26 |
-| 22. Conversational Scoping Dialogue | v2.3 | 0/2 | Planning | - |
+| 22. Conversational Scoping Dialogue | 1/2 | In Progress|  | - |
 | 23. Follow-Up Task Referencing | v2.3 | 0/1 | Not started | - |
 | 24. Slack Bot Adapter | v2.3 | 0/2 | Not started | - |
