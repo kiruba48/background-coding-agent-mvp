@@ -17,18 +17,18 @@ created: 2026-03-26
 
 | Property | Value |
 |----------|-------|
-| **Framework** | jest 29.x + ts-jest |
-| **Config file** | jest.config.ts |
-| **Quick run command** | `npx jest --testPathPattern='scoping\|scope' --no-coverage` |
-| **Full suite command** | `npx jest --no-coverage` |
+| **Framework** | vitest |
+| **Config file** | vitest.config.ts |
+| **Quick run command** | `npx vitest run --testPathPattern='scoping\|scope'` |
+| **Full suite command** | `npx vitest run` |
 | **Estimated runtime** | ~15 seconds |
 
 ---
 
 ## Sampling Rate
 
-- **After every task commit:** Run `npx jest --testPathPattern='scoping\|scope' --no-coverage`
-- **After every plan wave:** Run `npx jest --no-coverage`
+- **After every task commit:** Run `npx vitest run --testPathPattern='scoping\|scope'`
+- **After every plan wave:** Run `npx vitest run`
 - **Before `/gsd:verify-work`:** Full suite must be green
 - **Max feedback latency:** 15 seconds
 
@@ -38,14 +38,14 @@ created: 2026-03-26
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 22-01-01 | 01 | 1 | SCOPE-01 | unit | `npx jest --testPathPattern='scoping' --no-coverage` | ❌ W0 | ⬜ pending |
-| 22-01-02 | 01 | 1 | SCOPE-02 | unit | `npx jest --testPathPattern='scoping' --no-coverage` | ❌ W0 | ⬜ pending |
-| 22-01-03 | 01 | 1 | SCOPE-04 | unit | `npx jest --testPathPattern='scoping' --no-coverage` | ❌ W0 | ⬜ pending |
-| 22-01-04 | 01 | 1 | SCOPE-05 | unit | `npx jest --testPathPattern='scoping' --no-coverage` | ❌ W0 | ⬜ pending |
-| 22-02-01 | 02 | 2 | SCOPE-03 | integration | `npx jest --testPathPattern='scope' --no-coverage` | ❌ W0 | ⬜ pending |
-| 22-02-02 | 02 | 2 | SCOPE-03 | manual | N/A | N/A | ⬜ pending |
+| 22-01-01 | 01 | 1 | SCOPE-01 | unit | `npx vitest run --testPathPattern='scoping'` | W0 | pending |
+| 22-01-02 | 01 | 1 | SCOPE-02 | unit | `npx vitest run --testPathPattern='scoping'` | W0 | pending |
+| 22-01-03 | 01 | 1 | SCOPE-04 | unit | `npx vitest run --testPathPattern='scoping'` | W0 | pending |
+| 22-01-04 | 01 | 1 | SCOPE-05 | unit | `npx vitest run --testPathPattern='scoping'` | W0 | pending |
+| 22-02-01 | 02 | 2 | SCOPE-03 | integration | `npx vitest run --testPathPattern='scope'` | W0 | pending |
+| 22-02-02 | 02 | 2 | SCOPE-03 | manual | N/A | N/A | pending |
 
-*Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
+*Status: pending / green / red / flaky*
 
 ---
 
@@ -54,7 +54,7 @@ created: 2026-03-26
 - [ ] `tests/scoping-dialogue.test.ts` — stubs for SCOPE-01, SCOPE-02, SCOPE-04, SCOPE-05
 - [ ] `tests/scope-display.test.ts` — stubs for SCOPE-03
 
-*Existing jest infrastructure covers framework needs. Only test files need creation.*
+*Existing vitest infrastructure covers framework needs. Only test files need creation.*
 
 ---
 
