@@ -92,7 +92,7 @@ Full details: [v2.2-ROADMAP.md](milestones/v2.2-ROADMAP.md)
   3. User sees a task summary line ("Creating PR for: [description] ([project])") before the PR is created, giving them a chance to verify intent
   4. User types "create a PR for that" in the REPL and it is handled as the post-hoc PR meta-command, not dispatched to the Docker agent
   5. TaskHistoryEntry records include task description and the stored RetryResult so subsequent phases can reference them
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 
 Plans:
 - [ ] 21-01-PLAN.md — ReplState/TaskHistoryEntry schema extension + state retention after runAgent
@@ -168,7 +168,7 @@ Plans:
 | 18. Intent Parser Generalization | v2.2 | 2/2 | Complete | 2026-03-23 |
 | 19. Generic Prompt Builder | v2.2 | 2/2 | Complete | 2026-03-24 |
 | 20. Verification & Safety | v2.2 | 2/2 | Complete | 2026-03-24 |
-| 21. Post-Hoc PR & State Foundation | v2.3 | 0/2 | Not started | - |
+| 21. Post-Hoc PR & State Foundation | 1/2 | In Progress|  | - |
 | 22. Conversational Scoping Dialogue | v2.3 | 0/2 | Not started | - |
 | 23. Follow-Up Task Referencing | v2.3 | 0/1 | Not started | - |
 | 24. Slack Bot Adapter | v2.3 | 0/2 | Not started | - |

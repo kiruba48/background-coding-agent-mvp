@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.3
 milestone_name: Conversational Scoping & REPL Enhancements
 status: planning
-stopped_at: Phase 21 context gathered
-last_updated: "2026-03-25T14:14:59.872Z"
+stopped_at: Completed 21-01-PLAN.md
+last_updated: "2026-03-26T02:02:38.935Z"
 last_activity: 2026-03-25 — Roadmap created, all 19 v2.3 requirements mapped
 progress:
   total_phases: 4
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  total_plans: 2
+  completed_plans: 1
 ---
 
 # Project State
@@ -51,6 +51,9 @@ Progress [          ] 0% — 0/4 phases complete
 - **SessionCallbacks methods are always optional** — `askQuestion?`, `onMessage?`, `onPrCreated?` all use `?` with graceful degradation so adapters can implement only what they need
 - **Scoping dialogue intentionally skipped in Slack v2.3** — `callbacks.askQuestion?` optional design handles this cleanly; document as known v2.3 limitation
 - **Per-user ReplState in Slack** — `Map<userId, ReplState>` created per incoming Slack message; `createSessionState()` called per user, not at module load; prevents cross-user corruption
+- [Phase 21]: lastRetryResult and lastIntent assigned inside try block (success path only), not in finally
+- [Phase 21]: description for dep updates uses formatted string 'update {dep} to {version ?? latest}' rather than raw intent text
+- [Phase 21]: prResult slot added to SessionOutput now (Plan 02 prep) to define the type contract before Plan 02 implements it
 
 ### Pending Todos
 
@@ -63,7 +66,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-25T14:14:59.869Z
-Stopped at: Phase 21 context gathered
-Resume file: .planning/phases/21-post-hoc-pr-state-foundation/21-CONTEXT.md
+Last session: 2026-03-26T02:02:38.932Z
+Stopped at: Completed 21-01-PLAN.md
+Resume file: None
 Next action: `/gsd:plan-phase 21`
