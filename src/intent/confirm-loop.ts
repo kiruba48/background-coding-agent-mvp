@@ -5,7 +5,7 @@ import type { ResolvedIntent } from './types.js';
 
 const MAX_DISPLAY_DESCRIPTION_LENGTH = 80;
 
-export function displayIntent(intent: ResolvedIntent): void {
+export function displayIntent(intent: ResolvedIntent, scopeHints?: string[]): void {
   const fromSession = pc.dim(' (from session)');
   console.log('');
   console.log(pc.bold('  Parsed Intent:'));
@@ -25,6 +25,10 @@ export function displayIntent(intent: ResolvedIntent): void {
   if (intent.dep) console.log(`    Dep:     ${pc.cyan(intent.dep)}`);
   if (intent.version) console.log(`    Version: ${pc.cyan(intent.version)}`);
   if (intent.createPr) console.log(`    PR:      ${pc.cyan('yes')}`);
+  if (scopeHints && scopeHints.length > 0) {
+    console.log(`  ${pc.bold('Scope hints:')}`);
+    scopeHints.forEach(h => console.log(`    ${pc.dim('-')} ${h}`));
+  }
   console.log('');
 }
 
@@ -34,6 +38,7 @@ export async function confirmLoop(
   initialIntent: ResolvedIntent,
   reparse: (correction: string, prior: ResolvedIntent) => Promise<ResolvedIntent>,
   maxRedirects = 3,
+  scopeHints?: string[],
 ): Promise<ResolvedIntent | null> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   rl.on('SIGINT', () => { rl.close(); process.exit(130); });
@@ -43,7 +48,7 @@ export async function confirmLoop(
 
   try {
     while (attempts < maxRedirects) {
-      displayIntent(current);
+      displayIntent(current, scopeHints);
       const answer = await rl.question(pc.bold('  Proceed? [Y/n] '));
 
       if (answer === '' || answer.toLowerCase() === 'y') {
@@ -74,7 +79,7 @@ export async function confirmLoop(
       current = await reparse(correction, current);
     }
     // Final display after last correction — user gets one more chance to accept
-    displayIntent(current);
+    displayIntent(current, scopeHints);
     const finalAnswer = await rl.question(pc.bold('  Proceed? [Y/n] '));
     if (finalAnswer === '' || finalAnswer.toLowerCase() === 'y') {
       return current;

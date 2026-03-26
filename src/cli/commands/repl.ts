@@ -245,13 +245,13 @@ export async function replCommand(): Promise<void> {
 
   const cancelWords = new Set(['exit', 'quit', 'cancel', 'abort', 'nevermind']);
 
-  const confirmCb: SessionCallbacks['confirm'] = async (intent, reparse) => {
+  const confirmCb: SessionCallbacks['confirm'] = async (intent, reparse, scopeHints) => {
     let current = intent;
     let attempts = 0;
     const maxRedirects = 3;
 
     while (attempts < maxRedirects) {
-      displayIntent(current);
+      displayIntent(current, scopeHints);
       const answer = await askQuestion(rl, pc.bold('  Proceed? [Y/n] '), activeQuestionControllerRef);
       if (answer === null) return null; // Ctrl+C
 
@@ -277,7 +277,7 @@ export async function replCommand(): Promise<void> {
     }
 
     // Loop exhausted via corrections — show final parsed result
-    displayIntent(current);
+    displayIntent(current, scopeHints);
     console.log(pc.red('\n  Max corrections reached. Please try again with a clearer command.'));
     return null;
   };
@@ -319,6 +319,9 @@ export async function replCommand(): Promise<void> {
       getSignal: () => taskController.signal,
       onAgentStart: () => progress.start(),
       onAgentEnd: () => progress.stop(),
+      askQuestion: async (prompt: string) => {
+        return askQuestion(rl, prompt, activeQuestionControllerRef);
+      },
     };
 
     try {
