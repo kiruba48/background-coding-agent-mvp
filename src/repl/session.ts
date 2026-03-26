@@ -4,13 +4,18 @@ import { runAgent, type AgentOptions, type AgentContext } from '../agent/index.j
 import { autoRegisterCwd } from '../cli/auto-register.js';
 import { ProjectRegistry } from '../agent/registry.js';
 import { createLogger } from '../cli/utils/logger.js';
+import { GitHubPRCreator } from '../orchestrator/pr-creator.js';
 import path from 'node:path';
 import pc from 'picocolors';
 import type { ReplState, SessionCallbacks, SessionOutput, TaskHistoryEntry } from './types.js';
+import type { PRResult } from '../types.js';
 import { MAX_HISTORY_ENTRIES } from './types.js';
 
 /** Maximum input length before LLM dispatch (characters) */
 const MAX_INPUT_LENGTH = 2000;
+
+/** PR meta-commands — intercepted before parseIntent to avoid intent parsing overhead */
+const PR_COMMANDS = new Set(['pr', 'create pr', 'create a pr']);
 
 /** Default agent options for REPL sessions */
 const REPL_TURN_LIMIT = 30;
@@ -61,6 +66,34 @@ export async function processInput(
       console.log('');
     }
     return { action: 'continue' };
+  }
+
+  // Post-hoc PR command — intercept before parseIntent
+  if (PR_COMMANDS.has(trimmed.toLowerCase())) {
+    if (!state.lastRetryResult || state.lastRetryResult.finalStatus !== 'success') {
+      console.log(pc.yellow('\n  No completed task in this session.\n'));
+      return { action: 'continue' };
+    }
+    const projectName = state.currentProjectName ?? 'unknown';
+    const description = state.lastIntent?.description
+      ?? state.lastIntent?.dep
+      ?? state.lastIntent?.taskType
+      ?? 'task';
+    console.log(pc.dim(`\n  Creating PR for: ${description} (${projectName})`));
+    try {
+      const creator = new GitHubPRCreator(state.lastIntent!.repo);
+      const prResult: PRResult = await creator.create({
+        taskType: state.lastIntent!.taskType,
+        originalTask: description,
+        retryResult: state.lastRetryResult,
+        description: state.lastIntent?.description,
+        taskCategory: state.lastIntent?.taskCategory ?? undefined,
+      });
+      return { action: 'continue', prResult };
+    } catch (err) {
+      console.error(pc.red(`\n  PR creation failed: ${(err as Error).message}\n`));
+      return { action: 'continue' };
+    }
   }
 
   // Guard against excessively long input before LLM dispatch

@@ -33,8 +33,20 @@ vi.mock('../cli/utils/logger.js', () => ({
   }),
 }));
 
+// Mock GitHubPRCreator — must use class/function syntax so `new GitHubPRCreator()` works
+vi.mock('../orchestrator/pr-creator.js', () => ({
+  GitHubPRCreator: vi.fn().mockImplementation(function (this: unknown) {
+    (this as { create: ReturnType<typeof vi.fn> }).create = vi.fn().mockResolvedValue({
+      url: 'https://github.com/org/repo/pull/42',
+      created: true,
+      branch: 'bg-agent/task-branch',
+    });
+  }),
+}));
+
 import { parseIntent } from '../intent/index.js';
 import { runAgent } from '../agent/index.js';
+import { GitHubPRCreator } from '../orchestrator/pr-creator.js';
 import { processInput, createSessionState } from './session.js';
 import { ProjectRegistry } from '../agent/registry.js';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -43,6 +55,7 @@ import path from 'node:path';
 
 const mockParseIntent = parseIntent as ReturnType<typeof vi.fn>;
 const mockRunAgent = runAgent as ReturnType<typeof vi.fn>;
+const MockGitHubPRCreator = GitHubPRCreator as unknown as ReturnType<typeof vi.fn>;
 
 function makeIntent(overrides: Partial<ResolvedIntent> = {}): ResolvedIntent {
   return {
@@ -711,5 +724,159 @@ describe('src/repl/session.ts', () => {
     await processInput('update something', state, callbacks, registry);
 
     expect(state.history[0].description).toBeUndefined();
+  });
+
+  // PR meta-command tests
+
+  // Test PR-01: processInput('pr') with valid state calls GitHubPRCreator and returns prResult
+  it('PR-01. processInput("pr") with valid state calls GitHubPRCreator and returns prResult', async () => {
+    const state = createSessionState();
+    state.lastRetryResult = makeRetryResult();
+    state.lastIntent = makeIntent({ repo: '/tmp/test-repo', description: 'add error handling' });
+    state.currentProjectName = 'test-repo';
+    const callbacks = makeCallbacks();
+
+    const output = await processInput('pr', state, callbacks, registry);
+
+    expect(output.action).toBe('continue');
+    expect(output.prResult?.url).toBe('https://github.com/org/repo/pull/42');
+    expect(mockParseIntent).not.toHaveBeenCalled();
+  });
+
+  // Test PR-02a: processInput('pr') with no lastRetryResult returns continue with no prResult and 'No completed task'
+  it('PR-02a. processInput("pr") with no lastRetryResult returns continue and logs "No completed task"', async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(' '));
+    });
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks();
+
+    const output = await processInput('pr', state, callbacks, registry);
+
+    vi.restoreAllMocks();
+    expect(output.action).toBe('continue');
+    expect(output.prResult).toBeUndefined();
+    expect(logs.join('\n')).toContain('No completed task in this session');
+    expect(MockGitHubPRCreator).not.toHaveBeenCalled();
+    expect(mockParseIntent).not.toHaveBeenCalled();
+  });
+
+  // Test PR-02b: processInput('pr') with lastRetryResult.finalStatus='failed' returns 'No completed task'
+  it('PR-02b. processInput("pr") with failed lastRetryResult logs "No completed task"', async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(' '));
+    });
+
+    const state = createSessionState();
+    state.lastRetryResult = makeRetryResult({ finalStatus: 'failed' });
+    state.lastIntent = makeIntent();
+    const callbacks = makeCallbacks();
+
+    const output = await processInput('pr', state, callbacks, registry);
+
+    vi.restoreAllMocks();
+    expect(output.action).toBe('continue');
+    expect(output.prResult).toBeUndefined();
+    expect(logs.join('\n')).toContain('No completed task in this session');
+    expect(MockGitHubPRCreator).not.toHaveBeenCalled();
+  });
+
+  // Test PR-03: processInput('pr') with valid state prints 'Creating PR for: ...' before create()
+  it('PR-03. processInput("pr") with valid state prints "Creating PR for:" summary line', async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(' '));
+    });
+
+    const state = createSessionState();
+    state.lastRetryResult = makeRetryResult();
+    state.lastIntent = makeIntent({ repo: '/tmp/test-repo', description: 'add error handling' });
+    state.currentProjectName = 'test-repo';
+    const callbacks = makeCallbacks();
+
+    await processInput('pr', state, callbacks, registry);
+
+    vi.restoreAllMocks();
+    const allOutput = logs.join('\n');
+    expect(allOutput).toContain('Creating PR for:');
+    expect(allOutput).toContain('add error handling');
+    expect(allOutput).toContain('test-repo');
+  });
+
+  // Test PR-04a: processInput('create pr') is intercepted; parseIntent NOT called
+  it('PR-04a. processInput("create pr") is intercepted and calls GitHubPRCreator; parseIntent NOT called', async () => {
+    const state = createSessionState();
+    state.lastRetryResult = makeRetryResult();
+    state.lastIntent = makeIntent({ repo: '/tmp/test-repo' });
+    state.currentProjectName = 'test-repo';
+    const callbacks = makeCallbacks();
+
+    const output = await processInput('create pr', state, callbacks, registry);
+
+    expect(mockParseIntent).not.toHaveBeenCalled();
+    expect(MockGitHubPRCreator).toHaveBeenCalled();
+    expect(output.prResult?.url).toBe('https://github.com/org/repo/pull/42');
+  });
+
+  // Test PR-04b: processInput('create a pr') is intercepted; parseIntent NOT called
+  it('PR-04b. processInput("create a pr") is intercepted and calls GitHubPRCreator; parseIntent NOT called', async () => {
+    const state = createSessionState();
+    state.lastRetryResult = makeRetryResult();
+    state.lastIntent = makeIntent({ repo: '/tmp/test-repo' });
+    state.currentProjectName = 'test-repo';
+    const callbacks = makeCallbacks();
+
+    const output = await processInput('create a pr', state, callbacks, registry);
+
+    expect(mockParseIntent).not.toHaveBeenCalled();
+    expect(MockGitHubPRCreator).toHaveBeenCalled();
+    expect(output.prResult?.url).toBe('https://github.com/org/repo/pull/42');
+  });
+
+  // Test PR-ERR: processInput('pr') where create() throws returns continue with console.error
+  it('PR-ERR. processInput("pr") where create() throws returns continue with error logged', async () => {
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      errors.push(args.join(' '));
+    });
+
+    // Override create() to throw
+    MockGitHubPRCreator.mockImplementationOnce(() => ({
+      create: vi.fn().mockRejectedValue(new Error('GITHUB_TOKEN environment variable is required')),
+    }));
+
+    const state = createSessionState();
+    state.lastRetryResult = makeRetryResult();
+    state.lastIntent = makeIntent({ repo: '/tmp/test-repo' });
+    state.currentProjectName = 'test-repo';
+    const callbacks = makeCallbacks();
+
+    const output = await processInput('pr', state, callbacks, registry);
+
+    vi.restoreAllMocks();
+    expect(output.action).toBe('continue');
+    expect(output.prResult).toBeUndefined();
+    expect(errors.join('\n')).toContain('GITHUB_TOKEN');
+  });
+
+  // Test PR-PASSTHROUGH: processInput('fix the PR template') calls parseIntent (NOT intercepted)
+  it('PR-PASSTHROUGH. processInput("fix the PR template") is NOT intercepted; parseIntent IS called', async () => {
+    const intent = makeIntent({ description: 'fix the PR template' });
+    const retryResult = makeRetryResult();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(retryResult);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await processInput('fix the PR template', state, callbacks, registry);
+
+    expect(mockParseIntent).toHaveBeenCalled();
+    expect(MockGitHubPRCreator).not.toHaveBeenCalled();
   });
 });
