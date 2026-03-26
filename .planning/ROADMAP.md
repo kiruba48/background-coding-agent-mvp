@@ -168,7 +168,7 @@ Plans:
 | 18. Intent Parser Generalization | v2.2 | 2/2 | Complete | 2026-03-23 |
 | 19. Generic Prompt Builder | v2.2 | 2/2 | Complete | 2026-03-24 |
 | 20. Verification & Safety | v2.2 | 2/2 | Complete | 2026-03-24 |
-| 21. Post-Hoc PR & State Foundation | 2/2 | Complete   | 2026-03-26 | - |
+| 21. Post-Hoc PR & State Foundation | 2/2 | Complete    | 2026-03-26 | - |
 | 22. Conversational Scoping Dialogue | v2.3 | 0/2 | Not started | - |
 | 23. Follow-Up Task Referencing | v2.3 | 0/1 | Not started | - |
 | 24. Slack Bot Adapter | v2.3 | 0/2 | Not started | - |
