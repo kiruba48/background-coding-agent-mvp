@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.3
 milestone_name: Conversational Scoping & REPL Enhancements
 status: planning
-stopped_at: Completed 21-01-PLAN.md
-last_updated: "2026-03-26T02:02:38.935Z"
+stopped_at: Completed 21-02-PLAN.md
+last_updated: "2026-03-26T02:06:52.448Z"
 last_activity: 2026-03-25 — Roadmap created, all 19 v2.3 requirements mapped
 progress:
   total_phases: 4
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 2
-  completed_plans: 1
+  completed_plans: 2
 ---
 
 # Project State
@@ -54,6 +54,7 @@ Progress [          ] 0% — 0/4 phases complete
 - [Phase 21]: lastRetryResult and lastIntent assigned inside try block (success path only), not in finally
 - [Phase 21]: description for dep updates uses formatted string 'update {dep} to {version ?? latest}' rather than raw intent text
 - [Phase 21]: prResult slot added to SessionOutput now (Plan 02 prep) to define the type contract before Plan 02 implements it
+- [Phase 21]: vi.fn().mockImplementation with this-binding used for GitHubPRCreator mock (arrow function form fails as constructor in vitest)
 
 ### Pending Todos
 
@@ -66,7 +67,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-26T02:02:38.932Z
-Stopped at: Completed 21-01-PLAN.md
+Last session: 2026-03-26T02:06:52.446Z
+Stopped at: Completed 21-02-PLAN.md
 Resume file: None
 Next action: `/gsd:plan-phase 21`
