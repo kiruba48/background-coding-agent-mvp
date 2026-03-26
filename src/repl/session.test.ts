@@ -836,13 +836,8 @@ describe('src/repl/session.ts', () => {
     expect(output.prResult?.url).toBe('https://github.com/org/repo/pull/42');
   });
 
-  // Test PR-ERR: processInput('pr') where create() throws returns continue with console.error
-  it('PR-ERR. processInput("pr") where create() throws returns continue with error logged', async () => {
-    const errors: string[] = [];
-    vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
-      errors.push(args.join(' '));
-    });
-
+  // Test PR-ERR: processInput('pr') where create() throws returns prResult with error (S1 unified error path)
+  it('PR-ERR. processInput("pr") where create() throws returns prResult with error field', async () => {
     // Override create() to throw
     MockGitHubPRCreator.mockImplementationOnce(() => ({
       create: vi.fn().mockRejectedValue(new Error('GITHUB_TOKEN environment variable is required')),
@@ -856,10 +851,95 @@ describe('src/repl/session.ts', () => {
 
     const output = await processInput('pr', state, callbacks, registry);
 
-    vi.restoreAllMocks();
     expect(output.action).toBe('continue');
-    expect(output.prResult).toBeUndefined();
-    expect(errors.join('\n')).toContain('GITHUB_TOKEN');
+    expect(output.prResult).toBeDefined();
+    expect(output.prResult?.error).toContain('GITHUB_TOKEN');
+    expect(output.prResult?.created).toBe(false);
+  });
+
+  // Test PR-04c: processInput('create a pr for that') is intercepted (P1 fix — SC-04)
+  it('PR-04c. processInput("create a pr for that") is intercepted; parseIntent NOT called', async () => {
+    const state = createSessionState();
+    state.lastRetryResult = makeRetryResult();
+    state.lastIntent = makeIntent({ repo: '/tmp/test-repo' });
+    state.currentProjectName = 'test-repo';
+    const callbacks = makeCallbacks();
+
+    const output = await processInput('create a pr for that', state, callbacks, registry);
+
+    expect(mockParseIntent).not.toHaveBeenCalled();
+    expect(MockGitHubPRCreator).toHaveBeenCalled();
+    expect(output.prResult?.url).toBe('https://github.com/org/repo/pull/42');
+  });
+
+  // Test PR-04d: processInput('create pr for this') is intercepted
+  it('PR-04d. processInput("create pr for this") is intercepted; parseIntent NOT called', async () => {
+    const state = createSessionState();
+    state.lastRetryResult = makeRetryResult();
+    state.lastIntent = makeIntent({ repo: '/tmp/test-repo' });
+    state.currentProjectName = 'test-repo';
+    const callbacks = makeCallbacks();
+
+    const output = await processInput('create pr for this', state, callbacks, registry);
+
+    expect(mockParseIntent).not.toHaveBeenCalled();
+    expect(MockGitHubPRCreator).toHaveBeenCalled();
+    expect(output.prResult?.url).toBe('https://github.com/org/repo/pull/42');
+  });
+
+  // Test PR-DUP: second 'pr' after successful PR returns "No completed task" (P2 fix — duplicate prevention)
+  it('PR-DUP. second "pr" after successful PR returns "No completed task"', async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(' '));
+    });
+
+    const state = createSessionState();
+    state.lastRetryResult = makeRetryResult();
+    state.lastIntent = makeIntent({ repo: '/tmp/test-repo' });
+    state.currentProjectName = 'test-repo';
+    const callbacks = makeCallbacks();
+
+    // First PR — succeeds and clears state
+    const first = await processInput('pr', state, callbacks, registry);
+    expect(first.prResult?.url).toBe('https://github.com/org/repo/pull/42');
+
+    // Second PR — state cleared, should get "No completed task"
+    const second = await processInput('pr', state, callbacks, registry);
+    expect(second.prResult).toBeUndefined();
+
+    vi.restoreAllMocks();
+    expect(logs.join('\n')).toContain('No completed task');
+  });
+
+  // Test V1: failed runAgent does NOT overwrite previous successful lastRetryResult
+  it('V1. failed runAgent does NOT overwrite previous successful lastRetryResult', async () => {
+    const successResult = makeRetryResult({ finalStatus: 'success' });
+    const successIntent = makeIntent({ repo: '/tmp/repo-a', description: 'first task' });
+    const failedResult = makeRetryResult({ finalStatus: 'failed' });
+    const failedIntent = makeIntent({ repo: '/tmp/repo-b', description: 'second task' });
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks();
+
+    // First task succeeds
+    mockParseIntent.mockResolvedValueOnce(successIntent);
+    mockRunAgent.mockResolvedValueOnce(successResult);
+    (callbacks.confirm as ReturnType<typeof vi.fn>).mockResolvedValueOnce(successIntent);
+    await processInput('first task', state, callbacks, registry);
+
+    expect(state.lastRetryResult).toBe(successResult);
+    expect(state.lastIntent).toBe(successIntent);
+
+    // Second task fails — should NOT overwrite
+    mockParseIntent.mockResolvedValueOnce(failedIntent);
+    mockRunAgent.mockResolvedValueOnce(failedResult);
+    (callbacks.confirm as ReturnType<typeof vi.fn>).mockResolvedValueOnce(failedIntent);
+    await processInput('second task', state, callbacks, registry);
+
+    // State still holds the successful result
+    expect(state.lastRetryResult).toBe(successResult);
+    expect(state.lastIntent).toBe(successIntent);
   });
 
   // Test PR-PASSTHROUGH: processInput('fix the PR template') calls parseIntent (NOT intercepted)

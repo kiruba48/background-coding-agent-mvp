@@ -14,8 +14,8 @@ import { MAX_HISTORY_ENTRIES } from './types.js';
 /** Maximum input length before LLM dispatch (characters) */
 const MAX_INPUT_LENGTH = 2000;
 
-/** PR meta-commands — intercepted before parseIntent to avoid intent parsing overhead */
-const PR_COMMANDS = new Set(['pr', 'create pr', 'create a pr']);
+/** PR meta-command pattern — matches "pr", "create pr", "create a pr", and trailing "for that/this/it" variants */
+const PR_COMMAND_RE = /^(create\s+a?\s*pr|pr)(\s+for\s+(that|this|it))?$/i;
 
 /** Default agent options for REPL sessions */
 const REPL_TURN_LIMIT = 30;
@@ -69,8 +69,8 @@ export async function processInput(
   }
 
   // Post-hoc PR command — intercept before parseIntent
-  if (PR_COMMANDS.has(trimmed.toLowerCase())) {
-    if (!state.lastRetryResult || state.lastRetryResult.finalStatus !== 'success') {
+  if (PR_COMMAND_RE.test(trimmed)) {
+    if (!state.lastRetryResult || !state.lastIntent || state.lastRetryResult.finalStatus !== 'success') {
       console.log(pc.yellow('\n  No completed task in this session.\n'));
       return { action: 'continue' };
     }
@@ -89,10 +89,12 @@ export async function processInput(
         description: state.lastIntent?.description,
         taskCategory: state.lastIntent?.taskCategory ?? undefined,
       });
+      // Clear state to prevent duplicate PRs for the same task
+      state.lastRetryResult = undefined;
+      state.lastIntent = undefined;
       return { action: 'continue', prResult };
     } catch (err) {
-      console.error(pc.red(`\n  PR creation failed: ${(err as Error).message}\n`));
-      return { action: 'continue' };
+      return { action: 'continue', prResult: { url: '', created: false, branch: '', error: (err as Error).message } };
     }
   }
 
@@ -180,9 +182,13 @@ export async function processInput(
   let historyStatus: TaskHistoryEntry['status'] = 'failed';
   try {
     const result = await runAgent(agentOptions, agentContext);
-    // Store for post-hoc PR and follow-up referencing (FLLW-02) — success path only
-    state.lastRetryResult = result;
-    state.lastIntent = confirmed;
+    // Store for post-hoc PR and follow-up referencing (FLLW-02) — success path only.
+    // Non-success results must NOT overwrite a previous successful result,
+    // so the user can still `pr` after a subsequent failed task.
+    if (result.finalStatus === 'success') {
+      state.lastRetryResult = result;
+      state.lastIntent = confirmed;
+    }
     historyStatus = result.finalStatus === 'success'
       ? 'success'
       : result.finalStatus === 'zero_diff'
