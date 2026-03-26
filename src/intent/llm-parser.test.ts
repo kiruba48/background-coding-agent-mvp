@@ -19,6 +19,7 @@ vi.mock('@anthropic-ai/sdk', () => {
 });
 
 import { llmParse, LlmParseError } from './llm-parser.js';
+import { IntentSchema } from './types.js';
 
 const VALID_RESPONSE = {
   taskType: 'npm-dependency-update',
@@ -229,5 +230,56 @@ describe('llmParse', () => {
     // The escaped input in the message should be at most 500 chars of 'x'
     expect(userMessage).toContain('x'.repeat(500));
     expect(userMessage).not.toContain('x'.repeat(501));
+  });
+
+  describe('scopingQuestions', () => {
+    it('IntentSchema.parse succeeds with scopingQuestions array present', () => {
+      const result = IntentSchema.parse({
+        ...VALID_RESPONSE,
+        scopingQuestions: ['Which area should the error handling focus on?', 'Should tests be updated?'],
+      });
+      expect(result.scopingQuestions).toEqual(['Which area should the error handling focus on?', 'Should tests be updated?']);
+    });
+
+    it('IntentSchema.parse succeeds with scopingQuestions omitted (defaults to [])', () => {
+      const result = IntentSchema.parse(VALID_RESPONSE);
+      expect(result.scopingQuestions).toEqual([]);
+    });
+
+    it('llmParse returns scopingQuestions from LLM response', async () => {
+      const responseWithQuestions = {
+        ...VALID_RESPONSE,
+        taskType: 'generic',
+        scopingQuestions: ['Which area should be refactored?', 'Should tests be updated?'],
+      };
+      mockCreate.mockResolvedValue(makeResponse(responseWithQuestions));
+      const result = await llmParse('refactor the auth module', 'package.json dependencies: express');
+      expect(result.scopingQuestions).toEqual(['Which area should be refactored?', 'Should tests be updated?']);
+    });
+
+    it('llmParse uses max_tokens of 1024', async () => {
+      mockCreate.mockResolvedValue(makeResponse(VALID_RESPONSE));
+      await llmParse('update recharts', 'deps');
+      const callArgs = mockCreate.mock.calls[0][0];
+      expect(callArgs.max_tokens).toBe(1024);
+    });
+
+    it('llmParse includes top_level_dirs in message when repoPath is provided', async () => {
+      // We pass a repoPath to trigger readTopLevelDirs — use /tmp as an existing dir
+      mockCreate.mockResolvedValue(makeResponse(VALID_RESPONSE));
+      await llmParse('update recharts', 'deps', undefined, '/tmp');
+      const callArgs = mockCreate.mock.calls[0][0];
+      const userMessage = callArgs.messages[0].content as string;
+      // /tmp exists and may have dirs — at minimum the tag should be present
+      expect(userMessage).toContain('top_level_dirs');
+    });
+
+    it('llmParse does NOT include top_level_dirs when repoPath is not provided', async () => {
+      mockCreate.mockResolvedValue(makeResponse(VALID_RESPONSE));
+      await llmParse('update recharts', 'deps');
+      const callArgs = mockCreate.mock.calls[0][0];
+      const userMessage = callArgs.messages[0].content as string;
+      expect(userMessage).not.toContain('top_level_dirs');
+    });
   });
 });
