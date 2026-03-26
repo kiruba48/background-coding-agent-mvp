@@ -555,4 +555,161 @@ describe('src/repl/session.ts', () => {
       expect.objectContaining({ history: [] }),
     );
   });
+
+  // FLLW-02 tests: lastRetryResult and lastIntent stored on state
+
+  // Test FLLW-02a: After successful runAgent, state.lastRetryResult equals the returned RetryResult object
+  it('FLLW-02a. state.lastRetryResult equals returned RetryResult after successful runAgent', async () => {
+    const intent = makeIntent();
+    const retryResult = makeRetryResult();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(retryResult);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await processInput('update lodash', state, callbacks, registry);
+
+    expect(state.lastRetryResult).toBe(retryResult);
+  });
+
+  // Test FLLW-02b: After successful runAgent, state.lastIntent equals the confirmed ResolvedIntent object
+  it('FLLW-02b. state.lastIntent equals confirmed intent after successful runAgent', async () => {
+    const intent = makeIntent();
+    const retryResult = makeRetryResult();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(retryResult);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await processInput('update lodash', state, callbacks, registry);
+
+    expect(state.lastIntent).toBe(intent);
+  });
+
+  // Test FLLW-02c: After runAgent throws (non-abort), state.lastRetryResult remains undefined
+  it('FLLW-02c. state.lastRetryResult remains undefined after runAgent throws non-abort error', async () => {
+    const intent = makeIntent();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockRejectedValue(new Error('agent crashed'));
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await expect(processInput('update lodash', state, callbacks, registry)).rejects.toThrow('agent crashed');
+
+    expect(state.lastRetryResult).toBeUndefined();
+  });
+
+  // Test FLLW-02d: After runAgent throws AbortError, state.lastRetryResult remains undefined
+  it('FLLW-02d. state.lastRetryResult remains undefined after runAgent throws AbortError', async () => {
+    const intent = makeIntent();
+    mockParseIntent.mockResolvedValue(intent);
+    const err = new Error('aborted');
+    err.name = 'AbortError';
+    mockRunAgent.mockRejectedValue(err);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await expect(processInput('update lodash', state, callbacks, registry)).rejects.toThrow('aborted');
+
+    expect(state.lastRetryResult).toBeUndefined();
+  });
+
+  // FLLW-01 tests: description populated on TaskHistoryEntry
+
+  // Test FLLW-01a: After successful generic task, state.history[0].description equals intent.description
+  it('FLLW-01a. history entry description equals intent.description for generic task', async () => {
+    const intent = makeIntent({
+      taskType: 'generic',
+      description: 'add error handling to auth.ts',
+      dep: null,
+      version: null,
+    });
+    const retryResult = makeRetryResult();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(retryResult);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await processInput('add error handling to auth.ts', state, callbacks, registry);
+
+    expect(state.history[0].description).toBe('add error handling to auth.ts');
+  });
+
+  // Test FLLW-01b: After successful dep update with dep='lodash' version='4.0.0', description is 'update lodash to 4.0.0'
+  it('FLLW-01b. history entry description is "update lodash to 4.0.0" for dep update with version', async () => {
+    const intent = makeIntent({
+      taskType: 'npm-dependency-update',
+      dep: 'lodash',
+      version: '4.0.0',
+    });
+    const retryResult = makeRetryResult();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(retryResult);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await processInput('update lodash to 4.0.0', state, callbacks, registry);
+
+    expect(state.history[0].description).toBe('update lodash to 4.0.0');
+  });
+
+  // Test FLLW-01c: After successful dep update with dep='lodash' version=null, description is 'update lodash to latest'
+  it('FLLW-01c. history entry description is "update lodash to latest" for dep update with null version', async () => {
+    const intent = makeIntent({
+      taskType: 'npm-dependency-update',
+      dep: 'lodash',
+      version: null,
+    });
+    const retryResult = makeRetryResult();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(retryResult);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await processInput('update lodash', state, callbacks, registry);
+
+    expect(state.history[0].description).toBe('update lodash to latest');
+  });
+
+  // Test FLLW-01d: After dep update with dep=null, state.history[0].description is undefined
+  it('FLLW-01d. history entry description is undefined when dep is null', async () => {
+    const intent = makeIntent({
+      taskType: 'npm-dependency-update',
+      dep: null,
+      version: null,
+    });
+    const retryResult = makeRetryResult();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(retryResult);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await processInput('update something', state, callbacks, registry);
+
+    expect(state.history[0].description).toBeUndefined();
+  });
 });

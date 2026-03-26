@@ -1,5 +1,5 @@
 import type { ResolvedIntent, TaskType } from '../intent/types.js';
-import type { RetryResult } from '../types.js';
+import type { PRResult, RetryResult } from '../types.js';
 
 /** A single completed task entry stored in session history. */
 export interface TaskHistoryEntry {
@@ -8,6 +8,7 @@ export interface TaskHistoryEntry {
   version: string | null;
   repo: string;
   status: 'success' | 'failed' | 'cancelled' | 'zero_diff';
+  description?: string;  // FLLW-01: human-readable task description for follow-up referencing
 }
 
 /** Maximum number of history entries to retain per session. */
@@ -18,6 +19,8 @@ export interface ReplState {
   currentProject: string | null;   // resolved repo path from most recent task
   currentProjectName: string | null; // short name for prompt display
   history: TaskHistoryEntry[];     // recent completed task entries for multi-turn context
+  lastRetryResult?: RetryResult;   // FLLW-02: last successful run result (for post-hoc PR and follow-up)
+  lastIntent?: ResolvedIntent;     // FLLW-02: last confirmed intent (for post-hoc PR and follow-up)
 }
 
 /** Callbacks the CLI adapter provides to the session core for I/O that requires process interaction. */
@@ -39,4 +42,5 @@ export interface SessionOutput {
   action: 'continue' | 'quit';
   result?: RetryResult | null;  // null = user cancelled before run; undefined = quit
   intent?: ResolvedIntent;       // the resolved intent (for result block rendering)
+  prResult?: PRResult;           // post-hoc PR result (for Plan 02)
 }

@@ -147,6 +147,9 @@ export async function processInput(
   let historyStatus: TaskHistoryEntry['status'] = 'failed';
   try {
     const result = await runAgent(agentOptions, agentContext);
+    // Store for post-hoc PR and follow-up referencing (FLLW-02) — success path only
+    state.lastRetryResult = result;
+    state.lastIntent = confirmed;
     historyStatus = result.finalStatus === 'success'
       ? 'success'
       : result.finalStatus === 'zero_diff'
@@ -164,6 +167,11 @@ export async function processInput(
       version: confirmed.version ?? null,
       repo: confirmed.repo,
       status: historyStatus,
+      description: confirmed.taskType === 'generic'
+        ? confirmed.description
+        : confirmed.dep
+          ? `update ${confirmed.dep} to ${confirmed.version ?? 'latest'}`
+          : undefined,
     });
   }
 }
