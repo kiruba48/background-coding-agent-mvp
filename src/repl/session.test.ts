@@ -371,50 +371,19 @@ describe('src/repl/session.ts', () => {
     expect(mockParseIntent).not.toHaveBeenCalled();
   });
 
-  // Test 12: clarify re-parse that returns low confidence bails out
-  it('12. clarify re-parse returning low confidence bails out gracefully', async () => {
+  // Test 12: clarify re-parse forces high confidence and proceeds to confirm
+  it('12. clarify selection forces high confidence and proceeds to confirm', async () => {
     const lowIntent = makeIntent({
       confidence: 'low',
       clarifications: [
         { label: 'Update lodash', intent: 'update lodash' },
       ],
     });
-    const stillLow = makeIntent({ confidence: 'low' });
+    const reparsed = makeIntent({ confidence: 'low' }); // LLM still says low...
 
     mockParseIntent
       .mockResolvedValueOnce(lowIntent)
-      .mockResolvedValueOnce(stillLow);
-
-    const state = createSessionState();
-    const callbacks = makeCallbacks({
-      clarify: vi.fn().mockResolvedValue('update lodash'),
-    });
-
-    const output = await processInput('update something', state, callbacks, registry);
-
-    expect(output.action).toBe('continue');
-    expect(output.result).toBeNull();
-    expect(callbacks.confirm).not.toHaveBeenCalled();
-    expect(mockRunAgent).not.toHaveBeenCalled();
-  });
-
-  it('12b. clarify re-parse returning low confidence shows guidance message', async () => {
-    const logs: string[] = [];
-    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
-      logs.push(args.join(' '));
-    });
-
-    const lowIntent = makeIntent({
-      confidence: 'low',
-      clarifications: [
-        { label: 'Update lodash', intent: 'update lodash' },
-      ],
-    });
-    const stillLow = makeIntent({ confidence: 'low' });
-
-    mockParseIntent
-      .mockResolvedValueOnce(lowIntent)
-      .mockResolvedValueOnce(stillLow);
+      .mockResolvedValueOnce(reparsed);
 
     const state = createSessionState();
     const callbacks = makeCallbacks({
@@ -423,10 +392,35 @@ describe('src/repl/session.ts', () => {
 
     await processInput('update something', state, callbacks, registry);
 
-    vi.restoreAllMocks();
-    const allOutput = logs.join('\n');
-    expect(allOutput).toContain('too ambiguous');
-    expect(allOutput).toContain('specific code change');
+    // ...but we force high confidence, so confirm IS called
+    expect(callbacks.confirm).toHaveBeenCalled();
+  });
+
+  it('12b. clarify re-parse enriches intent with original input context', async () => {
+    const lowIntent = makeIntent({
+      confidence: 'low',
+      clarifications: [
+        { label: 'Update lodash', intent: 'update lodash' },
+      ],
+    });
+    const reparsed = makeIntent({ confidence: 'low' });
+
+    mockParseIntent
+      .mockResolvedValueOnce(lowIntent)
+      .mockResolvedValueOnce(reparsed);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      clarify: vi.fn().mockResolvedValue('update lodash'),
+    });
+
+    await processInput('update something in myapp', state, callbacks, registry);
+
+    // Re-parse should include original input for context
+    expect(mockParseIntent).toHaveBeenNthCalledWith(2,
+      'update something in myapp — specifically: update lodash',
+      expect.any(Object),
+    );
   });
 
   it('13. calls onAgentStart before runAgent and onAgentEnd after', async () => {

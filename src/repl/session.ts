@@ -169,11 +169,12 @@ export async function processInput(
     if (!selectedIntent) {
       return { action: 'continue', result: null };
     }
-    // Re-parse the selected clarification; if still ambiguous, bail out
+    // Re-parse with original context so the LLM sees repo/file/function names
+    const enrichedIntent = `${trimmed} — specifically: ${selectedIntent}`;
     callbacks.onParseStart?.();
     let reparsed;
     try {
-      reparsed = await parseIntent(selectedIntent, {
+      reparsed = await parseIntent(enrichedIntent, {
         repoPath: intent.repo,
         registry,
         history: historySnapshot,
@@ -181,13 +182,11 @@ export async function processInput(
     } finally {
       callbacks.onParseEnd?.();
     }
-    if (reparsed.confidence === 'low') {
-      console.log(pc.yellow('\n  That selection is still too ambiguous to act on.'));
-      console.log(pc.yellow('  Try describing a specific code change instead, e.g.:'));
-      console.log(pc.cyan('    "add retry logic to the API client"'));
-      console.log(pc.cyan('    "rename userId to accountId in src/auth"'));
-      console.log('');
-      return { action: 'continue', result: null };
+    // User already disambiguated by picking a clarification — force high confidence
+    reparsed.confidence = 'high';
+    // Preserve the clarification as the description (cleaner than the enriched string)
+    if (reparsed.taskType === 'generic') {
+      reparsed.description = selectedIntent;
     }
     intent = reparsed;
   }
