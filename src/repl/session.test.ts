@@ -92,7 +92,14 @@ function makeCallbacks(overrides: Partial<SessionCallbacks> = {}): SessionCallba
 }
 
 describe('runScopingDialogue', () => {
-  it('calls askQuestion for each question and returns formatted hints', async () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('calls askQuestion for each question and returns structured hints', async () => {
     const askQuestion = vi.fn()
       .mockResolvedValueOnce('auth module')
       .mockResolvedValueOnce('yes');
@@ -100,8 +107,8 @@ describe('runScopingDialogue', () => {
     const hints = await runScopingDialogue(questions, askQuestion);
     expect(askQuestion).toHaveBeenCalledTimes(2);
     expect(hints).toEqual([
-      'Which area should be refactored?: auth module',
-      'Should tests be updated?: yes',
+      { question: 'Which area should be refactored?', answer: 'auth module' },
+      { question: 'Should tests be updated?', answer: 'yes' },
     ]);
   });
 
@@ -123,7 +130,7 @@ describe('runScopingDialogue', () => {
       .mockResolvedValueOnce('auth');
     const questions = ['Q1', 'Q2', 'Q3'];
     const hints = await runScopingDialogue(questions, askQuestion);
-    expect(hints).toEqual(['Q3: auth']);
+    expect(hints).toEqual([{ question: 'Q3', answer: 'auth' }]);
   });
 
   it('caps at 3 questions even if more provided', async () => {
@@ -1136,10 +1143,11 @@ describe('src/repl/session.ts', () => {
 
     expect(mockRunAgent).toHaveBeenCalledOnce();
     const [agentOptions] = mockRunAgent.mock.calls[0];
+    // AgentOptions receives flattened strings for the prompt
     expect(agentOptions.scopeHints).toEqual(['Which area?: auth module']);
   });
 
-  it('SCOPE-05. processInput passes scopeHints to callbacks.confirm', async () => {
+  it('SCOPE-05. processInput passes structured scopeHints to callbacks.confirm', async () => {
     const intent = makeIntent({
       taskType: 'generic',
       dep: null,
@@ -1164,6 +1172,7 @@ describe('src/repl/session.ts', () => {
 
     expect(confirmMock).toHaveBeenCalledOnce();
     const [, , scopeHints] = confirmMock.mock.calls[0];
-    expect(scopeHints).toEqual(['Which area?: auth module']);
+    // Confirm receives structured ScopeHint objects for display
+    expect(scopeHints).toEqual([{ question: 'Which area?', answer: 'auth module' }]);
   });
 });

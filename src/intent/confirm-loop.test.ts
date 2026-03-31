@@ -237,22 +237,24 @@ describe('displayIntent', () => {
 
   // --- Scope hints display tests ---
 
-  it('renders "Scope hints:" header and indented bullets when scopeHints is non-empty', () => {
+  it('renders Scope section with Q/A pairs when scopeHints is non-empty', () => {
     const logs: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
       logs.push(args.join(' '));
     });
 
-    displayIntent(SAMPLE_INTENT, ['Which files?: src/auth/', 'Include tests?: yes']);
+    displayIntent(SAMPLE_INTENT, [{ question: 'Which files?', answer: 'src/auth/' }, { question: 'Include tests?', answer: 'yes' }]);
 
     vi.restoreAllMocks();
     const allOutput = logs.join('\n');
-    expect(allOutput).toContain('Scope hints:');
-    expect(allOutput).toContain('Which files?: src/auth/');
-    expect(allOutput).toContain('Include tests?: yes');
+    expect(allOutput).toContain('Scope:');
+    expect(allOutput).toContain('Which files?');
+    expect(allOutput).toContain('src/auth/');
+    expect(allOutput).toContain('Include tests?');
+    expect(allOutput).toContain('yes');
   });
 
-  it('does NOT render "Scope hints:" section when scopeHints is empty array', () => {
+  it('does NOT render Scope section when scopeHints is empty array', () => {
     const logs: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
       logs.push(args.join(' '));
@@ -262,10 +264,10 @@ describe('displayIntent', () => {
 
     vi.restoreAllMocks();
     const allOutput = logs.join('\n');
-    expect(allOutput).not.toContain('Scope hints:');
+    expect(allOutput).not.toContain('Scope:');
   });
 
-  it('does NOT render "Scope hints:" section when scopeHints is undefined', () => {
+  it('does NOT render Scope section when scopeHints is undefined', () => {
     const logs: string[] = [];
     vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
       logs.push(args.join(' '));
@@ -275,7 +277,7 @@ describe('displayIntent', () => {
 
     vi.restoreAllMocks();
     const allOutput = logs.join('\n');
-    expect(allOutput).not.toContain('Scope hints:');
+    expect(allOutput).not.toContain('Scope:');
   });
 
   it('still renders all existing fields when scopeHints is provided', () => {
@@ -284,7 +286,7 @@ describe('displayIntent', () => {
       logs.push(args.join(' '));
     });
 
-    displayIntent(SAMPLE_INTENT, ['Scope hint one']);
+    displayIntent(SAMPLE_INTENT, [{ question: 'Scope question', answer: 'hint one' }]);
 
     vi.restoreAllMocks();
     const allOutput = logs.join('\n');
@@ -292,7 +294,7 @@ describe('displayIntent', () => {
     expect(allOutput).toContain('myapp');
     expect(allOutput).toContain('recharts');
     expect(allOutput).toContain('latest');
-    expect(allOutput).toContain('Scope hints:');
+    expect(allOutput).toContain('Scope:');
   });
 });
 

@@ -7,7 +7,7 @@ import { createLogger } from '../cli/utils/logger.js';
 import { GitHubPRCreator } from '../orchestrator/pr-creator.js';
 import path from 'node:path';
 import pc from 'picocolors';
-import type { ReplState, SessionCallbacks, SessionOutput, TaskHistoryEntry } from './types.js';
+import type { ReplState, SessionCallbacks, SessionOutput, TaskHistoryEntry, ScopeHint } from './types.js';
 import type { PRResult } from '../types.js';
 import { MAX_HISTORY_ENTRIES } from './types.js';
 
@@ -40,22 +40,27 @@ function sanitizeForDisplay(text: string): string {
 
 /**
  * Run the scoping dialogue — ask up to MAX_SCOPING_QUESTIONS LLM-generated questions.
- * Returns formatted hint strings ("question: answer") for non-empty answers.
+ * Returns structured hint objects with separate question/answer fields.
  * Null returns (Ctrl+C) abort the entire dialogue. Empty strings (Enter) skip one question.
  */
 export async function runScopingDialogue(
   questions: string[],
   askQuestion: (prompt: string) => Promise<string | null>,
-): Promise<string[]> {
-  const hints: string[] = [];
-  for (const q of questions.slice(0, MAX_SCOPING_QUESTIONS)) {
-    const sanitizedQ = sanitizeForDisplay(q).slice(0, 200);
+): Promise<ScopeHint[]> {
+  const capped = questions.slice(0, MAX_SCOPING_QUESTIONS);
+  console.log('');
+  console.log(pc.bold('  Scope questions') + pc.dim('  (Enter to skip, Ctrl+C to skip all)'));
+  const hints: ScopeHint[] = [];
+  for (let i = 0; i < capped.length; i++) {
+    const sanitizedQ = sanitizeForDisplay(capped[i]).slice(0, 200);
     if (!sanitizedQ) continue;
-    const answer = await askQuestion(`  ${sanitizedQ} `);
+    console.log('');
+    console.log(`  ${pc.dim(`${i + 1}.`)} ${sanitizedQ}`);
+    const answer = await askQuestion(`     ${pc.cyan('→')} `);
     if (answer === null) break; // Ctrl+C aborts entire dialogue
     const trimmed = answer.trim();
     if (trimmed !== '') {
-      hints.push(`${sanitizedQ}: ${trimmed.slice(0, MAX_SCOPE_ANSWER_LENGTH)}`);
+      hints.push({ question: sanitizedQ, answer: trimmed.slice(0, MAX_SCOPE_ANSWER_LENGTH) });
     }
   }
   return hints;
@@ -192,7 +197,7 @@ export async function processInput(
   }
 
   // Step 2.5: Scoping dialogue (generic tasks only, if adapter implements askQuestion)
-  let scopeHints: string[] = [];
+  let scopeHints: ScopeHint[] = [];
   if (
     intent.taskType === 'generic' &&
     intent.scopingQuestions.length > 0 &&
@@ -229,7 +234,7 @@ export async function processInput(
     turnLimit: REPL_TURN_LIMIT,
     timeoutMs: REPL_TIMEOUT_MS,
     maxRetries: REPL_MAX_RETRIES,
-    scopeHints: scopeHints.length > 0 ? scopeHints : undefined,
+    scopeHints: scopeHints.length > 0 ? scopeHints.map(h => `${h.question}: ${h.answer}`) : undefined,
   };
 
   const agentContext: AgentContext = {
