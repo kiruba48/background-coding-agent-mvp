@@ -7,12 +7,18 @@ import { createLogger } from '../cli/utils/logger.js';
 import { GitHubPRCreator } from '../orchestrator/pr-creator.js';
 import path from 'node:path';
 import pc from 'picocolors';
-import type { ReplState, SessionCallbacks, SessionOutput, TaskHistoryEntry } from './types.js';
+import type { ReplState, SessionCallbacks, SessionOutput, TaskHistoryEntry, ScopeHint } from './types.js';
 import type { PRResult } from '../types.js';
 import { MAX_HISTORY_ENTRIES } from './types.js';
 
 /** Maximum input length before LLM dispatch (characters) */
 const MAX_INPUT_LENGTH = 2000;
+
+/** Maximum number of scoping questions to present */
+const MAX_SCOPING_QUESTIONS = 3;
+
+/** Maximum length per scoping answer (characters) */
+const MAX_SCOPE_ANSWER_LENGTH = 500;
 
 /** PR meta-command pattern — matches "pr", "create pr", "create a pr", and trailing "for that/this/it" variants */
 const PR_COMMAND_RE = /^(create\s+a?\s*pr|pr)(\s+for\s+(that|this|it))?$/i;
@@ -24,6 +30,40 @@ const REPL_MAX_RETRIES = 3;
 
 export function createSessionState(): ReplState {
   return { currentProject: null, currentProjectName: null, history: [] };
+}
+
+/** Strip ANSI escape sequences and terminal control characters */
+function sanitizeForDisplay(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]|\x1B\[[0-9;]*[A-Za-z]/g, '').trim();
+}
+
+/**
+ * Run the scoping dialogue — ask up to MAX_SCOPING_QUESTIONS LLM-generated questions.
+ * Returns structured hint objects with separate question/answer fields.
+ * Null returns (Ctrl+C) abort the entire dialogue. Empty strings (Enter) skip one question.
+ */
+export async function runScopingDialogue(
+  questions: string[],
+  askQuestion: (prompt: string) => Promise<string | null>,
+): Promise<ScopeHint[]> {
+  const capped = questions.slice(0, MAX_SCOPING_QUESTIONS);
+  console.log('');
+  console.log(pc.bold('  Scope questions') + pc.dim('  (Enter to skip, Ctrl+C to skip all)'));
+  const hints: ScopeHint[] = [];
+  for (let i = 0; i < capped.length; i++) {
+    const sanitizedQ = sanitizeForDisplay(capped[i]).slice(0, 200);
+    if (!sanitizedQ) continue;
+    console.log('');
+    console.log(`  ${pc.dim(`${i + 1}.`)} ${sanitizedQ}`);
+    const answer = await askQuestion(`     ${pc.cyan('→')} `);
+    if (answer === null) break; // Ctrl+C aborts entire dialogue
+    const trimmed = answer.trim();
+    if (trimmed !== '') {
+      hints.push({ question: sanitizedQ, answer: trimmed.slice(0, MAX_SCOPE_ANSWER_LENGTH) });
+    }
+  }
+  return hints;
 }
 
 function appendHistory(state: ReplState, entry: TaskHistoryEntry): void {
@@ -109,6 +149,7 @@ export async function processInput(
 
   // Step 1: Parse intent — use currentProject as repo context if available
   let intent;
+  callbacks.onParseStart?.();
   try {
     intent = await parseIntent(trimmed, {
       repoPath: state.currentProject ?? undefined,
@@ -123,6 +164,8 @@ export async function processInput(
       return { action: 'continue', result: null };
     }
     throw err;
+  } finally {
+    callbacks.onParseEnd?.();
   }
 
   // Step 2: Handle low-confidence with clarifications
@@ -131,22 +174,43 @@ export async function processInput(
     if (!selectedIntent) {
       return { action: 'continue', result: null };
     }
-    // Re-parse the selected clarification; if still ambiguous, bail out
-    const reparsed = await parseIntent(selectedIntent, {
-      repoPath: intent.repo,
-      registry,
-      history: historySnapshot,
-    });
-    if (reparsed.confidence === 'low') {
-      return { action: 'continue', result: null };
+    // Re-parse with original context so the LLM sees repo/file/function names
+    const enrichedIntent = `${trimmed} — specifically: ${selectedIntent}`;
+    callbacks.onParseStart?.();
+    let reparsed;
+    try {
+      reparsed = await parseIntent(enrichedIntent, {
+        repoPath: intent.repo,
+        registry,
+        history: historySnapshot,
+      });
+    } finally {
+      callbacks.onParseEnd?.();
+    }
+    // User already disambiguated by picking a clarification — force high confidence
+    reparsed.confidence = 'high';
+    // Preserve the clarification as the description (cleaner than the enriched string)
+    if (reparsed.taskType === 'generic') {
+      reparsed.description = selectedIntent;
     }
     intent = reparsed;
+  }
+
+  // Step 2.5: Scoping dialogue (generic tasks only, if adapter implements askQuestion)
+  let scopeHints: ScopeHint[] = [];
+  if (
+    intent.taskType === 'generic' &&
+    intent.scopingQuestions.length > 0 &&
+    callbacks.askQuestion
+  ) {
+    scopeHints = await runScopingDialogue(intent.scopingQuestions, callbacks.askQuestion);
   }
 
   // Step 3: Confirm loop via callback (CLI adapter owns readline)
   const confirmed = await callbacks.confirm(
     intent,
     async (correction: string) => parseIntent(correction, { repoPath: intent.repo, registry, history: historySnapshot }),
+    scopeHints,
   );
   if (!confirmed) {
     return { action: 'continue', result: null, intent };
@@ -170,6 +234,7 @@ export async function processInput(
     turnLimit: REPL_TURN_LIMIT,
     timeoutMs: REPL_TIMEOUT_MS,
     maxRetries: REPL_MAX_RETRIES,
+    scopeHints: scopeHints.length > 0 ? scopeHints.map(h => `${h.question}: ${h.answer}`) : undefined,
   };
 
   const agentContext: AgentContext = {

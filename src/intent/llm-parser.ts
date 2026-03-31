@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { Message } from '@anthropic-ai/sdk/resources/messages/messages.js';
 import { IntentSchema, TASK_TYPES, TASK_CATEGORIES, type IntentResult } from './types.js';
 import type { TaskHistoryEntry } from '../repl/types.js';
+import { readTopLevelDirs } from './context-scanner.js';
 
 export const MAX_INPUT_LENGTH = 500;
 
@@ -21,7 +22,8 @@ Rules:
 - If the user's request doesn't match a dependency update pattern, set taskType to 'generic'. generic = any explicit code change instruction (replace, rename, edit config, add/remove code). NOT task discovery, analysis, or multi-repo ops.
 - For generic tasks, set dep to null. Set confidence to 'high' when the instruction is a single clear action (e.g., 'replace axios with fetch', 'rename getUserData to fetchUserProfile'). Set confidence to 'low' when the instruction is vague ('clean up the code'), spans multiple unrelated changes, or sounds like task discovery ('find all deprecated calls'). For low-confidence generic tasks, provide clarifications with narrowed-down interpretations.
 - NEVER set version to a specific version number. Only 'latest' or null.
-- Set createPr to true when the user says phrases like "create PR", "raise PR", "open pull request", "make a PR", "and PR", etc. Default to false if not mentioned.`;
+- Set createPr to true when the user says phrases like "create PR", "raise PR", "open pull request", "make a PR", "and PR", etc. Default to false if not mentioned.
+9. scopingQuestions: For 'generic' taskType only — generate 0-3 specific scoping questions to clarify the task scope. Questions should reference actual directories, files, or patterns visible in the manifest_context and top_level_dirs. Examples: "This repo has both src/auth/ and src/middleware/ — which area should the error handling focus on?", "Should the change include updating related test files?", "Are there any files or directories that should be excluded from this change?". Set to empty array [] for dependency update tasks or when the task is already unambiguous (e.g. "rename X to Y").`;
 
 const OUTPUT_SCHEMA = {
   type: 'object' as const,
@@ -47,6 +49,10 @@ const OUTPUT_SCHEMA = {
         required: ['label', 'intent'],
         additionalProperties: false,
       },
+    },
+    scopingQuestions: {
+      type: 'array',
+      items: { type: 'string' },
     },
   },
   required: ['taskType', 'dep', 'version', 'confidence', 'createPr', 'taskCategory', 'project', 'clarifications'],
@@ -87,7 +93,7 @@ export class LlmParseError extends Error {
   }
 }
 
-export async function llmParse(input: string, manifestContext: string, history?: TaskHistoryEntry[]): Promise<IntentResult> {
+export async function llmParse(input: string, manifestContext: string, history?: TaskHistoryEntry[], repoPath?: string): Promise<IntentResult> {
   const truncatedInput = input.length > MAX_INPUT_LENGTH ? input.slice(0, MAX_INPUT_LENGTH) : input;
   const client = getClient();
 
@@ -98,16 +104,19 @@ export async function llmParse(input: string, manifestContext: string, history?:
 
   const historyBlock = hasHistory ? `\n\n${buildHistoryBlock(history)}\n` : '';
 
+  const topLevelDirs = repoPath ? await readTopLevelDirs(repoPath) : '';
+  const topLevelDirsBlock = topLevelDirs ? `\n<top_level_dirs>\n${escapeXml(topLevelDirs)}\n</top_level_dirs>` : '';
+
   let response: Message;
   try {
     response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 512,
+      max_tokens: 1024,
       stream: false,
       system: systemPrompt,
       messages: [{
         role: 'user',
-        content: `<manifest_context>\n${escapeXml(manifestContext)}\n</manifest_context>${historyBlock}\n<user_input>${escapeXml(truncatedInput)}</user_input>`,
+        content: `<manifest_context>\n${escapeXml(manifestContext)}\n</manifest_context>${topLevelDirsBlock}${historyBlock}\n<user_input>${escapeXml(truncatedInput)}</user_input>`,
       }],
       output_config: { format: { type: 'json_schema', schema: OUTPUT_SCHEMA } },
     });

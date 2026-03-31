@@ -64,6 +64,7 @@ export async function parseIntent(
           confidence: 'high',
           createPr: fastResult.createPr ? true : undefined,
           inheritedFields: ['taskType', 'repo'],
+          scopingQuestions: [],
         };
       }
       // dep not in manifest — fall through to LLM with history (repoPath stays as inheritedRepo)
@@ -108,6 +109,7 @@ export async function parseIntent(
           version: fastResult.version,
           confidence: 'high',
           createPr: fastResult.createPr ? true : undefined,
+          scopingQuestions: [],
         };
       }
     }
@@ -115,7 +117,7 @@ export async function parseIntent(
   }
 
   // Step 3: LLM path — resolve project from LLM result before reading manifest
-  const llmPreResult = await llmParse(input, await readManifestDeps(repoPath), history);
+  const llmPreResult = await llmParse(input, await readManifestDeps(repoPath), history, repoPath);
 
   // Step 3a: If LLM extracted a project name and we haven't resolved one yet, try registry
   if (!options.repoPath && llmPreResult.project) {
@@ -145,5 +147,6 @@ export async function parseIntent(
     description: isGeneric ? input.slice(0, MAX_INPUT_LENGTH) : undefined,
     taskCategory: isGeneric ? llmResult.taskCategory : undefined,
     clarifications: llmResult.clarifications.length > 0 ? llmResult.clarifications : undefined,
+    scopingQuestions: isGeneric ? llmResult.scopingQuestions : [],
   };
 }

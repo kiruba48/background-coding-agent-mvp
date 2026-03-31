@@ -245,13 +245,15 @@ export async function replCommand(): Promise<void> {
 
   const cancelWords = new Set(['exit', 'quit', 'cancel', 'abort', 'nevermind']);
 
-  const confirmCb: SessionCallbacks['confirm'] = async (intent, reparse) => {
+  const confirmCb: SessionCallbacks['confirm'] = async (intent, reparse, scopeHints) => {
     let current = intent;
     let attempts = 0;
     const maxRedirects = 3;
+    // Scope hints become stale after a correction — track mutably
+    let activeHints = scopeHints;
 
     while (attempts < maxRedirects) {
-      displayIntent(current);
+      displayIntent(current, activeHints);
       const answer = await askQuestion(rl, pc.bold('  Proceed? [Y/n] '), activeQuestionControllerRef);
       if (answer === null) return null; // Ctrl+C
 
@@ -259,8 +261,9 @@ export async function replCommand(): Promise<void> {
 
       if (answer.toLowerCase() !== 'n') {
         if (cancelWords.has(answer.trim().toLowerCase())) return null;
-        // Treat any non-y/n input as inline correction
+        // Treat any non-y/n input as inline correction — clear stale hints
         current = await reparse(answer);
+        activeHints = undefined;
         attempts++;
         continue;
       }
@@ -274,10 +277,11 @@ export async function replCommand(): Promise<void> {
       const correction = await askQuestion(rl, '  Correction: ', activeQuestionControllerRef);
       if (correction === null || !correction.trim() || cancelWords.has(correction.trim().toLowerCase())) return null;
       current = await reparse(correction);
+      activeHints = undefined; // Clear stale hints after correction
     }
 
     // Loop exhausted via corrections — show final parsed result
-    displayIntent(current);
+    displayIntent(current, activeHints);
     console.log(pc.red('\n  Max corrections reached. Please try again with a clearer command.'));
     return null;
   };
@@ -313,12 +317,25 @@ export async function replCommand(): Promise<void> {
     activeTaskController = taskController;
     firstSigint = false;
 
+    let parseSpinner: ReturnType<typeof createSpinner> | null = null;
+
     const callbacks: SessionCallbacks = {
       confirm: confirmCb,
       clarify: clarifyCb,
       getSignal: () => taskController.signal,
+      onParseStart: () => {
+        parseSpinner = createSpinner(pc.dim('Understanding your request...')).start();
+      },
+      onParseEnd: () => {
+        parseSpinner?.stop();
+        // Clear the spinner line so it doesn't linger
+        process.stdout.write('\r\x1b[K');
+      },
       onAgentStart: () => progress.start(),
       onAgentEnd: () => progress.stop(),
+      askQuestion: async (prompt: string) => {
+        return askQuestion(rl, prompt, activeQuestionControllerRef);
+      },
     };
 
     try {

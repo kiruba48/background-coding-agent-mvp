@@ -43,6 +43,7 @@ export interface AgentOptions {
   targetVersion?: string;
   description?: string;     // raw NL task description for generic tasks
   taskCategory?: TaskCategory;    // category label for generic tasks (e.g. 'code-change')
+  scopeHints?: string[];          // scoping dialogue answers for generic tasks
 }
 
 /**
@@ -174,6 +175,7 @@ export async function runAgent(
     targetVersion: resolvedVersion,
     description: options.description,
     repoPath: options.repo,
+    scopeHints: options.scopeHints,
   });
 
   // Run the retry orchestration loop

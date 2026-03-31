@@ -74,6 +74,7 @@ describe('parseIntent coordinator', () => {
       taskCategory: null,
       project: null,
       clarifications: [],
+      scopingQuestions: [],
     });
   });
 
@@ -140,6 +141,7 @@ describe('parseIntent coordinator', () => {
           taskCategory: null,
           project: null,
           clarifications: [],
+          scopingQuestions: [],
         };
       });
       mockFastPathParse.mockReturnValue(null);
@@ -157,7 +159,7 @@ describe('parseIntent coordinator', () => {
       const registry = makeRegistry();
       await parseIntent('update recharts', { repoPath: '/path', registry });
 
-      expect(mockLlmParse).toHaveBeenCalledWith('update recharts', 'package.json dependencies: react, recharts', undefined);
+      expect(mockLlmParse).toHaveBeenCalledWith('update recharts', 'package.json dependencies: react, recharts', undefined, '/path');
     });
 
     it('calls LLM when fast-path matched but detectTaskType returns null', async () => {
@@ -195,6 +197,7 @@ describe('parseIntent coordinator', () => {
         taskCategory: 'refactor',
         project: null,
         clarifications: [],
+        scopingQuestions: [],
       });
 
       const registry = makeRegistry();
@@ -257,6 +260,7 @@ describe('parseIntent coordinator', () => {
         taskCategory: 'code-change',
         project: 'strategic-planner',
         clarifications: [],
+        scopingQuestions: [],
       });
 
       const result = await parseIntent('replace console.log with logger in strategic-planner', { registry });
@@ -280,6 +284,7 @@ describe('parseIntent coordinator', () => {
         taskCategory: 'code-change',
         project: 'strategic-planner',
         clarifications: [],
+        scopingQuestions: [],
       });
 
       const result = await parseIntent('replace console.log in strategic-planner', { repoPath: '/explicit/path', registry });
@@ -302,6 +307,7 @@ describe('parseIntent coordinator', () => {
         taskCategory: 'code-change',
         project: 'unknown-project',
         clarifications: [],
+        scopingQuestions: [],
       });
 
       const result = await parseIntent('fix bug in unknown-project', { registry });
@@ -326,6 +332,7 @@ describe('parseIntent coordinator', () => {
           { label: 'Update recharts to latest', intent: 'update recharts' },
           { label: 'Update react-charts', intent: 'update react-charts' },
         ],
+        scopingQuestions: [],
       });
 
       const registry = makeRegistry();
@@ -349,6 +356,7 @@ describe('parseIntent coordinator', () => {
         taskCategory: null,
         project: null,
         clarifications: [],
+        scopingQuestions: [],
       });
 
       const registry = makeRegistry();
@@ -369,6 +377,7 @@ describe('parseIntent coordinator', () => {
         taskCategory: 'code-change',
         project: null,
         clarifications: [], // empty
+        scopingQuestions: [],
       });
 
       const registry = makeRegistry();

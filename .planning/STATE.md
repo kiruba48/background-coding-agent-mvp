@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v2.3
 milestone_name: Conversational Scoping & REPL Enhancements
-status: planning
-stopped_at: Completed 21-02-PLAN.md
-last_updated: "2026-03-26T02:09:17.788Z"
-last_activity: 2026-03-25 — Roadmap created, all 19 v2.3 requirements mapped
+status: completed
+stopped_at: Completed 22-02-PLAN.md
+last_updated: "2026-03-26T10:54:35.084Z"
+last_activity: 2026-03-26 — Phase 22 complete, SCOPE-04 shipped
 progress:
   total_phases: 4
-  completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
+  completed_phases: 2
+  total_plans: 4
+  completed_plans: 4
 ---
 
 # Project State
@@ -24,13 +24,13 @@ See: .planning/PROJECT.md (updated 2026-03-25)
 
 ## Current Position
 
-Phase: 21 — Post-Hoc PR & State Foundation
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-03-25 — Roadmap created, all 19 v2.3 requirements mapped
+Phase: 22 — Conversational Scoping Dialogue
+Plan: 02 (Complete)
+Status: Phase 22 complete — 2/2 plans shipped
+Last activity: 2026-03-26 — Phase 22 complete, SCOPE-04 shipped
 
 ```
-Progress [          ] 0% — 0/4 phases complete
+Progress [██████████] 100% — 4/4 plans complete
 ```
 
 ## Performance Metrics
@@ -55,6 +55,9 @@ Progress [          ] 0% — 0/4 phases complete
 - [Phase 21]: description for dep updates uses formatted string 'update {dep} to {version ?? latest}' rather than raw intent text
 - [Phase 21]: prResult slot added to SessionOutput now (Plan 02 prep) to define the type contract before Plan 02 implements it
 - [Phase 21]: vi.fn().mockImplementation with this-binding used for GitHubPRCreator mock (arrow function form fails as constructor in vitest)
+- [Phase 22]: scopingQuestions NOT added to OUTPUT_SCHEMA required array — Zod .default([]) handles missing field from cached/old LLM responses without breaking
+- [Phase 22]: runScopingDialogue is a pure exported function (not inlined in processInput) for isolated unit testability
+- [Phase 22]: confirmLoop also updated with scopeHints parameter for consistency, even though REPL uses its own confirmCb
 
 ### Pending Todos
 
@@ -67,7 +70,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-26T02:06:52.446Z
-Stopped at: Completed 21-02-PLAN.md
+Last session: 2026-03-26T10:49:06.451Z
+Stopped at: Completed 22-02-PLAN.md
 Resume file: None
 Next action: `/gsd:plan-phase 21`

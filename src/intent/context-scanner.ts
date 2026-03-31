@@ -1,3 +1,4 @@
+import { readdirSync } from 'node:fs';
 import { readPackageJson, readPomDependencies } from './manifest-utils.js';
 
 /**
@@ -27,4 +28,22 @@ export async function readManifestDeps(repoPath: string): Promise<string> {
   }
 
   return sections.length > 0 ? sections.join('\n') : 'No manifest found';
+}
+
+/**
+ * Read top-level (non-hidden) directory names from a repo path.
+ * Returns a formatted string for injection into LLM prompts.
+ * Returns empty string if repoPath doesn't exist or has no non-hidden dirs.
+ */
+export async function readTopLevelDirs(repoPath: string): Promise<string> {
+  try {
+    const entries = readdirSync(repoPath, { withFileTypes: true });
+    const dirs = entries
+      .filter(e => e.isDirectory() && !e.name.startsWith('.'))
+      .map(e => e.name)
+      .sort();
+    return dirs.length > 0 ? `Top-level directories: ${dirs.join(', ')}` : '';
+  } catch {
+    return '';
+  }
 }

@@ -77,6 +77,39 @@ describe('buildGenericPrompt', () => {
     const result = await buildGenericPrompt('replace axios with fetch');
     expect(result).not.toContain('CONTEXT:');
   });
+
+  it('includes SCOPE HINTS section with formatted hints when scopeHints provided', async () => {
+    mockReadManifestDeps.mockResolvedValue('No manifest found');
+    const { buildGenericPrompt } = await import('./generic.js');
+    const result = await buildGenericPrompt('add error handling', '/some/repo', ['Which area?: auth module', 'Should tests be updated?: yes']);
+    expect(result).toContain('SCOPE HINTS (from user):');
+    expect(result).toContain('- Which area?: auth module');
+    expect(result).toContain('- Should tests be updated?: yes');
+  });
+
+  it('does NOT include SCOPE HINTS section when scopeHints is not provided', async () => {
+    mockReadManifestDeps.mockResolvedValue('No manifest found');
+    const { buildGenericPrompt } = await import('./generic.js');
+    const result = await buildGenericPrompt('add error handling', '/some/repo');
+    expect(result).not.toContain('SCOPE HINTS');
+  });
+
+  it('does NOT include SCOPE HINTS section when scopeHints is empty array', async () => {
+    mockReadManifestDeps.mockResolvedValue('No manifest found');
+    const { buildGenericPrompt } = await import('./generic.js');
+    const result = await buildGenericPrompt('add error handling', '/some/repo', []);
+    expect(result).not.toContain('SCOPE HINTS');
+  });
+
+  it('SCOPE HINTS appears before "Work in the current directory."', async () => {
+    mockReadManifestDeps.mockResolvedValue('No manifest found');
+    const { buildGenericPrompt } = await import('./generic.js');
+    const result = await buildGenericPrompt('add error handling', '/some/repo', ['Area: auth']);
+    const hintsPos = result.indexOf('SCOPE HINTS');
+    const workPos = result.indexOf('Work in the current directory.');
+    expect(hintsPos).toBeGreaterThan(-1);
+    expect(workPos).toBeGreaterThan(hintsPos);
+  });
 });
 
 describe('buildPrompt generic dispatch', () => {
