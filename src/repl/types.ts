@@ -31,6 +31,10 @@ export interface SessionCallbacks {
   clarify: (clarifications: Array<{ label: string; intent: string }>) => Promise<string | null>;
   /** Get the AbortSignal for the current task. CLI adapter creates a fresh AbortController per task. */
   getSignal: () => AbortSignal;
+  /** Called when intent parsing begins. CLI adapter can show a spinner. */
+  onParseStart?: () => void;
+  /** Called when intent parsing finishes. CLI adapter can stop the spinner. */
+  onParseEnd?: () => void;
   /** Called when the agent run begins (after confirmation). CLI adapter can start a progress indicator. */
   onAgentStart?: () => void;
   /** Called when the agent run finishes (success or failure). CLI adapter can stop the progress indicator. */

@@ -398,6 +398,37 @@ describe('src/repl/session.ts', () => {
     expect(mockRunAgent).not.toHaveBeenCalled();
   });
 
+  it('12b. clarify re-parse returning low confidence shows guidance message', async () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.join(' '));
+    });
+
+    const lowIntent = makeIntent({
+      confidence: 'low',
+      clarifications: [
+        { label: 'Update lodash', intent: 'update lodash' },
+      ],
+    });
+    const stillLow = makeIntent({ confidence: 'low' });
+
+    mockParseIntent
+      .mockResolvedValueOnce(lowIntent)
+      .mockResolvedValueOnce(stillLow);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      clarify: vi.fn().mockResolvedValue('update lodash'),
+    });
+
+    await processInput('update something', state, callbacks, registry);
+
+    vi.restoreAllMocks();
+    const allOutput = logs.join('\n');
+    expect(allOutput).toContain('too ambiguous');
+    expect(allOutput).toContain('specific code change');
+  });
+
   it('13. calls onAgentStart before runAgent and onAgentEnd after', async () => {
     const intent = makeIntent();
     mockParseIntent.mockResolvedValue(intent);

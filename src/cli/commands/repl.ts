@@ -317,10 +317,20 @@ export async function replCommand(): Promise<void> {
     activeTaskController = taskController;
     firstSigint = false;
 
+    let parseSpinner: ReturnType<typeof createSpinner> | null = null;
+
     const callbacks: SessionCallbacks = {
       confirm: confirmCb,
       clarify: clarifyCb,
       getSignal: () => taskController.signal,
+      onParseStart: () => {
+        parseSpinner = createSpinner(pc.dim('Understanding your request...')).start();
+      },
+      onParseEnd: () => {
+        parseSpinner?.stop();
+        // Clear the spinner line so it doesn't linger
+        process.stdout.write('\r\x1b[K');
+      },
       onAgentStart: () => progress.start(),
       onAgentEnd: () => progress.stop(),
       askQuestion: async (prompt: string) => {

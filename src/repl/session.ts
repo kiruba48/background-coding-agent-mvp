@@ -144,6 +144,7 @@ export async function processInput(
 
   // Step 1: Parse intent — use currentProject as repo context if available
   let intent;
+  callbacks.onParseStart?.();
   try {
     intent = await parseIntent(trimmed, {
       repoPath: state.currentProject ?? undefined,
@@ -158,6 +159,8 @@ export async function processInput(
       return { action: 'continue', result: null };
     }
     throw err;
+  } finally {
+    callbacks.onParseEnd?.();
   }
 
   // Step 2: Handle low-confidence with clarifications
@@ -167,12 +170,23 @@ export async function processInput(
       return { action: 'continue', result: null };
     }
     // Re-parse the selected clarification; if still ambiguous, bail out
-    const reparsed = await parseIntent(selectedIntent, {
-      repoPath: intent.repo,
-      registry,
-      history: historySnapshot,
-    });
+    callbacks.onParseStart?.();
+    let reparsed;
+    try {
+      reparsed = await parseIntent(selectedIntent, {
+        repoPath: intent.repo,
+        registry,
+        history: historySnapshot,
+      });
+    } finally {
+      callbacks.onParseEnd?.();
+    }
     if (reparsed.confidence === 'low') {
+      console.log(pc.yellow('\n  That selection is still too ambiguous to act on.'));
+      console.log(pc.yellow('  Try describing a specific code change instead, e.g.:'));
+      console.log(pc.cyan('    "add retry logic to the API client"'));
+      console.log(pc.cyan('    "rename userId to accountId in src/auth"'));
+      console.log('');
       return { action: 'continue', result: null };
     }
     intent = reparsed;
