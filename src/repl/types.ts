@@ -15,6 +15,7 @@ export interface TaskHistoryEntry {
   repo: string;
   status: 'success' | 'failed' | 'cancelled' | 'zero_diff';
   description?: string;  // FLLW-01: human-readable task description for follow-up referencing
+  finalResponse?: string; // FLLW-03: raw agent response for enriched history block
 }
 
 /** Maximum number of history entries to retain per session. */

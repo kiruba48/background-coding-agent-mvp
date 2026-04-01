@@ -1119,6 +1119,82 @@ describe('src/repl/session.ts', () => {
     expect(mockRunAgent).toHaveBeenCalledOnce();
   });
 
+  // FLLW-03 tests: finalResponse flow through appendHistory
+
+  // Test FLLW-03a: processInput appends finalResponse from last sessionResult to history after successful runAgent
+  it('FLLW-03a. history entry has finalResponse from last sessionResult after successful runAgent', async () => {
+    const intent = makeIntent();
+    const retryResult = makeRetryResult({
+      finalStatus: 'success',
+      sessionResults: [{ sessionId: 'sess-1', status: 'success', toolCallCount: 3, duration: 1000, finalResponse: 'Added error handling to auth module.' }],
+    });
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(retryResult);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await processInput('update lodash', state, callbacks, registry);
+
+    expect(state.history[0].finalResponse).toBe('Added error handling to auth module.');
+  });
+
+  // Test FLLW-03b: history entry has finalResponse undefined when runAgent throws (no result captured)
+  it('FLLW-03b. history entry has undefined finalResponse when runAgent throws', async () => {
+    const intent = makeIntent();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockRejectedValue(new Error('agent failed'));
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await expect(processInput('update lodash', state, callbacks, registry)).rejects.toThrow('agent failed');
+
+    expect(state.history[0].finalResponse).toBeUndefined();
+  });
+
+  // Test FLLW-03c: history entry has finalResponse undefined when runAgent throws AbortError (no result captured)
+  it('FLLW-03c. history entry has undefined finalResponse when runAgent throws AbortError', async () => {
+    const intent = makeIntent();
+    mockParseIntent.mockResolvedValue(intent);
+    const err = new Error('aborted');
+    err.name = 'AbortError';
+    mockRunAgent.mockRejectedValue(err);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await expect(processInput('update lodash', state, callbacks, registry)).rejects.toThrow('aborted');
+
+    expect(state.history[0].finalResponse).toBeUndefined();
+  });
+
+  // Test FLLW-03d: failed runAgent (non-throw) still captures finalResponse from sessionResults
+  it('FLLW-03d. history entry captures finalResponse even for failed (non-throw) runAgent', async () => {
+    const intent = makeIntent();
+    const retryResult = makeRetryResult({
+      finalStatus: 'failed',
+      sessionResults: [{ sessionId: 'sess-1', status: 'failed', toolCallCount: 2, duration: 800, finalResponse: 'Could not find the target file.' }],
+    });
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValue(retryResult);
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await processInput('update lodash', state, callbacks, registry);
+
+    expect(state.history[0].finalResponse).toBe('Could not find the target file.');
+  });
+
   it('SCOPE-04. processInput passes scopeHints to runAgent agentOptions', async () => {
     const intent = makeIntent({
       taskType: 'generic',

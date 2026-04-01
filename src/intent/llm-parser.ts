@@ -64,6 +64,16 @@ function escapeXml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
 
+/** Truncate to last sentence boundary within 300 chars, with 50-char minimum before accepting boundary. */
+export function summarize(raw: string): string {
+  if (!raw || raw.length <= 300) return raw;
+  const truncated = raw.slice(0, 300);
+  const searchFrom = 50;
+  const match = truncated.slice(searchFrom).search(/[.!?]/);
+  if (match === -1) return truncated;
+  return truncated.slice(0, searchFrom + match + 1);
+}
+
 /** Build a session history XML block for the LLM prompt */
 function buildHistoryBlock(history: TaskHistoryEntry[]): string {
   const lines = history.map((h, i) =>

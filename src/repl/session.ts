@@ -8,7 +8,7 @@ import { GitHubPRCreator } from '../orchestrator/pr-creator.js';
 import path from 'node:path';
 import pc from 'picocolors';
 import type { ReplState, SessionCallbacks, SessionOutput, TaskHistoryEntry, ScopeHint } from './types.js';
-import type { PRResult } from '../types.js';
+import type { PRResult, RetryResult } from '../types.js';
 import { MAX_HISTORY_ENTRIES } from './types.js';
 
 /** Maximum input length before LLM dispatch (characters) */
@@ -245,8 +245,10 @@ export async function processInput(
 
   callbacks.onAgentStart?.();
   let historyStatus: TaskHistoryEntry['status'] = 'failed';
+  let taskResult: RetryResult | undefined;
   try {
     const result = await runAgent(agentOptions, agentContext);
+    taskResult = result;
     // Store for post-hoc PR and follow-up referencing (FLLW-02) — success path only.
     // Non-success results must NOT overwrite a previous successful result,
     // so the user can still `pr` after a subsequent failed task.
@@ -276,6 +278,7 @@ export async function processInput(
         : confirmed.dep
           ? `update ${confirmed.dep} to ${confirmed.version ?? 'latest'}`
           : undefined,
+      finalResponse: taskResult?.sessionResults?.at(-1)?.finalResponse,
     });
   }
 }
