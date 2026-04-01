@@ -376,6 +376,12 @@ describe('summarize', () => {
     expect(result).toBe('A'.repeat(55) + '.');
     expect(result.length).toBeLessThanOrEqual(300);
   });
+  it('does not split at periods in filenames like auth.controller.ts', () => {
+    const input = 'A'.repeat(40) + ' updated src/auth.controller.ts and added error handling ' + 'B'.repeat(250);
+    const result = summarize(input);
+    // Should NOT cut at the period in "auth.controller" since it's not followed by whitespace
+    expect(result.endsWith('auth.')).toBe(false);
+  });
   it('hard-cuts at 300 when no sentence boundary found after 50 chars', () => {
     const input = 'A'.repeat(400);
     expect(summarize(input)).toBe('A'.repeat(300));

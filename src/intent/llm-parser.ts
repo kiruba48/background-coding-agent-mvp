@@ -59,19 +59,29 @@ const OUTPUT_SCHEMA = {
   additionalProperties: false,
 };
 
+const FOLLOW_UP_GUIDANCE = 'When the user says "also X", "now do X", "X too", or similar follow-up phrases, inherit taskType and repo from the most recent session_history entry unless the user explicitly specifies a different project.';
+
+const REFERENCE_RESOLUTION_GUIDANCE = `When the user references a previous task with pronouns or positions:
+- "that", "it", "the last task" -> resolve to the most recent session_history entry
+- "task 2", "the second task" -> resolve to the Nth entry by 1-based position; if out of bounds, set confidence to 'low' with a clarification
+- keyword references ("the auth task", "the lodash update") -> scan Task: lines in session_history for keyword match
+- Inherit repo from the referenced entry unless the user says "in project-x" or similar explicit override`;
+
 /** Escape XML special characters to prevent prompt injection */
 function escapeXml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
 
-/** Truncate to last sentence boundary within 300 chars, with 50-char minimum before accepting boundary. */
+const MAX_SUMMARY_LENGTH = 300;
+const MIN_BOUNDARY_OFFSET = 50;
+
+/** Truncate to last sentence boundary within MAX_SUMMARY_LENGTH chars, with MIN_BOUNDARY_OFFSET minimum before accepting boundary. */
 export function summarize(raw: string): string {
-  if (!raw || raw.length <= 300) return raw;
-  const truncated = raw.slice(0, 300);
-  const searchFrom = 50;
-  const match = truncated.slice(searchFrom).search(/[.!?]/);
+  if (!raw || raw.length <= MAX_SUMMARY_LENGTH) return raw;
+  const truncated = raw.slice(0, MAX_SUMMARY_LENGTH);
+  const match = truncated.slice(MIN_BOUNDARY_OFFSET).search(/[.!?](?:\s|$)/);
   if (match === -1) return truncated;
-  return truncated.slice(0, searchFrom + match + 1);
+  return truncated.slice(0, MIN_BOUNDARY_OFFSET + match + 1);
 }
 
 /** Build a session history XML block for the LLM prompt */
@@ -80,7 +90,7 @@ function buildHistoryBlock(history: TaskHistoryEntry[]): string {
     const header = `  ${i + 1}. ${escapeXml(h.taskType)} | dep: ${escapeXml(h.dep ?? 'none')} | repo: ${escapeXml(path.basename(h.repo))} | status: ${escapeXml(h.status)}`;
     const taskLine = h.description ? `     Task: ${escapeXml(h.description)}` : null;
     const changesLine = h.finalResponse ? `     Changes: ${escapeXml(summarize(h.finalResponse))}` : null;
-    return [header, taskLine, changesLine].filter(Boolean) as string[];
+    return [header, taskLine, changesLine].filter((x): x is string => x !== null);
   });
   return `<session_history>\nPrevious tasks this session (most recent last):\n${lines.join('\n')}\n</session_history>`;
 }
@@ -112,12 +122,7 @@ export async function llmParse(input: string, manifestContext: string, history?:
 
   const hasHistory = history && history.length > 0;
   const systemPrompt = hasHistory
-    ? INTENT_SYSTEM_PROMPT + '\n\nWhen the user says "also X", "now do X", "X too", or similar follow-up phrases, inherit taskType and repo from the most recent session_history entry unless the user explicitly specifies a different project.'
-      + '\n\nWhen the user references a previous task with pronouns or positions:\n'
-      + '- "that", "it", "the last task" -> resolve to the most recent session_history entry\n'
-      + '- "task 2", "the second task" -> resolve to the Nth entry by 1-based position; if out of bounds, set confidence to \'low\' with a clarification\n'
-      + '- keyword references ("the auth task", "the lodash update") -> scan Task: lines in session_history for keyword match\n'
-      + '- Inherit repo from the referenced entry unless the user says "in project-x" or similar explicit override'
+    ? `${INTENT_SYSTEM_PROMPT}\n\n${FOLLOW_UP_GUIDANCE}\n\n${REFERENCE_RESOLUTION_GUIDANCE}`
     : INTENT_SYSTEM_PROMPT;
 
   const historyBlock = hasHistory ? `\n\n${buildHistoryBlock(history)}\n` : '';
