@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.3
 milestone_name: Conversational Scoping & REPL Enhancements
 status: completed
-stopped_at: Phase 23 context gathered
-last_updated: "2026-03-31T17:39:05.808Z"
+stopped_at: Completed 23-follow-up-task-referencing-01-PLAN.md
+last_updated: "2026-04-01T08:20:40.947Z"
 last_activity: 2026-03-26 — Phase 22 complete, SCOPE-04 shipped
 progress:
   total_phases: 4
-  completed_phases: 2
-  total_plans: 4
-  completed_plans: 4
+  completed_phases: 3
+  total_plans: 5
+  completed_plans: 5
 ---
 
 # Project State
@@ -58,6 +58,8 @@ Progress [██████████] 100% — 4/4 plans complete
 - [Phase 22]: scopingQuestions NOT added to OUTPUT_SCHEMA required array — Zod .default([]) handles missing field from cached/old LLM responses without breaking
 - [Phase 22]: runScopingDialogue is a pure exported function (not inlined in processInput) for isolated unit testability
 - [Phase 22]: confirmLoop also updated with scopeHints parameter for consistency, even though REPL uses its own confirmCb
+- [Phase 23-follow-up-task-referencing]: finalResponse accessed via taskResult?.sessionResults?.at(-1)?.finalResponse — NOT RetryResult.finalResponse
+- [Phase 23-follow-up-task-referencing]: Changes line omitted when finalResponse undefined — no placeholder text per locked decision
 
 ### Pending Todos
 
@@ -70,7 +72,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-03-31T17:39:05.806Z
-Stopped at: Phase 23 context gathered
-Resume file: .planning/phases/23-follow-up-task-referencing/23-CONTEXT.md
+Last session: 2026-04-01T08:20:40.944Z
+Stopped at: Completed 23-follow-up-task-referencing-01-PLAN.md
+Resume file: None
 Next action: `/gsd:plan-phase 21`

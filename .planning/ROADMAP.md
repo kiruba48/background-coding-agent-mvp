@@ -77,7 +77,7 @@ Full details: [v2.2-ROADMAP.md](milestones/v2.2-ROADMAP.md)
 
 - [x] **Phase 21: Post-Hoc PR & State Foundation** — REPL `pr` command + ReplState/TaskHistoryEntry enrichment that all subsequent phases depend on (completed 2026-03-26)
 - [x] **Phase 22: Conversational Scoping Dialogue** — Up to 3 optional pre-confirm questions for generic tasks injected into the SCOPE block (completed 2026-03-26)
-- [ ] **Phase 23: Follow-Up Task Referencing** — Enriched LLM history block so follow-up inputs can reference previous task outcomes
+- [x] **Phase 23: Follow-Up Task Referencing** — Enriched LLM history block so follow-up inputs can reference previous task outcomes (completed 2026-04-01)
 - [ ] **Phase 24: Slack Bot Adapter** — `@slack/bolt` Socket Mode adapter implementing SessionCallbacks for full channel-agnostic integration
 
 ## Phase Details
@@ -122,7 +122,7 @@ Plans:
   1. User types a follow-up like "now add tests for that" and the intent parser correctly resolves "that" to the previous task's subject without ambiguity
   2. The enriched history block passed to the LLM intent parser includes the agent's change summary (truncated to 300 chars) alongside the task description
   3. History entries are addressable by position ("task 2", "the auth task") so follow-ups are not forced to always reference the most recent task
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
 - [ ] 23-01-PLAN.md — Types + data flow + summarize utility + enriched buildHistoryBlock + reference resolution prompt + tests
@@ -170,5 +170,5 @@ Plans:
 | 20. Verification & Safety | v2.2 | 2/2 | Complete | 2026-03-24 |
 | 21. Post-Hoc PR & State Foundation | v2.3 | 2/2 | Complete | 2026-03-26 |
 | 22. Conversational Scoping Dialogue | 2/2 | Complete    | 2026-03-26 | - |
-| 23. Follow-Up Task Referencing | v2.3 | 0/1 | Not started | - |
+| 23. Follow-Up Task Referencing | 1/1 | Complete   | 2026-04-01 | - |
 | 24. Slack Bot Adapter | v2.3 | 0/2 | Not started | - |

@@ -26,7 +26,7 @@ Requirements for milestone v2.3 Conversational Scoping & REPL Enhancements. Each
 
 - [x] **FLLW-01**: TaskHistoryEntry includes task description so follow-up inputs have context
 - [x] **FLLW-02**: RetryResult is stored on ReplState after each task completion for cross-task referencing
-- [ ] **FLLW-03**: Follow-up inputs like "now add tests for that" can reference previous task outcome via enriched history
+- [x] **FLLW-03**: Follow-up inputs like "now add tests for that" can reference previous task outcome via enriched history
 
 ### Slack Bot
 
@@ -92,7 +92,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SCOPE-05 | Phase 22 | Complete |
 | FLLW-01 | Phase 21 | Complete |
 | FLLW-02 | Phase 21 | Complete |
-| FLLW-03 | Phase 23 | Pending |
+| FLLW-03 | Phase 23 | Complete |
 | SLCK-01 | Phase 24 | Pending |
 | SLCK-02 | Phase 24 | Pending |
 | SLCK-03 | Phase 24 | Pending |
