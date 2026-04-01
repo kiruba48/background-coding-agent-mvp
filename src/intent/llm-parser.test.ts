@@ -18,7 +18,7 @@ vi.mock('@anthropic-ai/sdk', () => {
   };
 });
 
-import { llmParse, LlmParseError } from './llm-parser.js';
+import { llmParse, LlmParseError, summarize } from './llm-parser.js';
 import { IntentSchema } from './types.js';
 
 const VALID_RESPONSE = {
@@ -154,7 +154,7 @@ describe('llmParse', () => {
 
   describe('session history injection', () => {
     const sampleHistory: TaskHistoryEntry[] = [
-      { taskType: 'npm-dependency-update', dep: 'react', version: 'latest', repo: '/path/to/repo', status: 'success' },
+      { taskType: 'npm-dependency-update', dep: 'react', version: 'latest', repo: '/path/to/repo', status: 'success', description: 'update react to latest', finalResponse: 'Updated react from 17.0.2 to 18.2.0 in package.json.' },
     ];
 
     it('includes <session_history> in content when history is non-empty', async () => {
@@ -219,6 +219,85 @@ describe('llmParse', () => {
       expect(userMessage).toContain('&lt;/session_history&gt;');
       expect(userMessage).toContain('&lt;script&gt;');
     });
+
+    it('includes Task line in history block when description is present', async () => {
+      mockCreate.mockResolvedValue(makeResponse(VALID_RESPONSE));
+      await llmParse('update recharts', 'deps', sampleHistory);
+      const callArgs = mockCreate.mock.calls[0][0];
+      const userMessage = callArgs.messages[0].content as string;
+      expect(userMessage).toContain('Task: update react to latest');
+    });
+
+    it('includes Changes line in history block when finalResponse is present', async () => {
+      mockCreate.mockResolvedValue(makeResponse(VALID_RESPONSE));
+      await llmParse('update recharts', 'deps', sampleHistory);
+      const callArgs = mockCreate.mock.calls[0][0];
+      const userMessage = callArgs.messages[0].content as string;
+      expect(userMessage).toContain('Changes: Updated react from 17.0.2 to 18.2.0');
+    });
+
+    it('omits Task line when description is undefined', async () => {
+      const historyNoDesc: TaskHistoryEntry[] = [
+        { taskType: 'npm-dependency-update' as TaskType, dep: 'react', version: 'latest', repo: '/path/to/repo', status: 'success' as const },
+      ];
+      mockCreate.mockResolvedValue(makeResponse(VALID_RESPONSE));
+      await llmParse('update recharts', 'deps', historyNoDesc);
+      const callArgs = mockCreate.mock.calls[0][0];
+      const userMessage = callArgs.messages[0].content as string;
+      expect(userMessage).not.toContain('Task:');
+    });
+
+    it('omits Changes line when finalResponse is undefined', async () => {
+      const historyNoResponse: TaskHistoryEntry[] = [
+        { taskType: 'npm-dependency-update' as TaskType, dep: 'react', version: 'latest', repo: '/path/to/repo', status: 'success' as const, description: 'update react' },
+      ];
+      mockCreate.mockResolvedValue(makeResponse(VALID_RESPONSE));
+      await llmParse('update recharts', 'deps', historyNoResponse);
+      const callArgs = mockCreate.mock.calls[0][0];
+      const userMessage = callArgs.messages[0].content as string;
+      expect(userMessage).not.toContain('Changes:');
+    });
+
+    it('truncates long finalResponse via summarize in Changes line', async () => {
+      const longResponse = 'A'.repeat(50) + 'First sentence done. ' + 'B'.repeat(300);
+      const historyLong: TaskHistoryEntry[] = [
+        { taskType: 'generic' as TaskType, dep: null, version: null, repo: '/path/to/repo', status: 'success' as const, finalResponse: longResponse },
+      ];
+      mockCreate.mockResolvedValue(makeResponse(VALID_RESPONSE));
+      await llmParse('update recharts', 'deps', historyLong);
+      const callArgs = mockCreate.mock.calls[0][0];
+      const userMessage = callArgs.messages[0].content as string;
+      // Changes line should be truncated — not contain all the Bs
+      expect(userMessage).not.toContain('B'.repeat(100));
+    });
+
+    it('includes reference resolution guidance in system prompt when history is non-empty', async () => {
+      mockCreate.mockResolvedValue(makeResponse(VALID_RESPONSE));
+      await llmParse('update recharts', 'deps', sampleHistory);
+      const callArgs = mockCreate.mock.calls[0][0];
+      expect(callArgs.system).toContain('"that"');
+      expect(callArgs.system).toContain('task 2');
+      expect(callArgs.system).toContain('keyword');
+    });
+
+    it('does NOT include reference resolution guidance when history is empty', async () => {
+      mockCreate.mockResolvedValue(makeResponse(VALID_RESPONSE));
+      await llmParse('update recharts', 'deps', []);
+      const callArgs = mockCreate.mock.calls[0][0];
+      expect(callArgs.system).not.toContain('task 2');
+    });
+
+    it('escapes XML in description and finalResponse fields', async () => {
+      const historyXml: TaskHistoryEntry[] = [
+        { taskType: 'generic' as TaskType, dep: null, version: null, repo: '/repo', status: 'success' as const, description: '<script>alert("xss")</script>', finalResponse: 'Added <div> handling.' },
+      ];
+      mockCreate.mockResolvedValue(makeResponse(VALID_RESPONSE));
+      await llmParse('update recharts', 'deps', historyXml);
+      const callArgs = mockCreate.mock.calls[0][0];
+      const userMessage = callArgs.messages[0].content as string;
+      expect(userMessage).toContain('&lt;script&gt;');
+      expect(userMessage).toContain('&lt;div&gt;');
+    });
   });
 
   it('truncates input longer than 500 characters', async () => {
@@ -281,5 +360,30 @@ describe('llmParse', () => {
       const userMessage = callArgs.messages[0].content as string;
       expect(userMessage).not.toContain('top_level_dirs');
     });
+  });
+});
+
+describe('summarize', () => {
+  it('returns empty string for empty input', () => {
+    expect(summarize('')).toBe('');
+  });
+  it('returns short text unchanged', () => {
+    expect(summarize('Short text.')).toBe('Short text.');
+  });
+  it('truncates at sentence boundary after 50 chars', () => {
+    const input = 'A'.repeat(55) + '. ' + 'B'.repeat(300);
+    const result = summarize(input);
+    expect(result).toBe('A'.repeat(55) + '.');
+    expect(result.length).toBeLessThanOrEqual(300);
+  });
+  it('hard-cuts at 300 when no sentence boundary found after 50 chars', () => {
+    const input = 'A'.repeat(400);
+    expect(summarize(input)).toBe('A'.repeat(300));
+  });
+  it('ignores sentence boundary before 50 chars', () => {
+    const input = 'v2.1. ' + 'A'.repeat(400);
+    const result = summarize(input);
+    // Should NOT cut at char 4 (the period in v2.1.) — that's before 50-char minimum
+    expect(result.length).toBeGreaterThan(50);
   });
 });
