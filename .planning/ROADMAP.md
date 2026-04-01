@@ -122,10 +122,10 @@ Plans:
   1. User types a follow-up like "now add tests for that" and the intent parser correctly resolves "that" to the previous task's subject without ambiguity
   2. The enriched history block passed to the LLM intent parser includes the agent's change summary (truncated to 300 chars) alongside the task description
   3. History entries are addressable by position ("task 2", "the auth task") so follow-ups are not forced to always reference the most recent task
-**Plans**: TBD
+**Plans:** 1 plan
 
 Plans:
-- [ ] 23-01: Enrich appendHistory() with finalResponse from stored RetryResult + buildHistoryBlock() update
+- [ ] 23-01-PLAN.md — Types + data flow + summarize utility + enriched buildHistoryBlock + reference resolution prompt + tests
 
 ### Phase 24: Slack Bot Adapter
 **Goal**: Users can trigger the full agent pipeline (parse intent, confirm via Block Kit buttons, execute asynchronously, receive PR link) by mentioning the bot in a Slack channel, using the same pipeline as the REPL with no modifications to session core
