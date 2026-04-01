@@ -170,5 +170,5 @@ Plans:
 | 20. Verification & Safety | v2.2 | 2/2 | Complete | 2026-03-24 |
 | 21. Post-Hoc PR & State Foundation | v2.3 | 2/2 | Complete | 2026-03-26 |
 | 22. Conversational Scoping Dialogue | 2/2 | Complete    | 2026-03-26 | - |
-| 23. Follow-Up Task Referencing | 1/1 | Complete   | 2026-04-01 | - |
+| 23. Follow-Up Task Referencing | 1/1 | Complete    | 2026-04-01 | - |
 | 24. Slack Bot Adapter | v2.3 | 0/2 | Not started | - |
