@@ -138,11 +138,11 @@ Plans:
   4. All bot messages (intent display, confirmation buttons, status updates, PR link) appear in the same thread as the triggering mention
   5. When an agent run produces a PR, the bot posts the PR URL as the final message in the thread
   6. Two users triggering tasks simultaneously in the same channel each get independent per-user session state with no cross-contamination
-**Plans**: TBD
+**Plans:** 2 plans
 
 Plans:
-- [ ] 24-01: Slack Bolt app setup + Socket Mode + app_mention listener + per-user ReplState map
-- [ ] 24-02: SessionCallbacks adapter (Block Kit confirm, thread replies, async fire-and-forget, onPrCreated)
+- [ ] 24-01-PLAN.md — Type definitions, Block Kit builders, SessionCallbacks adapter factory with deferred-promise confirm
+- [ ] 24-02-PLAN.md — Bolt app event/action handlers, per-thread state map, CLI slack subcommand, end-to-end verification
 
 ## Progress
 
