@@ -78,7 +78,7 @@ Full details: [v2.2-ROADMAP.md](milestones/v2.2-ROADMAP.md)
 - [x] **Phase 21: Post-Hoc PR & State Foundation** — REPL `pr` command + ReplState/TaskHistoryEntry enrichment that all subsequent phases depend on (completed 2026-03-26)
 - [x] **Phase 22: Conversational Scoping Dialogue** — Up to 3 optional pre-confirm questions for generic tasks injected into the SCOPE block (completed 2026-03-26)
 - [x] **Phase 23: Follow-Up Task Referencing** — Enriched LLM history block so follow-up inputs can reference previous task outcomes (completed 2026-04-01)
-- [ ] **Phase 24: Slack Bot Adapter** — `@slack/bolt` Socket Mode adapter implementing SessionCallbacks for full channel-agnostic integration
+- [x] **Phase 24: Slack Bot Adapter** — `@slack/bolt` Socket Mode adapter implementing SessionCallbacks for full channel-agnostic integration (completed 2026-04-02)
 
 ## Phase Details
 
@@ -138,7 +138,7 @@ Plans:
   4. All bot messages (intent display, confirmation buttons, status updates, PR link) appear in the same thread as the triggering mention
   5. When an agent run produces a PR, the bot posts the PR URL as the final message in the thread
   6. Two users triggering tasks simultaneously in the same channel each get independent per-user session state with no cross-contamination
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 
 Plans:
 - [ ] 24-01-PLAN.md — Type definitions, Block Kit builders, SessionCallbacks adapter factory with deferred-promise confirm
@@ -171,4 +171,4 @@ Plans:
 | 21. Post-Hoc PR & State Foundation | v2.3 | 2/2 | Complete | 2026-03-26 |
 | 22. Conversational Scoping Dialogue | 2/2 | Complete    | 2026-03-26 | - |
 | 23. Follow-Up Task Referencing | 1/1 | Complete    | 2026-04-01 | - |
-| 24. Slack Bot Adapter | 1/2 | In Progress|  | - |
+| 24. Slack Bot Adapter | 2/2 | Complete   | 2026-04-02 | - |
