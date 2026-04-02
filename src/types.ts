@@ -77,6 +77,8 @@ export interface RetryResult {
   verificationResults: VerificationResult[];
   judgeResults?: JudgeResult[];  // all judge invocations for logging
   error?: string;
+  /** PR creation result — populated when createPr is true and run succeeded */
+  prResult?: PRResult;
 }
 
 /**

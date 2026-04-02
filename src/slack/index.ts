@@ -10,6 +10,17 @@ import type { ThreadSession, SlackContext } from './types.js';
 /** Module-level per-thread session state map */
 const threadSessions = new Map<string, ThreadSession>();
 
+/** Shared registry — reads from persisted config, avoids per-mention allocation (P6) */
+let sharedRegistry: ProjectRegistry | null = null;
+
+/** Rate limit: max mentions per user within the window (V3) */
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX = 5;
+const userMentionTimestamps = new Map<string, number[]>();
+
+/** Session TTL — stale sessions evicted after this duration (P3) */
+const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
 /** Expose sessions for testing */
 export function getThreadSessions(): Map<string, ThreadSession> {
   return threadSessions;
@@ -28,16 +39,57 @@ function validateConfig(): void {
   }
 }
 
+/** Check per-user rate limit (V3). Returns true if under limit. */
+function checkRateLimit(userId: string): boolean {
+  const now = Date.now();
+  const timestamps = userMentionTimestamps.get(userId) ?? [];
+  const recent = timestamps.filter(t => now - t < RATE_LIMIT_WINDOW_MS);
+  if (recent.length >= RATE_LIMIT_MAX) {
+    userMentionTimestamps.set(userId, recent);
+    return false;
+  }
+  recent.push(now);
+  userMentionTimestamps.set(userId, recent);
+  return true;
+}
+
+/** Evict stale sessions that exceeded TTL (P3) */
+function evictStaleSessions(): void {
+  const now = Date.now();
+  for (const [key, session] of threadSessions) {
+    if (now - session.createdAt > SESSION_TTL_MS) {
+      session.abortController.abort();
+      session.pendingConfirm?.resolve(null);
+      threadSessions.delete(key);
+    }
+  }
+}
+
+/** Extract thread_ts, channel, and message ts from a BlockAction body with null guards (S2, S3) */
+function extractActionContext(body: BlockAction): {
+  channelId: string | undefined;
+  confirmMsgTs: string | undefined;
+  threadTs: string | undefined;
+} {
+  const channelId = body.channel?.id;
+  const confirmMsgTs = body.message?.ts;
+  // BlockAction.message doesn't expose thread_ts in types — access via indexed type
+  const msg = body.message as Record<string, unknown> | undefined;
+  const threadTs = (msg?.thread_ts as string | undefined) ?? confirmMsgTs;
+  return { channelId, confirmMsgTs, threadTs };
+}
+
 /**
- * Handle app_mention events — create session and fire-and-forget agent run.
+ * Handle app_mention events — create session and run agent pipeline.
  *
  * Exported for testability (so tests can call directly without a full Bolt app).
  */
 export async function handleAppMention(
-  event: { text: string; channel: string; ts: string; thread_ts?: string },
+  event: { text: string; channel: string; ts: string; thread_ts?: string; user?: string },
   client: Pick<WebClient, 'chat'>,
 ): Promise<void> {
   const threadTs = event.thread_ts ?? event.ts;
+  const userId = event.user ?? 'unknown';
   const text = stripMention(event.text);
 
   if (!text) {
@@ -49,7 +101,20 @@ export async function handleAppMention(
     return;
   }
 
+  // V3: Rate limit check
+  if (!checkRateLimit(userId)) {
+    await client.chat.postMessage({
+      channel: event.channel,
+      thread_ts: threadTs,
+      text: 'Rate limit reached. Please wait a minute before submitting another task.',
+    });
+    return;
+  }
+
   const session: ThreadSession = {
+    userId,
+    status: 'confirming',
+    createdAt: Date.now(),
     state: createSessionState(),
     abortController: new AbortController(),
   };
@@ -61,15 +126,17 @@ export async function handleAppMention(
     threadTs,
   };
 
-  const registry = new ProjectRegistry();
+  if (!sharedRegistry) {
+    sharedRegistry = new ProjectRegistry();
+  }
 
-  // Fire-and-forget: agent run is decoupled from Bolt event handler
-  void processSlackMention(text, ctx, session, registry)
+  // P2: processSlackMention now awaits the agent run, so .finally() fires after completion
+  void processSlackMention(text, ctx, session, sharedRegistry)
     .catch((err: Error) => {
       void client.chat.postMessage({
         channel: event.channel,
         thread_ts: threadTs,
-        text: 'Internal error: ' + err.message,
+        text: 'Something went wrong processing your request.',
       });
     })
     .finally(() => {
@@ -90,37 +157,48 @@ export async function handleProceedAction(
 ): Promise<void> {
   await ack();
 
-  const channelId = body.channel?.id;
-  const confirmMsgTs = body.message?.ts;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const threadTs = (body.message as any)?.thread_ts ?? confirmMsgTs;
+  const { channelId, confirmMsgTs, threadTs } = extractActionContext(body);
 
-  const session = threadSessions.get(threadTs as string);
+  if (!channelId || !threadTs) return;
+
+  const session = threadSessions.get(threadTs);
 
   if (!session) {
     await client.chat.postMessage({
-      channel: channelId as string,
+      channel: channelId,
       text: 'Session expired or already completed.',
     });
     return;
   }
 
-  // Double-click guard: if pendingConfirm already resolved, don't process again
-  if (!session.pendingConfirm) {
+  // V1: Authorization check — only the user who initiated can proceed
+  if (body.user?.id && body.user.id !== session.userId) {
     await client.chat.postMessage({
-      channel: channelId as string,
+      channel: channelId,
+      thread_ts: threadTs,
+      text: 'Only the user who initiated this task can confirm it.',
+    });
+    return;
+  }
+
+  // P5: State machine guard — only valid from 'confirming'
+  if (session.status !== 'confirming' || !session.pendingConfirm) {
+    await client.chat.postMessage({
+      channel: channelId,
       text: 'Already processing.',
     });
     return;
   }
 
   // Update confirmation message to remove buttons and show running state
-  await client.chat.update({
-    channel: channelId as string,
-    ts: confirmMsgTs as string,
-    text: 'Confirmed — running...',
-    blocks: [],
-  });
+  if (confirmMsgTs) {
+    await client.chat.update({
+      channel: channelId,
+      ts: confirmMsgTs,
+      text: 'Confirmed — running...',
+      blocks: [],
+    });
+  }
 
   // Resolve the deferred confirm with the session's intent
   const resolve = session.pendingConfirm.resolve;
@@ -141,31 +219,44 @@ export async function handleCancelAction(
 ): Promise<void> {
   await ack();
 
-  const channelId = body.channel?.id;
-  const confirmMsgTs = body.message?.ts;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const threadTs = (body.message as any)?.thread_ts ?? confirmMsgTs;
+  const { channelId, confirmMsgTs, threadTs } = extractActionContext(body);
 
-  const session = threadSessions.get(threadTs as string);
+  if (!channelId || !threadTs) return;
+
+  const session = threadSessions.get(threadTs);
 
   if (!session) {
     // Return silently — session may have already been cleaned up
     return;
   }
 
+  // V1: Authorization check
+  if (body.user?.id && body.user.id !== session.userId) {
+    await client.chat.postMessage({
+      channel: channelId,
+      thread_ts: threadTs,
+      text: 'Only the user who initiated this task can cancel it.',
+    });
+    return;
+  }
+
+  // P5: Only cancel from 'confirming' state
+  if (session.status !== 'confirming') return;
+
   // Update confirmation message to show cancelled state
-  await client.chat.update({
-    channel: channelId as string,
-    ts: confirmMsgTs as string,
-    text: 'Cancelled.',
-    blocks: [],
-  });
+  if (confirmMsgTs) {
+    await client.chat.update({
+      channel: channelId,
+      ts: confirmMsgTs,
+      text: 'Cancelled.',
+      blocks: [],
+    });
+  }
 
   // Resolve deferred confirm with null (user cancelled)
   session.pendingConfirm?.resolve(null);
 
-  // Clean up session immediately
-  threadSessions.delete(threadTs as string);
+  // P2: Don't delete session here — .finally() in handleAppMention handles cleanup
 }
 
 /**
@@ -195,6 +286,9 @@ export async function startSlack(): Promise<void> {
   app.action('cancel_task', async ({ ack, body, client }) => {
     await handleCancelAction(ack, body as BlockAction, client);
   });
+
+  // P3: Periodic eviction of stale sessions
+  setInterval(evictStaleSessions, SESSION_TTL_MS / 2);
 
   await app.start();
   console.log('Slack bot connected via Socket Mode');

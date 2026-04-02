@@ -109,5 +109,5 @@ export function buildStatusMessage(text: string): (KnownBlock | Block)[] {
  * then trims the result.
  */
 export function stripMention(text: string): string {
-  return text.replace(/<@[A-Z0-9]+>\s*/g, '').trim();
+  return text.replace(/<@[A-Za-z0-9]+>\s*/g, '').trim();
 }

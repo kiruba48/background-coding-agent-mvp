@@ -140,4 +140,8 @@ describe('stripMention', () => {
   it('returns text unchanged if no mention present', () => {
     expect(stripMention('update lodash to latest')).toBe('update lodash to latest');
   });
+
+  it('handles mention IDs with lowercase characters (S7)', () => {
+    expect(stripMention('<@Uabc123XY> fix tests')).toBe('fix tests');
+  });
 });

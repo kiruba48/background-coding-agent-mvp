@@ -203,6 +203,8 @@ export async function runAgent(
         taskCategory: options.taskCategory,
       });
 
+      retryResult.prResult = prResult;
+
       if (prResult.error) {
         childLogger.warn({ error: prResult.error, branch: prResult.branch }, 'PR creation failed');
       } else if (prResult.created) {

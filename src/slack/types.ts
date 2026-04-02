@@ -4,6 +4,12 @@ import type { WebClient } from '@slack/web-api';
 
 /** Per-thread session data stored in the module-level Map */
 export interface ThreadSession {
+  /** Slack user ID who initiated the task — used for authorization on button clicks */
+  userId: string;
+  /** Session lifecycle state — guards against race conditions (P5) */
+  status: 'confirming' | 'running' | 'done';
+  /** Creation timestamp for TTL eviction (P3) */
+  createdAt: number;
   state: ReplState;
   abortController: AbortController;
   /** Pending confirmation: resolve with confirmed intent or null (cancel) */

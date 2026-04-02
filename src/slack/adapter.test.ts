@@ -38,6 +38,17 @@ vi.mock('../agent/index.js', () => ({
   runAgent: vi.fn(),
 }));
 
+// Mock createLogger
+vi.mock('../cli/utils/logger.js', () => ({
+  createLogger: vi.fn().mockReturnValue({
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+    child: vi.fn().mockReturnThis(),
+  }),
+}));
+
 // Mock GitHubPRCreator
 vi.mock('../orchestrator/pr-creator.js', () => ({
   GitHubPRCreator: vi.fn().mockImplementation(() => ({
@@ -68,6 +79,9 @@ function createMockSession(): ThreadSession {
     history: [],
   };
   return {
+    userId: 'U_TEST_USER',
+    status: 'confirming',
+    createdAt: Date.now(),
     state,
     abortController: new AbortController(),
   };
@@ -286,8 +300,6 @@ describe('processSlackMention', () => {
     const registry = new ProjectRegistry({ cwd: '/tmp/test-registry' });
 
     // We need to simulate the confirm button being clicked
-    // processSlackMention will call confirm(), which blocks on pendingConfirm
-    // We'll resolve it in a setTimeout to simulate button click
     const processPromise = processSlackMention('add error handling', ctx, session, registry);
 
     // Wait for parseIntent and confirm to be called, then simulate button click
@@ -326,5 +338,161 @@ describe('processSlackMention', () => {
     // runAgent should have been called with createPr: true
     const runAgentCall = vi.mocked(runAgent).mock.calls[0];
     expect(runAgentCall[0].createPr).toBe(true);
+  });
+
+  it('posts PR URL when agent succeeds with prResult (P1)', async () => {
+    vi.mocked(parseIntent).mockResolvedValueOnce(mockIntent);
+    vi.mocked(runAgent).mockResolvedValueOnce({
+      finalStatus: 'success',
+      attempts: 1,
+      sessionResults: [],
+      verificationResults: [],
+      prResult: { url: 'https://github.com/owner/repo/pull/42', created: true, branch: 'agent/test' },
+    });
+
+    const client = createMockClient();
+    const session = createMockSession();
+    const ctx = { client, channel: 'C123', threadTs: '1234567890.123' };
+    const registry = new ProjectRegistry({ cwd: '/tmp/test-registry' });
+
+    const processPromise = processSlackMention('add error handling', ctx, session, registry);
+
+    await new Promise<void>(resolve => setTimeout(resolve, 10));
+    session.pendingConfirm?.resolve(mockIntent);
+
+    await processPromise;
+
+    // Should post PR URL in thread
+    expect(mockPostMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('https://github.com/owner/repo/pull/42'),
+      }),
+    );
+  });
+
+  it('posts generic success when no prResult (P1)', async () => {
+    vi.mocked(parseIntent).mockResolvedValueOnce(mockIntent);
+    vi.mocked(runAgent).mockResolvedValueOnce({
+      finalStatus: 'success',
+      attempts: 1,
+      sessionResults: [],
+      verificationResults: [],
+    });
+
+    const client = createMockClient();
+    const session = createMockSession();
+    const ctx = { client, channel: 'C123', threadTs: '1234567890.123' };
+    const registry = new ProjectRegistry({ cwd: '/tmp/test-registry' });
+
+    const processPromise = processSlackMention('add error handling', ctx, session, registry);
+
+    await new Promise<void>(resolve => setTimeout(resolve, 10));
+    session.pendingConfirm?.resolve(mockIntent);
+
+    await processPromise;
+
+    expect(mockPostMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'Task completed successfully.',
+      }),
+    );
+  });
+
+  it('posts sanitized error message on agent failure (V2)', async () => {
+    vi.mocked(parseIntent).mockResolvedValueOnce(mockIntent);
+    vi.mocked(runAgent).mockRejectedValueOnce(
+      new Error('ENOENT: /Users/secret/path/to/file with xoxb-1234-token'),
+    );
+
+    const client = createMockClient();
+    const session = createMockSession();
+    const ctx = { client, channel: 'C123', threadTs: '1234567890.123' };
+    const registry = new ProjectRegistry({ cwd: '/tmp/test-registry' });
+
+    const processPromise = processSlackMention('add error handling', ctx, session, registry);
+
+    await new Promise<void>(resolve => setTimeout(resolve, 10));
+    session.pendingConfirm?.resolve(mockIntent);
+
+    await processPromise;
+
+    const errorCall = mockPostMessage.mock.calls.find(
+      (call: Array<{ text?: string }>) => call[0].text?.includes('Agent run failed'),
+    );
+    expect(errorCall).toBeDefined();
+    // Should NOT contain the raw path or token
+    expect(errorCall![0].text).not.toContain('/Users/secret');
+    expect(errorCall![0].text).not.toContain('xoxb-1234-token');
+  });
+
+  it('sets session status to done after completion', async () => {
+    vi.mocked(parseIntent).mockResolvedValueOnce(mockIntent);
+    vi.mocked(runAgent).mockResolvedValueOnce({
+      finalStatus: 'success',
+      attempts: 1,
+      sessionResults: [],
+      verificationResults: [],
+    });
+
+    const client = createMockClient();
+    const session = createMockSession();
+    const ctx = { client, channel: 'C123', threadTs: '1234567890.123' };
+    const registry = new ProjectRegistry({ cwd: '/tmp/test-registry' });
+
+    const processPromise = processSlackMention('add error handling', ctx, session, registry);
+
+    await new Promise<void>(resolve => setTimeout(resolve, 10));
+    session.pendingConfirm?.resolve(mockIntent);
+
+    await processPromise;
+
+    expect(session.status).toBe('done');
+  });
+
+  it('sets session status to done on cancellation', async () => {
+    vi.mocked(parseIntent).mockResolvedValueOnce(mockIntent);
+
+    const client = createMockClient();
+    const session = createMockSession();
+    const ctx = { client, channel: 'C123', threadTs: '1234567890.123' };
+    const registry = new ProjectRegistry({ cwd: '/tmp/test-registry' });
+
+    const processPromise = processSlackMention('add error handling', ctx, session, registry);
+
+    await new Promise<void>(resolve => setTimeout(resolve, 10));
+    session.pendingConfirm?.resolve(null);
+
+    await processPromise;
+
+    expect(session.status).toBe('done');
+  });
+
+  it('posts failure message for non-success non-cancelled agent results', async () => {
+    vi.mocked(parseIntent).mockResolvedValueOnce(mockIntent);
+    vi.mocked(runAgent).mockResolvedValueOnce({
+      finalStatus: 'failed',
+      attempts: 1,
+      sessionResults: [],
+      verificationResults: [],
+      error: 'Build failed',
+    });
+
+    const client = createMockClient();
+    const session = createMockSession();
+    const ctx = { client, channel: 'C123', threadTs: '1234567890.123' };
+    const registry = new ProjectRegistry({ cwd: '/tmp/test-registry' });
+
+    const processPromise = processSlackMention('add error handling', ctx, session, registry);
+
+    await new Promise<void>(resolve => setTimeout(resolve, 10));
+    session.pendingConfirm?.resolve(mockIntent);
+
+    await processPromise;
+
+    expect(mockPostMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'Task failed. Check agent logs for details.',
+      }),
+    );
   });
 });

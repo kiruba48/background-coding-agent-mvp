@@ -66,6 +66,17 @@ function createMockClient() {
   };
 }
 
+function createTestSession(overrides: Partial<ThreadSession> = {}): ThreadSession {
+  return {
+    userId: 'U_OWNER',
+    status: 'confirming',
+    createdAt: Date.now(),
+    state: { currentProject: null, currentProjectName: null, history: [] },
+    abortController: new AbortController(),
+    ...overrides,
+  };
+}
+
 describe('startSlack — config validation', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -100,12 +111,29 @@ describe('handleAppMention', () => {
       channel: 'C456',
       ts: '111.000',
       thread_ts: undefined,
+      user: 'U_ALICE',
     };
 
     await handleAppMention(event, client as AnyClient);
 
     // Session should be keyed by ts (since no thread_ts)
     expect(getThreadSessions().has('111.000')).toBe(true);
+  });
+
+  it('stores userId on the created session (V1)', async () => {
+    const client = createMockClient();
+    const event = {
+      text: '<@U123ABC> update lodash',
+      channel: 'C456',
+      ts: '111.000',
+      thread_ts: undefined,
+      user: 'U_ALICE',
+    };
+
+    await handleAppMention(event, client as AnyClient);
+
+    const session = getThreadSessions().get('111.000');
+    expect(session?.userId).toBe('U_ALICE');
   });
 
   it('calls processSlackMention with stripped text, context, session, and registry', async () => {
@@ -115,6 +143,7 @@ describe('handleAppMention', () => {
       channel: 'C456',
       ts: '222.000',
       thread_ts: undefined,
+      user: 'U_BOB',
     };
 
     await handleAppMention(event, client as AnyClient);
@@ -137,6 +166,7 @@ describe('handleAppMention', () => {
       channel: 'C456',
       ts: '333.000',
       thread_ts: undefined,
+      user: 'U_ALICE',
     };
 
     await handleAppMention(event, client as AnyClient);
@@ -163,8 +193,8 @@ describe('handleAppMention', () => {
       .mockReturnValueOnce(block2);
 
     const client = createMockClient();
-    const event1 = { text: '<@U123ABC> task one', channel: 'C456', ts: '100.000', thread_ts: undefined };
-    const event2 = { text: '<@U123ABC> task two', channel: 'C456', ts: '200.000', thread_ts: undefined };
+    const event1 = { text: '<@U123ABC> task one', channel: 'C456', ts: '100.000', thread_ts: undefined, user: 'U_ALICE' };
+    const event2 = { text: '<@U123ABC> task two', channel: 'C456', ts: '200.000', thread_ts: undefined, user: 'U_BOB' };
 
     await handleAppMention(event1, client as AnyClient);
     await handleAppMention(event2, client as AnyClient);
@@ -187,11 +217,54 @@ describe('handleAppMention', () => {
       channel: 'C456',
       ts: '999.001',
       thread_ts: '888.000',
+      user: 'U_ALICE',
     };
 
     await handleAppMention(event, client as AnyClient);
 
     expect(getThreadSessions().has('888.000')).toBe(true);
+  });
+
+  it('rate-limits excessive mentions from the same user (V3)', async () => {
+    const client = createMockClient();
+
+    // Fire 6 mentions from the same user (limit is 5)
+    for (let i = 0; i < 6; i++) {
+      await handleAppMention(
+        { text: `<@U123ABC> task ${i}`, channel: 'C456', ts: `${400 + i}.000`, user: 'U_SPAMMER' },
+        client as AnyClient,
+      );
+    }
+
+    // The 6th call should have been rate-limited
+    const rateLimitCall = client.chat.postMessage.mock.calls.find(
+      (call: Array<{ text?: string }>) => call[0].text?.includes('Rate limit'),
+    );
+    expect(rateLimitCall).toBeDefined();
+  });
+
+  it('sanitizes error messages before posting to Slack (V2)', async () => {
+    mockProcessSlackMention.mockRejectedValueOnce(new Error('ENOENT: /secret/path'));
+
+    const client = createMockClient();
+    const event = {
+      text: '<@U123ABC> do something',
+      channel: 'C456',
+      ts: '500.000',
+      user: 'U_ALICE',
+    };
+
+    await handleAppMention(event, client as AnyClient);
+
+    // Wait for catch to fire
+    await new Promise<void>(resolve => setTimeout(resolve, 10));
+
+    const errorCall = client.chat.postMessage.mock.calls.find(
+      (call: Array<{ text?: string }>) => call[0].text?.includes('Something went wrong'),
+    );
+    expect(errorCall).toBeDefined();
+    // Should NOT contain the raw path
+    expect(errorCall![0].text).not.toContain('/secret/path');
   });
 });
 
@@ -222,17 +295,16 @@ describe('handleProceedAction', () => {
       createPr: true,
     };
 
-    const session: ThreadSession = {
-      state: { currentProject: null, currentProjectName: null, history: [] },
-      abortController: new AbortController(),
+    const session = createTestSession({
       pendingConfirm: { resolve: mockResolve },
       confirmationMessageTs: 'conf-msg-ts',
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       intent: mockIntent as any,
-    };
+    });
     getThreadSessions().set(threadTs, session);
 
     const body = {
+      user: { id: 'U_OWNER' },
       channel: { id: 'C456' },
       message: { ts: 'conf-msg-ts', thread_ts: threadTs },
     } as unknown as BlockAction;
@@ -256,6 +328,7 @@ describe('handleProceedAction', () => {
     const ack = vi.fn().mockResolvedValue(undefined);
 
     const body = {
+      user: { id: 'U_SOMEONE' },
       channel: { id: 'C456' },
       message: { ts: 'some-ts', thread_ts: 'nonexistent-thread' },
     } as unknown as BlockAction;
@@ -270,18 +343,44 @@ describe('handleProceedAction', () => {
     );
   });
 
-  it('posts "Already processing" when pendingConfirm is absent (double-click guard)', async () => {
+  it('rejects unauthorized user from clicking proceed (V1)', async () => {
+    const client = createMockClient();
+    const ack = vi.fn().mockResolvedValue(undefined);
+
+    const threadTs = 'thr.auth.001';
+    const session = createTestSession({
+      userId: 'U_OWNER',
+      pendingConfirm: { resolve: vi.fn() },
+    });
+    getThreadSessions().set(threadTs, session);
+
+    const body = {
+      user: { id: 'U_INTRUDER' },
+      channel: { id: 'C456' },
+      message: { ts: 'some-ts', thread_ts: threadTs },
+    } as unknown as BlockAction;
+
+    await handleProceedAction(ack, body, client as AnyClient);
+
+    expect(client.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('Only the user who initiated'),
+      }),
+    );
+    // pendingConfirm should NOT have been resolved
+    expect(session.pendingConfirm?.resolve).not.toHaveBeenCalled();
+  });
+
+  it('posts "Already processing" when status is not confirming (P5)', async () => {
     const client = createMockClient();
     const ack = vi.fn().mockResolvedValue(undefined);
 
     const threadTs = 'thr.double.click';
-    getThreadSessions().set(threadTs, {
-      state: { currentProject: null, currentProjectName: null, history: [] },
-      abortController: new AbortController(),
-      // pendingConfirm deliberately absent
-    });
+    const session = createTestSession({ status: 'running' });
+    getThreadSessions().set(threadTs, session);
 
     const body = {
+      user: { id: 'U_OWNER' },
       channel: { id: 'C456' },
       message: { ts: 'some-ts', thread_ts: threadTs },
     } as unknown as BlockAction;
@@ -302,7 +401,7 @@ describe('handleCancelAction', () => {
     getThreadSessions().clear();
   });
 
-  it('calls ack() first, then updates message to "Cancelled.", then resolves pendingConfirm with null and deletes session', async () => {
+  it('calls ack() first, then updates message to "Cancelled.", then resolves pendingConfirm with null', async () => {
     const client = createMockClient();
     const ack = vi.fn().mockResolvedValue(undefined);
     const callOrder: string[] = [];
@@ -313,14 +412,14 @@ describe('handleCancelAction', () => {
     const threadTs = 'thr.cancel.001';
     const mockResolve = vi.fn().mockImplementation(() => { callOrder.push('resolve'); });
 
-    getThreadSessions().set(threadTs, {
-      state: { currentProject: null, currentProjectName: null, history: [] },
-      abortController: new AbortController(),
+    const session = createTestSession({
       pendingConfirm: { resolve: mockResolve },
       confirmationMessageTs: 'conf-cancel-ts',
     });
+    getThreadSessions().set(threadTs, session);
 
     const body = {
+      user: { id: 'U_OWNER' },
       channel: { id: 'C456' },
       message: { ts: 'conf-cancel-ts', thread_ts: threadTs },
     } as unknown as BlockAction;
@@ -337,8 +436,6 @@ describe('handleCancelAction', () => {
       }),
     );
     expect(mockResolve).toHaveBeenCalledWith(null);
-    // Session should be deleted
-    expect(getThreadSessions().has(threadTs)).toBe(false);
   });
 
   it('returns silently when no matching session found', async () => {
@@ -346,6 +443,7 @@ describe('handleCancelAction', () => {
     const ack = vi.fn().mockResolvedValue(undefined);
 
     const body = {
+      user: { id: 'U_SOMEONE' },
       channel: { id: 'C456' },
       message: { ts: 'some-ts', thread_ts: 'nonexistent' },
     } as unknown as BlockAction;
@@ -355,5 +453,75 @@ describe('handleCancelAction', () => {
       handleCancelAction(ack, body, client as AnyClient)
     ).resolves.toBeUndefined();
     expect(ack).toHaveBeenCalled();
+  });
+
+  it('rejects unauthorized user from clicking cancel (V1)', async () => {
+    const client = createMockClient();
+    const ack = vi.fn().mockResolvedValue(undefined);
+
+    const threadTs = 'thr.auth.cancel';
+    const session = createTestSession({
+      userId: 'U_OWNER',
+      pendingConfirm: { resolve: vi.fn() },
+    });
+    getThreadSessions().set(threadTs, session);
+
+    const body = {
+      user: { id: 'U_INTRUDER' },
+      channel: { id: 'C456' },
+      message: { ts: 'some-ts', thread_ts: threadTs },
+    } as unknown as BlockAction;
+
+    await handleCancelAction(ack, body, client as AnyClient);
+
+    expect(client.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('Only the user who initiated'),
+      }),
+    );
+    // pendingConfirm should NOT have been resolved
+    expect(session.pendingConfirm?.resolve).not.toHaveBeenCalled();
+  });
+
+  it('ignores cancel when session is already running (P5)', async () => {
+    const client = createMockClient();
+    const ack = vi.fn().mockResolvedValue(undefined);
+
+    const threadTs = 'thr.race.001';
+    const session = createTestSession({ status: 'running' });
+    getThreadSessions().set(threadTs, session);
+
+    const body = {
+      user: { id: 'U_OWNER' },
+      channel: { id: 'C456' },
+      message: { ts: 'some-ts', thread_ts: threadTs },
+    } as unknown as BlockAction;
+
+    await handleCancelAction(ack, body, client as AnyClient);
+
+    // Should not update message or resolve anything
+    expect(client.chat.update).not.toHaveBeenCalled();
+  });
+
+  it('does not delete session from map — cleanup handled by handleAppMention .finally() (P2)', async () => {
+    const client = createMockClient();
+    const ack = vi.fn().mockResolvedValue(undefined);
+
+    const threadTs = 'thr.cleanup.001';
+    const session = createTestSession({
+      pendingConfirm: { resolve: vi.fn() },
+    });
+    getThreadSessions().set(threadTs, session);
+
+    const body = {
+      user: { id: 'U_OWNER' },
+      channel: { id: 'C456' },
+      message: { ts: 'some-ts', thread_ts: threadTs },
+    } as unknown as BlockAction;
+
+    await handleCancelAction(ack, body, client as AnyClient);
+
+    // Session should still be in the map — .finally() in handleAppMention handles deletion
+    expect(getThreadSessions().has(threadTs)).toBe(true);
   });
 });
