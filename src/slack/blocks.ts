@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { KnownBlock, Block } from '@slack/bolt';
+import type { KnownBlock, Block } from '@slack/web-api';
 import type { ResolvedIntent } from '../intent/types.js';
 
 /**
