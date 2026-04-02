@@ -3,6 +3,7 @@ import pc from 'picocolors';
 import { promises as fs } from 'fs';
 import { runCommand } from './commands/run.js';
 import { createProjectsCommand } from './commands/projects.js';
+import { createSlackCommand } from './commands/slack.js';
 import { autoRegisterCwd } from './auto-register.js';
 import { ProjectRegistry } from '../agent/registry.js';
 
@@ -186,5 +187,6 @@ program
   });
 
 program.addCommand(createProjectsCommand());
+program.addCommand(createSlackCommand());
 
 program.parse();
