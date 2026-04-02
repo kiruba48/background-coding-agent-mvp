@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { BlockAction } from '@slack/bolt';
+import type { ThreadSession } from './types.js';
 
 // --- Module mocks (must be at top, before any imports) ---
 
@@ -34,7 +35,7 @@ vi.mock('../repl/session.js', () => ({
   }),
 }));
 
-// Mock ProjectRegistry
+// Mock ProjectRegistry — must use function (not arrow) for vitest constructor compatibility
 vi.mock('../agent/registry.js', () => ({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ProjectRegistry: vi.fn().mockImplementation(function (this: any) {
@@ -52,7 +53,10 @@ import {
   getThreadSessions,
 } from './index.js';
 
-// Mock client factory
+// Mock client — cast through unknown to satisfy Pick<WebClient, 'chat'> parameter types
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyClient = any;
+
 function createMockClient() {
   return {
     chat: {
@@ -98,7 +102,7 @@ describe('handleAppMention', () => {
       thread_ts: undefined,
     };
 
-    await handleAppMention(event as Parameters<typeof handleAppMention>[0], client as Parameters<typeof handleAppMention>[1]);
+    await handleAppMention(event, client as AnyClient);
 
     // Session should be keyed by ts (since no thread_ts)
     expect(getThreadSessions().has('111.000')).toBe(true);
@@ -113,7 +117,7 @@ describe('handleAppMention', () => {
       thread_ts: undefined,
     };
 
-    await handleAppMention(event as Parameters<typeof handleAppMention>[0], client as Parameters<typeof handleAppMention>[1]);
+    await handleAppMention(event, client as AnyClient);
 
     // Wait for the fire-and-forget to start
     await new Promise<void>(resolve => setTimeout(resolve, 0));
@@ -135,7 +139,7 @@ describe('handleAppMention', () => {
       thread_ts: undefined,
     };
 
-    await handleAppMention(event as Parameters<typeof handleAppMention>[0], client as Parameters<typeof handleAppMention>[1]);
+    await handleAppMention(event, client as AnyClient);
 
     expect(client.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -147,10 +151,10 @@ describe('handleAppMention', () => {
   });
 
   it('two app_mention events with different threadTs create independent sessions', async () => {
-    // Use a promise that never resolves so the finally() cleanup doesn't delete sessions
+    // Use blocking promises so the finally() cleanup doesn't delete sessions
     // before we can assert on them
-    let resolveBlock1: () => void;
-    let resolveBlock2: () => void;
+    let resolveBlock1!: () => void;
+    let resolveBlock2!: () => void;
     const block1 = new Promise<void>(resolve => { resolveBlock1 = resolve; });
     const block2 = new Promise<void>(resolve => { resolveBlock2 = resolve; });
 
@@ -162,8 +166,8 @@ describe('handleAppMention', () => {
     const event1 = { text: '<@U123ABC> task one', channel: 'C456', ts: '100.000', thread_ts: undefined };
     const event2 = { text: '<@U123ABC> task two', channel: 'C456', ts: '200.000', thread_ts: undefined };
 
-    await handleAppMention(event1 as Parameters<typeof handleAppMention>[0], client as Parameters<typeof handleAppMention>[1]);
-    await handleAppMention(event2 as Parameters<typeof handleAppMention>[0], client as Parameters<typeof handleAppMention>[1]);
+    await handleAppMention(event1, client as AnyClient);
+    await handleAppMention(event2, client as AnyClient);
 
     // Sessions should both be present (fire-and-forget not yet completed)
     expect(getThreadSessions().has('100.000')).toBe(true);
@@ -171,9 +175,9 @@ describe('handleAppMention', () => {
     // Sessions are independent objects
     expect(getThreadSessions().get('100.000')).not.toBe(getThreadSessions().get('200.000'));
 
-    // Clean up by resolving the blocking promises
-    resolveBlock1!();
-    resolveBlock2!();
+    // Clean up
+    resolveBlock1();
+    resolveBlock2();
   });
 
   it('uses thread_ts from event when present (replies in existing thread)', async () => {
@@ -185,7 +189,7 @@ describe('handleAppMention', () => {
       thread_ts: '888.000',
     };
 
-    await handleAppMention(event as Parameters<typeof handleAppMention>[0], client as Parameters<typeof handleAppMention>[1]);
+    await handleAppMention(event, client as AnyClient);
 
     expect(getThreadSessions().has('888.000')).toBe(true);
   });
@@ -207,22 +211,33 @@ describe('handleProceedAction', () => {
 
     const threadTs = 'thr.proceed.001';
     const mockResolve = vi.fn().mockImplementation(() => { callOrder.push('resolve'); });
-    const mockIntent = { taskType: 'generic', repo: '/projects/app', description: 'test', dep: null, version: null, confidence: 'high', scopingQuestions: [], createPr: true };
+    const mockIntent = {
+      taskType: 'generic',
+      repo: '/projects/app',
+      description: 'test',
+      dep: null,
+      version: null,
+      confidence: 'high',
+      scopingQuestions: [],
+      createPr: true,
+    };
 
-    getThreadSessions().set(threadTs, {
+    const session: ThreadSession = {
       state: { currentProject: null, currentProjectName: null, history: [] },
       abortController: new AbortController(),
       pendingConfirm: { resolve: mockResolve },
       confirmationMessageTs: 'conf-msg-ts',
-      intent: mockIntent as Parameters<typeof handleProceedAction>[0] extends never ? never : ReturnType<typeof getThreadSessions>['values'] extends IterableIterator<infer T> ? T : never,
-    } as ReturnType<typeof getThreadSessions>['get'] extends (key: string) => infer T ? NonNullable<T> : never);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      intent: mockIntent as any,
+    };
+    getThreadSessions().set(threadTs, session);
 
     const body = {
       channel: { id: 'C456' },
       message: { ts: 'conf-msg-ts', thread_ts: threadTs },
     } as unknown as BlockAction;
 
-    await handleProceedAction(ack, body, client as Parameters<typeof handleProceedAction>[2]);
+    await handleProceedAction(ack, body, client as AnyClient);
 
     expect(callOrder[0]).toBe('ack');
     expect(client.chat.update).toHaveBeenCalledWith(
@@ -245,7 +260,7 @@ describe('handleProceedAction', () => {
       message: { ts: 'some-ts', thread_ts: 'nonexistent-thread' },
     } as unknown as BlockAction;
 
-    await handleProceedAction(ack, body, client as Parameters<typeof handleProceedAction>[2]);
+    await handleProceedAction(ack, body, client as AnyClient);
 
     expect(ack).toHaveBeenCalled();
     expect(client.chat.postMessage).toHaveBeenCalledWith(
@@ -271,7 +286,7 @@ describe('handleProceedAction', () => {
       message: { ts: 'some-ts', thread_ts: threadTs },
     } as unknown as BlockAction;
 
-    await handleProceedAction(ack, body, client as Parameters<typeof handleProceedAction>[2]);
+    await handleProceedAction(ack, body, client as AnyClient);
 
     expect(client.chat.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -310,7 +325,7 @@ describe('handleCancelAction', () => {
       message: { ts: 'conf-cancel-ts', thread_ts: threadTs },
     } as unknown as BlockAction;
 
-    await handleCancelAction(ack, body, client as Parameters<typeof handleCancelAction>[2]);
+    await handleCancelAction(ack, body, client as AnyClient);
 
     expect(callOrder[0]).toBe('ack');
     expect(client.chat.update).toHaveBeenCalledWith(
@@ -337,7 +352,7 @@ describe('handleCancelAction', () => {
 
     // Should not throw
     await expect(
-      handleCancelAction(ack, body, client as Parameters<typeof handleCancelAction>[2])
+      handleCancelAction(ack, body, client as AnyClient)
     ).resolves.toBeUndefined();
     expect(ack).toHaveBeenCalled();
   });
