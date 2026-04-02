@@ -31,12 +31,12 @@ Requirements for milestone v2.3 Conversational Scoping & REPL Enhancements. Each
 ### Slack Bot
 
 - [ ] **SLCK-01**: Slack bot listens for app_mention events via Bolt Socket Mode
-- [ ] **SLCK-02**: Bot parses mentioned text through existing intent parser and displays parsed intent in thread
-- [ ] **SLCK-03**: Bot presents Block Kit buttons (Proceed / Cancel) for task confirmation
+- [x] **SLCK-02**: Bot parses mentioned text through existing intent parser and displays parsed intent in thread
+- [x] **SLCK-03**: Bot presents Block Kit buttons (Proceed / Cancel) for task confirmation
 - [ ] **SLCK-04**: Bot executes confirmed tasks asynchronously (ack within 3 seconds, fire-and-forget agent run)
-- [ ] **SLCK-05**: All bot responses appear in the same thread as the triggering mention
-- [ ] **SLCK-06**: Bot posts PR link as final thread message when PR is created
-- [ ] **SLCK-07**: Bot implements SessionCallbacks interface for channel-agnostic integration with existing pipeline
+- [x] **SLCK-05**: All bot responses appear in the same thread as the triggering mention
+- [x] **SLCK-06**: Bot posts PR link as final thread message when PR is created
+- [x] **SLCK-07**: Bot implements SessionCallbacks interface for channel-agnostic integration with existing pipeline
 
 ## Future Requirements
 
@@ -94,12 +94,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | FLLW-02 | Phase 21 | Complete |
 | FLLW-03 | Phase 23 | Complete |
 | SLCK-01 | Phase 24 | Pending |
-| SLCK-02 | Phase 24 | Pending |
-| SLCK-03 | Phase 24 | Pending |
+| SLCK-02 | Phase 24 | Complete |
+| SLCK-03 | Phase 24 | Complete |
 | SLCK-04 | Phase 24 | Pending |
-| SLCK-05 | Phase 24 | Pending |
-| SLCK-06 | Phase 24 | Pending |
-| SLCK-07 | Phase 24 | Pending |
+| SLCK-05 | Phase 24 | Complete |
+| SLCK-06 | Phase 24 | Complete |
+| SLCK-07 | Phase 24 | Complete |
 
 **Coverage:**
 - v2.3 requirements: 19 total

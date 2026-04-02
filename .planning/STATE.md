@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.3
 milestone_name: Conversational Scoping & REPL Enhancements
 status: completed
-stopped_at: Phase 24 context gathered
-last_updated: "2026-04-01T09:28:01.895Z"
+stopped_at: Completed 24-01-PLAN.md
+last_updated: "2026-04-02T08:28:05.887Z"
 last_activity: 2026-03-26 — Phase 22 complete, SCOPE-04 shipped
 progress:
   total_phases: 4
   completed_phases: 3
-  total_plans: 5
-  completed_plans: 5
+  total_plans: 7
+  completed_plans: 6
 ---
 
 # Project State
@@ -60,6 +60,9 @@ Progress [██████████] 100% — 4/4 plans complete
 - [Phase 22]: confirmLoop also updated with scopeHints parameter for consistency, even though REPL uses its own confirmCb
 - [Phase 23-follow-up-task-referencing]: finalResponse accessed via taskResult?.sessionResults?.at(-1)?.finalResponse — NOT RetryResult.finalResponse
 - [Phase 23-follow-up-task-referencing]: Changes line omitted when finalResponse undefined — no placeholder text per locked decision
+- [Phase 24-slack-bot-adapter]: KnownBlock/Block imported from @slack/web-api (not @slack/bolt) — correct re-export source for TypeScript
+- [Phase 24-slack-bot-adapter]: Slack confirm uses deferred-promise pattern — pendingConfirm resolver stored on ThreadSession, resolved by action handler button clicks
+- [Phase 24-slack-bot-adapter]: processSlackMention fires agent run as fire-and-forget void async IIFE — agent lifecycle decoupled from Bolt event handler timing
 
 ### Pending Todos
 
@@ -72,7 +75,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-01T09:28:01.892Z
-Stopped at: Phase 24 context gathered
-Resume file: .planning/phases/24-slack-bot-adapter/24-CONTEXT.md
+Last session: 2026-04-02T08:28:05.885Z
+Stopped at: Completed 24-01-PLAN.md
+Resume file: None
 Next action: `/gsd:plan-phase 21`

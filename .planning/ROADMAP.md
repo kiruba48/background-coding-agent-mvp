@@ -138,7 +138,7 @@ Plans:
   4. All bot messages (intent display, confirmation buttons, status updates, PR link) appear in the same thread as the triggering mention
   5. When an agent run produces a PR, the bot posts the PR URL as the final message in the thread
   6. Two users triggering tasks simultaneously in the same channel each get independent per-user session state with no cross-contamination
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 
 Plans:
 - [ ] 24-01-PLAN.md — Type definitions, Block Kit builders, SessionCallbacks adapter factory with deferred-promise confirm
@@ -171,4 +171,4 @@ Plans:
 | 21. Post-Hoc PR & State Foundation | v2.3 | 2/2 | Complete | 2026-03-26 |
 | 22. Conversational Scoping Dialogue | 2/2 | Complete    | 2026-03-26 | - |
 | 23. Follow-Up Task Referencing | 1/1 | Complete    | 2026-04-01 | - |
-| 24. Slack Bot Adapter | v2.3 | 0/2 | Not started | - |
+| 24. Slack Bot Adapter | 1/2 | In Progress|  | - |
