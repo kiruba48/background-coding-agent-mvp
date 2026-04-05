@@ -12,15 +12,17 @@
  */
 
 import pino from 'pino';
+import { randomBytes } from 'node:crypto';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { RetryOrchestrator } from '../orchestrator/retry.js';
 import { MetricsCollector } from '../orchestrator/metrics.js';
 import { compositeVerifier } from '../orchestrator/verifier.js';
 import { llmJudge } from '../orchestrator/judge.js';
-import { GitHubPRCreator } from '../orchestrator/pr-creator.js';
+import { GitHubPRCreator, generateBranchName } from '../orchestrator/pr-creator.js';
 import { buildPrompt } from '../prompts/index.js';
 import { assertDockerRunning, ensureNetworkExists, buildImageIfNeeded } from '../cli/docker/index.js';
+import { WorktreeManager } from './worktree-manager.js';
 import type { RetryResult } from '../types.js';
 import type { TaskCategory } from '../intent/types.js';
 
@@ -54,6 +56,7 @@ export interface AgentContext {
   logger?: pino.Logger;    // falls back to pino({ level: 'silent' }) if omitted
   signal?: AbortSignal;    // graceful cancellation via AbortSignal
   skipDockerChecks?: boolean;   // REPL sets true after startup check
+  skipWorktree?: boolean;       // tests can bypass worktree creation
 }
 
 /**
@@ -126,131 +129,161 @@ export async function runAgent(
     await buildImageIfNeeded();
   }
 
-  // Create RetryOrchestrator — signal is threaded through SessionConfig
-  const orchestrator = new RetryOrchestrator(
-    {
-      workspaceDir: options.repo,
-      turnLimit: options.turnLimit,
-      timeoutMs: options.timeoutMs,
-      logger: childLogger,
-      signal: context.signal,  // Thread AbortSignal through the full chain
-    },
-    {
-      maxRetries: options.maxRetries,
-      verifier: compositeVerifier,
-      judge: judgeDisabled ? undefined : llmJudge,
-      maxJudgeVetoes: 1,
-      preVerify,
-    }
-  );
+  // Worktree lifecycle — create isolated worktree unless skipped (tests)
+  let effectiveWorkspaceDir = options.repo;
+  let effectiveBranchOverride = options.branchOverride;
+  let worktreeManager: WorktreeManager | null = null;
 
-  // Create metrics collector
-  const metrics = new MetricsCollector();
+  if (!context.skipWorktree) {
+    const suffix = randomBytes(3).toString('hex');
+    const worktreePath = WorktreeManager.buildWorktreePath(options.repo, suffix);
+    const branchInput = options.taskType === 'generic' && options.description
+      ? `${options.taskCategory ?? 'generic'} ${options.description.slice(0, 40)}`
+      : options.taskType;
+    const branchName = generateBranchName(branchInput);
+    worktreeManager = new WorktreeManager(options.repo, worktreePath, branchName);
+    await worktreeManager.create();
 
-  // Resolve "latest" to a concrete version on the host (which has network access).
-  // The Docker agent has no network — without this it wastes 10+ turns trying npm show/curl.
-  let resolvedVersion = options.targetVersion;
-  if (options.taskType === 'npm-dependency-update' && options.dep && resolvedVersion === 'latest') {
-    childLogger.info({ dep: options.dep }, 'Resolving "latest" version on host...');
-    try {
-      const { stdout } = await execFileAsync('npm', ['show', options.dep, 'version'], {
-        timeout: 30_000,
-        maxBuffer: 1024 * 1024,
-      });
-      const version = stdout.trim();
-      if (version && /^\d+\.\d+\.\d+/.test(version)) {
-        childLogger.info({ dep: options.dep, version }, 'Resolved latest version');
-        resolvedVersion = version;
-      }
-    } catch (err: unknown) {
-      childLogger.warn({ dep: options.dep, error: (err as Error).message },
-        'Failed to resolve latest version on host — agent will attempt resolution inside Docker');
-    }
+    effectiveWorkspaceDir = worktreePath;
+    effectiveBranchOverride = branchName;
   }
 
-  // Construct prompt from task type
-  const prompt = await buildPrompt({
-    taskType: options.taskType,
-    dep: options.dep,
-    targetVersion: resolvedVersion,
-    description: options.description,
-    repoPath: options.repo,
-    scopeHints: options.scopeHints,
-  });
-
-  // Run the retry orchestration loop
-  const retryResult = await orchestrator.run(prompt, childLogger);
-
-  // If cancelled, return immediately without PR creation or metrics
-  if (retryResult.finalStatus === 'cancelled' || context.signal?.aborted) {
-    return {
-      ...retryResult,
-      finalStatus: 'cancelled',
-    };
-  }
-
-  // Create GitHub PR if requested and run was successful
-  if (options.createPr && retryResult.finalStatus === 'success') {
-    childLogger.info('Creating GitHub PR...');
-    const creator = new GitHubPRCreator(options.repo);
-    try {
-      const prResult = await creator.create({
-        taskType: options.taskType,
-        originalTask: prompt,
-        retryResult,
-        branchOverride: options.branchOverride,
-        description: options.description,
-        taskCategory: options.taskCategory,
-      });
-
-      retryResult.prResult = prResult;
-
-      if (prResult.error) {
-        childLogger.warn({ error: prResult.error, branch: prResult.branch }, 'PR creation failed');
-      } else if (prResult.created) {
-        childLogger.info({ prUrl: prResult.url, branch: prResult.branch }, 'GitHub PR created');
-      } else {
-        childLogger.info({ prUrl: prResult.url, branch: prResult.branch }, 'PR already exists');
-      }
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      childLogger.warn({ error: errMsg }, 'PR creation threw unexpectedly');
-    }
-  }
-
-  // Record metrics
-  if (retryResult.sessionResults.length > 0) {
-    const lastSession = retryResult.sessionResults[retryResult.sessionResults.length - 1];
-    const statusMap: Record<string, import('../orchestrator/metrics.js').SessionStatus> = {
-      success: 'success',
-      failed: 'failed',
-      timeout: 'timeout',
-      turn_limit: 'turn_limit',
-      vetoed: 'vetoed',
-      cancelled: 'cancelled',
-      max_retries_exhausted: 'failed',
-      zero_diff: 'success',  // agent completed without error
-    };
-    const status = statusMap[retryResult.finalStatus] ?? 'failed';
-    metrics.recordSession(status, lastSession.toolCallCount, lastSession.duration);
-  }
-
-  // Log retry result
-  childLogger.info(
-    {
-      retryResult: {
-        finalStatus: retryResult.finalStatus,
-        attempts: retryResult.attempts,
-        sessionCount: retryResult.sessionResults.length,
-        verificationCount: retryResult.verificationResults.length,
-        judgeCount: retryResult.judgeResults?.length ?? 0,
-        error: retryResult.error,
+  try {
+    // Create RetryOrchestrator — signal is threaded through SessionConfig
+    const orchestrator = new RetryOrchestrator(
+      {
+        workspaceDir: effectiveWorkspaceDir,
+        turnLimit: options.turnLimit,
+        timeoutMs: options.timeoutMs,
+        logger: childLogger,
+        signal: context.signal,  // Thread AbortSignal through the full chain
       },
-      metrics: metrics.getMetrics(),
-    },
-    'Agent run completed'
-  );
+      {
+        maxRetries: options.maxRetries,
+        verifier: compositeVerifier,
+        judge: judgeDisabled ? undefined : llmJudge,
+        maxJudgeVetoes: 1,
+        preVerify,
+      }
+    );
 
-  // Return result directly — no exit codes, no process termination
-  return retryResult;
+    // Create metrics collector
+    const metrics = new MetricsCollector();
+
+    // Resolve "latest" to a concrete version on the host (which has network access).
+    // The Docker agent has no network — without this it wastes 10+ turns trying npm show/curl.
+    let resolvedVersion = options.targetVersion;
+    if (options.taskType === 'npm-dependency-update' && options.dep && resolvedVersion === 'latest') {
+      childLogger.info({ dep: options.dep }, 'Resolving "latest" version on host...');
+      try {
+        const { stdout } = await execFileAsync('npm', ['show', options.dep, 'version'], {
+          timeout: 30_000,
+          maxBuffer: 1024 * 1024,
+        });
+        const version = stdout.trim();
+        if (version && /^\d+\.\d+\.\d+/.test(version)) {
+          childLogger.info({ dep: options.dep, version }, 'Resolved latest version');
+          resolvedVersion = version;
+        }
+      } catch (err: unknown) {
+        childLogger.warn({ dep: options.dep, error: (err as Error).message },
+          'Failed to resolve latest version on host — agent will attempt resolution inside Docker');
+      }
+    }
+
+    // Construct prompt from task type
+    const prompt = await buildPrompt({
+      taskType: options.taskType,
+      dep: options.dep,
+      targetVersion: resolvedVersion,
+      description: options.description,
+      repoPath: effectiveWorkspaceDir,
+      scopeHints: options.scopeHints,
+    });
+
+    // Run the retry orchestration loop
+    const retryResult = await orchestrator.run(prompt, childLogger);
+
+    // If cancelled, return immediately without PR creation or metrics
+    if (retryResult.finalStatus === 'cancelled' || context.signal?.aborted) {
+      return {
+        ...retryResult,
+        finalStatus: 'cancelled',
+        worktreeBranch: effectiveBranchOverride,
+      };
+    }
+
+    // Create GitHub PR if requested and run was successful
+    if (options.createPr && retryResult.finalStatus === 'success') {
+      childLogger.info('Creating GitHub PR...');
+      const creator = new GitHubPRCreator(effectiveWorkspaceDir);
+      try {
+        const prResult = await creator.create({
+          taskType: options.taskType,
+          originalTask: prompt,
+          retryResult,
+          branchOverride: effectiveBranchOverride,
+          description: options.description,
+          taskCategory: options.taskCategory,
+        });
+
+        retryResult.prResult = prResult;
+
+        if (prResult.error) {
+          childLogger.warn({ error: prResult.error, branch: prResult.branch }, 'PR creation failed');
+        } else if (prResult.created) {
+          childLogger.info({ prUrl: prResult.url, branch: prResult.branch }, 'GitHub PR created');
+        } else {
+          childLogger.info({ prUrl: prResult.url, branch: prResult.branch }, 'PR already exists');
+        }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        childLogger.warn({ error: errMsg }, 'PR creation threw unexpectedly');
+      }
+    }
+
+    // Record metrics
+    if (retryResult.sessionResults.length > 0) {
+      const lastSession = retryResult.sessionResults[retryResult.sessionResults.length - 1];
+      const statusMap: Record<string, import('../orchestrator/metrics.js').SessionStatus> = {
+        success: 'success',
+        failed: 'failed',
+        timeout: 'timeout',
+        turn_limit: 'turn_limit',
+        vetoed: 'vetoed',
+        cancelled: 'cancelled',
+        max_retries_exhausted: 'failed',
+        zero_diff: 'success',  // agent completed without error
+      };
+      const status = statusMap[retryResult.finalStatus] ?? 'failed';
+      metrics.recordSession(status, lastSession.toolCallCount, lastSession.duration);
+    }
+
+    // Log retry result
+    childLogger.info(
+      {
+        retryResult: {
+          finalStatus: retryResult.finalStatus,
+          attempts: retryResult.attempts,
+          sessionCount: retryResult.sessionResults.length,
+          verificationCount: retryResult.verificationResults.length,
+          judgeCount: retryResult.judgeResults?.length ?? 0,
+          error: retryResult.error,
+        },
+        metrics: metrics.getMetrics(),
+      },
+      'Agent run completed'
+    );
+
+    // Expose worktree branch on result for REPL post-hoc PR support
+    retryResult.worktreeBranch = effectiveBranchOverride;
+
+    // Return result directly — no exit codes, no process termination
+    return retryResult;
+  } finally {
+    // Clean up worktree AFTER PR creation completes
+    if (worktreeManager) {
+      await worktreeManager.remove();
+    }
+  }
 }
