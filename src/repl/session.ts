@@ -66,7 +66,7 @@ export async function runScopingDialogue(
   return hints;
 }
 
-function appendHistory(state: ReplState, entry: TaskHistoryEntry): void {
+export function appendHistory(state: ReplState, entry: TaskHistoryEntry): void {
   if (state.history.length >= MAX_HISTORY_ENTRIES) {
     state.history.shift();
   }

@@ -4,9 +4,11 @@ import { runAgent, type AgentOptions, type AgentContext } from '../agent/index.j
 import { ProjectRegistry } from '../agent/registry.js';
 import { createLogger } from '../cli/utils/logger.js';
 import { buildConfirmationBlocks } from '../slack/blocks.js';
+import { appendHistory } from '../repl/session.js';
 import type { ThreadSession, SlackContext } from '../slack/types.js';
-import type { SessionCallbacks, ScopeHint } from '../repl/types.js';
+import type { SessionCallbacks, ScopeHint, TaskHistoryEntry } from '../repl/types.js';
 import type { ResolvedIntent } from '../intent/types.js';
+import type { RetryResult } from '../types.js';
 
 /** Default agent options for Slack sessions */
 const SLACK_TURN_LIMIT = 30;
@@ -171,9 +173,12 @@ export async function processSlackMention(
     skipDockerChecks: true,
   };
 
+  let historyStatus: TaskHistoryEntry['status'] = 'failed';
+  let taskResult: RetryResult | undefined;
   try {
     await callbacks.onAgentStart?.();
     const result = await runAgent(agentOptions, agentContext);
+    taskResult = result;
 
     if (result.finalStatus === 'success') {
       // P1: Post PR URL if available
@@ -190,20 +195,41 @@ export async function processSlackMention(
           text: 'Task completed successfully.',
         });
       }
-    } else if (result.finalStatus !== 'cancelled') {
+      historyStatus = 'success';
+    } else if (result.finalStatus === 'cancelled') {
+      historyStatus = 'cancelled';
+    } else if (result.finalStatus === 'zero_diff') {
+      historyStatus = 'zero_diff';
+    } else {
       await ctx.client.chat.postMessage({
         channel: ctx.channel,
         thread_ts: ctx.threadTs,
         text: 'Task failed. Check agent logs for details.',
       });
+      historyStatus = 'failed';
     }
   } catch (err) {
+    historyStatus = 'failed';
     await ctx.client.chat.postMessage({
       channel: ctx.channel,
       thread_ts: ctx.threadTs,
       text: `Agent run failed: ${sanitizeError(err)}`,
     });
   } finally {
+    // Append to session history for multi-turn follow-up context
+    appendHistory(session.state, {
+      taskType: confirmed.taskType,
+      dep: confirmed.dep ?? null,
+      version: confirmed.version ?? null,
+      repo: confirmed.repo,
+      status: historyStatus,
+      description: confirmed.taskType === 'generic'
+        ? confirmed.description
+        : confirmed.dep
+          ? `update ${confirmed.dep} to ${confirmed.version ?? 'latest'}`
+          : undefined,
+      finalResponse: taskResult?.sessionResults?.at(-1)?.finalResponse,
+    });
     session.status = 'done';
     callbacks.onAgentEnd?.();
   }
