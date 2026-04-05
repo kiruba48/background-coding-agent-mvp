@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.4
 milestone_name: Git Worktree & Repo Exploration
 status: planning
-stopped_at: Phase 26 context gathered
-last_updated: "2026-04-05T17:46:59.996Z"
+stopped_at: Completed 26-01-PLAN.md
+last_updated: "2026-04-05T18:11:19.850Z"
 last_activity: 2026-04-05 — Roadmap created, 16 requirements mapped to 3 phases
 progress:
   total_phases: 3
   completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
+  total_plans: 4
+  completed_plans: 3
   percent: 0
 ---
 
@@ -52,6 +52,9 @@ Progress: [░░░░░░░░░░] 0% (0/3 phases complete)
 - [Phase 25]: SessionTimeoutError deleted: timeout signaled via RetryResult.finalStatus, no thrown class needed
 - [Phase 25]: appendHistory exported from session.ts so Slack and REPL adapters share the same bounded-history logic
 - [Phase 25]: configOnly verification now routes through injected retryConfig.verifier — compositeVerifier import removed from retry.ts
+- [Phase 26]: PID sentinel JSON format stores both pid and branch: enables branch cleanup even when worktree is already removed
+- [Phase 26]: pruneOrphans is static (no instance needed): called at startup without a specific worktree context
+- [Phase 26]: EPERM treated as alive in process.kill(pid, 0): process exists but we lack permission — conservative choice avoids deleting a live agent's worktree
 
 ### Pending Todos
 
@@ -65,7 +68,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-05T17:46:59.989Z
-Stopped at: Phase 26 context gathered
-Resume file: .planning/phases/26-git-worktree-isolation/26-CONTEXT.md
+Last session: 2026-04-05T18:11:19.848Z
+Stopped at: Completed 26-01-PLAN.md
+Resume file: None
 Next action: `/gsd:plan-phase 25`
