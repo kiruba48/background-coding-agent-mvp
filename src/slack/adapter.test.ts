@@ -495,4 +495,95 @@ describe('processSlackMention', () => {
       }),
     );
   });
+
+  it('appends to session.state.history on successful agent run', async () => {
+    vi.mocked(parseIntent).mockResolvedValueOnce(mockIntent);
+    vi.mocked(runAgent).mockResolvedValueOnce({
+      finalStatus: 'success',
+      attempts: 1,
+      sessionResults: [{ status: 'success', finalResponse: 'Added error handling.', toolCallCount: 5, duration: 1000 }],
+      verificationResults: [],
+    });
+
+    const client = createMockClient();
+    const session = createMockSession();
+    const ctx = { client, channel: 'C123', threadTs: '1234567890.123' };
+    const registry = new ProjectRegistry({ cwd: '/tmp/test-registry' });
+
+    const processPromise = processSlackMention('add error handling', ctx, session, registry);
+    await new Promise<void>(resolve => setTimeout(resolve, 10));
+    session.pendingConfirm?.resolve(mockIntent);
+    await processPromise;
+
+    expect(session.state.history.length).toBe(1);
+    expect(session.state.history[0]).toMatchObject({
+      taskType: 'generic',
+      repo: '/projects/my-app',
+      status: 'success',
+      description: 'Add error handling to auth',
+      finalResponse: 'Added error handling.',
+    });
+  });
+
+  it('appends to session.state.history with status failed on agent failure', async () => {
+    vi.mocked(parseIntent).mockResolvedValueOnce(mockIntent);
+    vi.mocked(runAgent).mockResolvedValueOnce({
+      finalStatus: 'failed',
+      attempts: 1,
+      sessionResults: [],
+      verificationResults: [],
+    });
+
+    const client = createMockClient();
+    const session = createMockSession();
+    const ctx = { client, channel: 'C123', threadTs: '1234567890.123' };
+    const registry = new ProjectRegistry({ cwd: '/tmp/test-registry' });
+
+    const processPromise = processSlackMention('add error handling', ctx, session, registry);
+    await new Promise<void>(resolve => setTimeout(resolve, 10));
+    session.pendingConfirm?.resolve(mockIntent);
+    await processPromise;
+
+    expect(session.state.history.length).toBe(1);
+    expect(session.state.history[0].status).toBe('failed');
+  });
+
+  it('does NOT append to history when user cancels at confirm', async () => {
+    vi.mocked(parseIntent).mockResolvedValueOnce(mockIntent);
+
+    const client = createMockClient();
+    const session = createMockSession();
+    const ctx = { client, channel: 'C123', threadTs: '1234567890.123' };
+    const registry = new ProjectRegistry({ cwd: '/tmp/test-registry' });
+
+    const processPromise = processSlackMention('add error handling', ctx, session, registry);
+    await new Promise<void>(resolve => setTimeout(resolve, 10));
+    session.pendingConfirm?.resolve(null);
+    await processPromise;
+
+    expect(session.state.history.length).toBe(0);
+  });
+
+  it('appends to history with status cancelled when agent returns cancelled', async () => {
+    vi.mocked(parseIntent).mockResolvedValueOnce(mockIntent);
+    vi.mocked(runAgent).mockResolvedValueOnce({
+      finalStatus: 'cancelled',
+      attempts: 0,
+      sessionResults: [],
+      verificationResults: [],
+    });
+
+    const client = createMockClient();
+    const session = createMockSession();
+    const ctx = { client, channel: 'C123', threadTs: '1234567890.123' };
+    const registry = new ProjectRegistry({ cwd: '/tmp/test-registry' });
+
+    const processPromise = processSlackMention('add error handling', ctx, session, registry);
+    await new Promise<void>(resolve => setTimeout(resolve, 10));
+    session.pendingConfirm?.resolve(mockIntent);
+    await processPromise;
+
+    expect(session.state.history.length).toBe(1);
+    expect(session.state.history[0].status).toBe('cancelled');
+  });
 });
