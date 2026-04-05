@@ -104,10 +104,11 @@ Full details: [v2.3-ROADMAP.md](milestones/v2.3-ROADMAP.md)
   3. Cancelling a running task records `cancelled` in session history — not `failed`
   4. The configOnly path in `retry.ts` calls `retryConfig.verifier` instead of directly calling `compositeVerifier`
   5. `buildIntentBlocks` and `buildStatusMessage` are absent from the Slack module, and Slack multi-turn thread sessions have populated history
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 25-01: TBD
+- [ ] 25-01-PLAN.md — Fix exit codes, remove dead SessionTimeoutError, correct cancelled history recording
+- [ ] 25-02-PLAN.md — Route configOnly through injected verifier, remove Slack dead code, populate Slack history
 
 ### Phase 26: Git Worktree Isolation
 **Goal**: Every agent session operates in its own git worktree so concurrent runs on the same repo never conflict — Docker container mounts the worktree, not the main checkout
@@ -165,6 +166,6 @@ Plans:
 | 22. Conversational Scoping Dialogue | v2.3 | 2/2 | Complete | 2026-03-26 |
 | 23. Follow-Up Task Referencing | v2.3 | 1/1 | Complete | 2026-04-01 |
 | 24. Slack Bot Adapter | v2.3 | 2/2 | Complete | 2026-04-05 |
-| 25. Tech Debt Cleanup | v2.4 | 0/? | Not started | - |
+| 25. Tech Debt Cleanup | v2.4 | 0/2 | Not started | - |
 | 26. Git Worktree Isolation | v2.4 | 0/? | Not started | - |
 | 27. Repo Exploration Tasks | v2.4 | 0/? | Not started | - |
