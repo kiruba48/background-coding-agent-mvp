@@ -7,6 +7,7 @@ import { createSpinner } from 'nanospinner';
 import pc from 'picocolors';
 import { assertDockerRunning, ensureNetworkExists, buildImageIfNeeded } from '../docker/index.js';
 import { ProjectRegistry } from '../../agent/registry.js';
+import { WorktreeManager } from '../../agent/worktree-manager.js';
 import { createSessionState, processInput } from '../../repl/session.js';
 import { displayIntent } from '../../intent/confirm-loop.js';
 import type { ReplState, SessionCallbacks } from '../../repl/types.js';
@@ -179,6 +180,13 @@ export async function replCommand(): Promise<void> {
   } catch (err) {
     spinner.error({ text: `Docker check failed: ${(err as Error).message}` });
     return;
+  }
+
+  // Opportunistic orphan scan — prune stale worktrees from crashed sessions
+  try {
+    await WorktreeManager.pruneOrphans(process.cwd());
+  } catch {
+    // Non-fatal — orphan scan failure should not block REPL startup
   }
 
   // Project count for banner

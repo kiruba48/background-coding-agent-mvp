@@ -38,6 +38,7 @@ export interface ReplState {
   history: TaskHistoryEntry[];     // recent completed task entries for multi-turn context
   lastRetryResult?: RetryResult;   // FLLW-02: last successful run result (for post-hoc PR and follow-up)
   lastIntent?: ResolvedIntent;     // FLLW-02: last confirmed intent (for post-hoc PR and follow-up)
+  lastWorktreeBranch?: string;     // WKTREE-05: worktree branch name for post-hoc PR branchOverride
 }
 
 /** Callbacks the CLI adapter provides to the session core for I/O that requires process interaction. */

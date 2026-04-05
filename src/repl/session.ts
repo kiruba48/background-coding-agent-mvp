@@ -126,12 +126,14 @@ export async function processInput(
         taskType: state.lastIntent!.taskType,
         originalTask: description,
         retryResult: state.lastRetryResult,
+        branchOverride: state.lastWorktreeBranch,
         description: state.lastIntent?.description,
         taskCategory: state.lastIntent?.taskCategory ?? undefined,
       });
       // Clear state to prevent duplicate PRs for the same task
       state.lastRetryResult = undefined;
       state.lastIntent = undefined;
+      state.lastWorktreeBranch = undefined;
       return { action: 'continue', prResult };
     } catch (err) {
       return { action: 'continue', prResult: { url: '', created: false, branch: '', error: (err as Error).message } };
@@ -255,6 +257,7 @@ export async function processInput(
     if (result.finalStatus === 'success') {
       state.lastRetryResult = result;
       state.lastIntent = confirmed;
+      state.lastWorktreeBranch = result.worktreeBranch;
     }
     historyStatus = toHistoryStatus(result.finalStatus);
     return { action: 'continue', result, intent: confirmed };
