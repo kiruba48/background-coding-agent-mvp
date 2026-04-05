@@ -64,28 +64,28 @@ Deferred to v2.5+.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DEBT-01 | TBD | Pending |
-| DEBT-02 | TBD | Pending |
-| DEBT-03 | TBD | Pending |
-| DEBT-04 | TBD | Pending |
-| DEBT-05 | TBD | Pending |
-| DEBT-06 | TBD | Pending |
-| WKTREE-01 | TBD | Pending |
-| WKTREE-02 | TBD | Pending |
-| WKTREE-03 | TBD | Pending |
-| WKTREE-04 | TBD | Pending |
-| WKTREE-05 | TBD | Pending |
-| EXPLR-01 | TBD | Pending |
-| EXPLR-02 | TBD | Pending |
-| EXPLR-03 | TBD | Pending |
-| EXPLR-04 | TBD | Pending |
-| EXPLR-05 | TBD | Pending |
+| DEBT-01 | Phase 25 | Pending |
+| DEBT-02 | Phase 25 | Pending |
+| DEBT-03 | Phase 25 | Pending |
+| DEBT-04 | Phase 25 | Pending |
+| DEBT-05 | Phase 25 | Pending |
+| DEBT-06 | Phase 25 | Pending |
+| WKTREE-01 | Phase 26 | Pending |
+| WKTREE-02 | Phase 26 | Pending |
+| WKTREE-03 | Phase 26 | Pending |
+| WKTREE-04 | Phase 26 | Pending |
+| WKTREE-05 | Phase 26 | Pending |
+| EXPLR-01 | Phase 27 | Pending |
+| EXPLR-02 | Phase 27 | Pending |
+| EXPLR-03 | Phase 27 | Pending |
+| EXPLR-04 | Phase 27 | Pending |
+| EXPLR-05 | Phase 27 | Pending |
 
 **Coverage:**
 - v2.4 requirements: 16 total
-- Mapped to phases: 0
-- Unmapped: 16 ⚠️
+- Mapped to phases: 16
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-05*
-*Last updated: 2026-04-05 after initial definition*
+*Last updated: 2026-04-05 — traceability updated after roadmap creation*
