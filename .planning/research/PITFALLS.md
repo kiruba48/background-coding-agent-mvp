@@ -1,192 +1,151 @@
 # Pitfalls Research
 
-**Domain:** v2.3 — Adding conversational scoping dialogue, REPL post-hoc PR creation, cross-task follow-up referencing, and Slack bot interface to an existing CLI agent platform
-**Researched:** 2026-03-25
-**Confidence:** HIGH (derived from direct code analysis of the v2.2 codebase and targeted investigation of each integration surface)
+**Domain:** v2.4 — Adding git worktree isolation for concurrent agent runs, read-only repo exploration tasks, and tech debt cleanup to an existing background coding agent
+**Researched:** 2026-04-05
+**Confidence:** HIGH (first-party codebase analysis + verified against git documentation + Claude Code issue tracker real-world failure modes)
 
 ---
 
 ## Critical Pitfalls
 
-Mistakes that either break existing safety guarantees, introduce silent data corruption in session state, or require rewriting shared infrastructure that other features depend on.
+Mistakes that break the isolation contract, leave the repository in a corrupt or unrecoverable state, or require rewriting infrastructure that other features depend on.
 
 ---
 
-### Pitfall 1: Scoping Dialogue Breaks the Existing Confirm-Before-Execute Contract
+### Pitfall 1: Worktree Not Removed on Agent Crash or Signal Kill
 
 **What goes wrong:**
-The current flow is: parse → confirm → execute. The confirm step is owned by `SessionCallbacks.confirm`, which uses readline inside `repl.ts`. Conversational scoping inserts follow-up questions between parse and confirm. If scoping questions are implemented as a new readline prompt sequence inside `processInput()` (the session core), the session core now owns I/O directly — which breaks the SessionCallbacks injection pattern that was specifically designed to decouple I/O from session logic.
+The agent runs in Docker. The host process managing the session (`RetryOrchestrator`, `runAgent()`) creates a worktree via `git worktree add` before launching the container, then removes it afterward via `git worktree remove`. If Docker crashes, the host process is SIGKILL'd, or the user hard-kills the terminal (not SIGINT but terminal close), the `finally` block does not run. The worktree directory and its `.git/worktrees/<name>/` metadata remain. On the next run using the same branch name, `git worktree add` fails with `fatal: '<branch>' is already checked out at '<path>'`.
 
-The symptom: scoping works in the CLI REPL but the Slack bot adapter has no readline. When the Slack adapter tries to call `processInput()` with its callbacks, it hits the new hardcoded readline calls, either crashing or hanging indefinitely waiting for terminal input that will never come.
+This failure mode is confirmed in the wild by [Anthropics/claude-code issue #26725](https://github.com/anthropics/claude-code/issues/26725): 12 orphan branches and 7 nested worktrees were left after a single session with 6 agents, none cleaned up after agent completion.
 
 **Why it happens:**
-Scoping questions feel like they belong inside `processInput()` because that is where parsing happens. The instinct is to add the question loop right after intent parsing, before confirmation. But `processInput()` is channel-agnostic by design — it accepts a `callbacks` object precisely so readline is not embedded in it. Adding readline directly in the session core collapses the abstraction.
+`try/finally` protects against application-level exceptions but not against process-level termination (SIGKILL, OOM kill, terminal close). There is no cleanup agent for the host-side file system state. The worktree directory is a sibling of the repo dir, outside the Docker container, and Docker has no mechanism to clean it up.
 
 **How to avoid:**
-Scoping must go through `SessionCallbacks`. Add a `scope` callback to the `SessionCallbacks` interface: `scope: (questions: ScopingQuestion[]) => Promise<ScopingAnswer[] | null>`. The session core calls `callbacks.scope(questions)` and receives structured answers. The CLI REPL implements it with readline. The Slack bot implements it with threaded replies. The session core never touches process I/O. Design the scoping questions as a data structure — not a conversation loop — so the callback implementor controls the interaction model.
+Two-layer protection:
+1. **Host-side cleanup on session start:** When `runAgent()` initializes, scan for stale worktrees belonging to previous sessions for this repo (e.g., prefix `bg-agent-*` or `bg-agent-<taskHash>-*`). Remove any whose branch has been deleted or whose directory exists but no session is running. Use `git worktree prune` to clean `.git/worktrees/` metadata for directories that no longer exist.
+2. **Sentinel file with PID:** Before creating the worktree, write a sentinel file (`.bg-agent-pid`) in the worktree directory containing the host PID. On startup scan, check if that PID is alive (`process.kill(pid, 0)`). If not alive and worktree exists, remove it. This distinguishes genuinely-running sessions from orphans without requiring a central registry.
 
 **Warning signs:**
-- `processInput()` or any function called from it imports `readline` or `createInterface`
-- Scoping logic creates an `Interface` object without going through a callback
-- The Slack adapter cannot reuse `processInput()` without modification
+- `git worktree add` in tests sometimes fails with "already checked out" without a prior test leaving a worktree
+- Worktree directory from a previous run exists on disk after a test suite crash
+- `git worktree list` shows more entries than active sessions after restarts
 
-**Phase to address:** Conversational scoping phase — scoping must be added to `SessionCallbacks` before any scoping dialogue code is written.
+**Phase to address:** Git worktree isolation phase, first thing — the cleanup-on-startup scan must be implemented in the same commit as worktree creation. Never ship creation without cleanup.
 
 ---
 
-### Pitfall 2: Post-Hoc PR Creation Stores RetryResult on ReplState, Then the State Goes Stale
+### Pitfall 2: Worktree Branch Name Collides Between Concurrent Sessions
 
 **What goes wrong:**
-The most natural implementation of post-hoc PR creation: store the last `RetryResult` on `ReplState`, then when the user types "create PR" after a successful run, call `GitHubPRCreator` with the stored result. This works for the immediately following task but creates a dangerous stale-state problem for subsequent tasks.
+Two concurrent agent sessions for the same repo attempt to create worktrees with the same branch name. Session A calls `git worktree add ../repo-bg-agent-update-lodash bg-agent-update-lodash`. Session B does the same 200ms later with an identical task. Git refuses the second `add` with `fatal: '<branch>' is already checked out`. Session B fails to start and surfaces a confusing error to the user instead of running.
 
-Session flow: task A succeeds → `state.lastResult = resultA` → user starts task B → task B is confirmed → task B runs → user types "create PR" during task B's execution (or cancels B) → `state.lastResult` is still `resultA`, but the git state (current branch, workspace commits) reflects task B's partial work. `GitHubPRCreator` attempts to push, gets the wrong branch, and either fails with a confusing error or creates a PR with the wrong diff.
-
-A subtler variant: task A succeeds, task B is cancelled before execution. `state.lastResult` is `resultA`. The user types "create PR". The workspace git state has been reset by the aborted task B setup, so `diffBase` in `GitHubPRCreator` resolves incorrectly.
+A worse variant: the auto-generated branch name is deterministic from task type only (e.g., always `bg-agent-npm-update`). Every npm update task for the same repo tries to create the same branch. Any second concurrent run fails immediately.
 
 **Why it happens:**
-`RetryResult` alone is not sufficient to recreate a PR. PR creation requires: the `RetryResult`, the `ResolvedIntent` (for task type, description, category), AND a git workspace in the correct post-run state. Storing `RetryResult` on `ReplState` without the git state anchor is incomplete. The existing PR creation path inside `runAgent()` runs immediately after the agent session, when git state is guaranteed correct. Post-hoc creation breaks that guarantee.
+Branch name generation does not account for session uniqueness. The current `GitHubPRCreator` generates branch names from task type + timestamp, but that logic lives inside the PR creator and is not available to the worktree setup code. If worktree setup uses a simpler naming scheme (just task type), collisions are guaranteed.
 
 **How to avoid:**
-Store a `LastCompletedTask` structure on `ReplState` that includes: `retryResult`, `intent` (the full `ResolvedIntent`), and `completedAt` timestamp. Before calling `GitHubPRCreator` post-hoc, verify git state: run `git log --oneline -1` in `intent.repo` and confirm the commit matches what the session produced. If the workspace has diverged (newer commits from task B), refuse with a clear message: "The workspace has changed since that task completed. Post-hoc PR creation is only safe immediately after the task." The `completedAt` timestamp provides a UI-level signal: warn if more than one subsequent task has run since the stored result.
+Generate worktree branch names using a combination of: task type prefix + short UUID (8 hex chars from `crypto.randomBytes(4).toString('hex')`). Example: `bg-agent-npm-a3f2b1c9`. This guarantees uniqueness across concurrent sessions for the same repo. Store the generated branch name on `AgentOptions` or thread it through `SessionConfig` so the same name is used for the worktree directory, the branch, and eventually the PR branch. Do not reuse the PR branch name for the worktree branch — worktrees use ephemeral branches that are deleted after the session; PRs use persistent branches.
 
 **Warning signs:**
-- `ReplState` stores `RetryResult` but not the associated `ResolvedIntent` or a git state anchor
-- No check that git HEAD matches the session's result before attempting post-hoc PR push
-- "create PR" accepted at any point in the session, not just immediately after a successful task
+- Branch name generation for worktrees is deterministic from task type alone (no random component)
+- Two concurrent npm update tasks fail, with the second one reporting "already checked out"
+- Integration tests that run two concurrent sessions against the same fixture repo produce intermittent failures
 
-**Phase to address:** REPL post-hoc PR creation phase — `LastCompletedTask` type and git state verification must be designed before the UI for "create PR" command is built.
+**Phase to address:** Git worktree isolation phase — branch name generation policy must be decided before writing any `git worktree add` calls.
 
 ---
 
-### Pitfall 3: Follow-Up Referencing Inherits the Wrong Repo When Multiple Projects Are Active
+### Pitfall 3: Docker Bind Mount Points to Main Worktree, Not the Session Worktree
 
 **What goes wrong:**
-The current follow-up mechanism in `parseIntent()` inherits `taskType` and `repo` from `history[last]`. This works well for the common case: user runs one task, follows up on the same task. But with cross-task follow-up referencing, the user can say "create a PR for that" referring to task 3 in a 5-task session where tasks 4 and 5 ran against a different project. `history[last]` is task 5's repo. The reference resolution picks up task 5's repo and tries to create a PR for task 3's result in the wrong repository.
+The existing `SessionConfig.workspaceDir` is the absolute path of the repo (e.g., `/Users/kiruba/repos/my-app`). Docker is started with `-v ${workspaceDir}:/workspace:rw`. When worktrees are added, the agent session should run inside the new worktree directory (`/Users/kiruba/repos/my-app-bg-agent-a3f2b1c9`), not the main repo. If the bind mount path is not updated to point to the worktree directory, the agent edits the main worktree while the worktree branch is elsewhere, producing either no changes or changes on the wrong branch.
 
-A related variant: the user says "do the same thing in the other project." The intent parser inherits the `taskType` from the last history entry but should use the description from a *different* history entry. There is no index-based reference in the current model — only "the last one."
+A related failure: the worktree directory contains a `.git` file (not directory) that points to `../my-app/.git/worktrees/<name>`. Docker mounts the worktree directory but the git metadata resolves via this relative path. If the container's user (UID 1001) cannot follow the `.git` file's relative path resolution to the host `.git` directory (permissions differ), all git operations inside the container fail with "not a git repository."
 
 **Why it happens:**
-`TaskHistoryEntry` only stores enough data to inherit `taskType` and `repo` for the very common "also update X" follow-up pattern. It does not store a `RetryResult` reference, and there is no way to address specific history entries by index. Cross-task referencing requires history entries to be addressable, not just the most recent one.
+`workspaceDir` is set once at `runAgent()` call time and threaded through to `ClaudeCodeSession` and the Docker container setup. Introducing worktrees requires updating `workspaceDir` to the worktree path before the container is started. It is easy to miss this because `workspaceDir` looks like a simple path string, not a Docker mount configuration. The `.git` file resolution issue is documented in Docker-for-Windows but also affects Linux when UID mismatch prevents cross-directory stat.
 
 **How to avoid:**
-Add an integer `id` (1-indexed session counter) to `TaskHistoryEntry`. When follow-up language includes positional references ("that one", "the second task", "task 2", "the auth task"), the intent parser should extract the reference and resolve it against the history by id or by description match, not by defaulting to `history[last]`. For the MVP: extend `TaskHistoryEntry` with `id` and `description` (truncated task description). The LLM parser receives history with these fields and can resolve positional references. If resolution is ambiguous, return `confidence: 'low'` with clarification options listing the matching history entries.
+When worktree isolation is active: create the worktree first, then set `workspaceDir` to the worktree's absolute path before constructing `SessionConfig`. The worktree path — not the main repo path — is passed to `ClaudeCodeSession` as the container bind mount. Verify this with an integration test: after the agent runs, confirm `git log --oneline -1` in the worktree shows a commit, and `git log --oneline -1` in the main repo is unchanged. For the `.git` file resolution: mount the worktree directory as the workspace AND also mount the main `.git` directory read-only (`-v ${repoRoot}/.git:/workspace-git:ro`) and set `GIT_DIR=/workspace-git/worktrees/<name>` inside the container, or use the worktree's resolved absolute paths.
 
 **Warning signs:**
-- Follow-up referencing always uses `history[history.length - 1]` regardless of what the user referred to
-- "create PR for task 2" resolves to the most recent task instead of task 2
-- `TaskHistoryEntry` has no `id` field or description field for disambiguation
+- Agent runs successfully but `git diff` on the worktree shows no changes
+- Changes appear in the main worktree (`main` branch) instead of the agent's branch
+- `git status` inside the container says "not a git repository"
+- The Claude Agent SDK's built-in git tools fail inside the container with path errors
 
-**Phase to address:** Follow-up referencing phase — `TaskHistoryEntry` schema extension and reference resolution in `llmParse` must be decided before implementation starts, because changing the schema affects all existing history-aware code paths.
+**Phase to address:** Git worktree isolation phase — the bind mount path change is the most security-critical correctness requirement. Must be verified by integration test before any other worktree work.
 
 ---
 
-### Pitfall 4: Slack Adapter Leaks Session State Across Concurrent Users
+### Pitfall 4: Repo Exploration Agent Writes Files Despite "Read-Only" Intent
 
 **What goes wrong:**
-The REPL session state (`ReplState`) is a single in-memory object owned by the CLI process. In the Slack bot, multiple users can send messages simultaneously. If the Slack adapter shares a single `ReplState` and a single `registry`, user A's task in progress can be corrupted by user B's task updating `state.currentProject`. User B types "update lodash" and the `state.currentProject` gets set to user B's repo just as user A's confirmation loop is reading it to set up the agent run.
+The repo exploration task is described as "read-only investigative mode returning reports." But the Claude Agent SDK has Write, Edit, and Bash tools available by default. The agent, when asked to "analyze the CI pipeline configuration," might write a `ci-analysis.md` file to the repo, run `npm install` to check dependencies, or create temporary files during investigation. The verification pipeline (which runs after the session) sees a non-empty diff, routes it through the LLM Judge, and the judge approves "this looks like useful documentation." A report file gets committed to the user's repo without their explicit consent.
 
-A harder-to-detect variant: `parseIntent` uses `process.cwd()` as the repo fallback. In the CLI REPL, `cwd` is the user's shell directory. In the Slack bot, `cwd` is the bot process working directory — meaningless for any user's task. If user A does not specify a project and the Slack adapter falls through to `cwd` fallback, they get the bot's working directory as their repo path.
+This is not a hypothetical: OWASP MCP Top 10 (2025) identifies "Privilege Escalation via Scope Creep" as the second most critical MCP risk — an agent granted read permissions accumulates write behavior over time.
 
 **Why it happens:**
-`ReplState` is designed as a per-session singleton. The CLI REPL has one session. The Slack bot has N concurrent users each with independent context. The codebase has no session isolation mechanism for multi-user scenarios because it was not a requirement until now. `process.cwd()` as a fallback is only reasonable in a single-user CLI context.
+The system does not distinguish between exploration tasks and code-change tasks at the tool-permission level. The existing `PreToolUse` hook in `ClaudeCodeSession` performs security checks (disallowed commands) but does not enforce read-only mode for specific task types. The prompt says "analyze and report" but the SDK still exposes Write/Edit tools. The agent model, when generating a report, naturally reaches for Write to "save" the report.
 
 **How to avoid:**
-The Slack adapter must create a **per-user** (or per-channel) `ReplState` instance, not share one. Use a `Map<userId, ReplState>` keyed by Slack user ID (or channel ID for channel-scoped bots). Each `SessionCallbacks` implementation must also be per-request — callbacks close over the per-user state. The `cwd` fallback in `parseIntent` must be overridable: the Slack adapter should always require an explicit project name or channel-default project, never falling back to `process.cwd()`. Enforce this by passing a sentinel `repoPath: '__require_explicit__'` or by checking whether the adapter has a default project configured before calling `parseIntent`.
+For exploration tasks: pass an explicit `readOnly: true` flag in `SessionConfig`. In the `PreToolUse` hook, if `readOnly` is set, block any tool call with a write side-effect: `Write`, `Edit`, `MultiEdit`, and any `Bash` command containing `>`, `>>`, `tee`, or known file-write patterns. Return a `BLOCK` result with a message: "This is a read-only exploration session. Return your findings as text in your response." Additionally, skip the diff check and verifier entirely for exploration sessions — the success criterion is the agent's `finalResponse`, not a git diff. The `zero_diff` result is the expected outcome for exploration tasks.
 
 **Warning signs:**
-- The Slack adapter creates one `ReplState` at bot startup and reuses it for all messages
-- `parseIntent` calls in the Slack adapter can reach the `usedCwdFallback = true` path
-- `createSessionState()` called once at module load rather than per incoming message
+- An exploration task produces a non-zero diff (any diff from an exploration task is suspicious)
+- The Claude Agent SDK's Write tool is invoked during a "generate report" session
+- The judge approves a diff that contains `.md` files created by the agent (documentation scope creep)
 
-**Phase to address:** Slack adapter phase — per-user session isolation must be the first architectural decision, before any message handling code is written.
+**Phase to address:** Repo exploration tasks phase — the `readOnly` tool enforcement must be implemented before any exploration prompts are written. Do not rely on the prompt alone to prevent writes.
 
 ---
 
-### Pitfall 5: Scoping Questions Increase LLM Latency on Every Generic Task
+### Pitfall 5: Worktree Stale Index Lock Blocks Concurrent Git Operations on Shared `.git`
 
 **What goes wrong:**
-Conversational scoping adds LLM calls (to generate questions) on top of the existing intent parse LLM call. For a 3-question scoping dialogue, the total pre-execution latency becomes: fast-path check (fast) + intent parse LLM (2-4s) + scoping question generation LLM (2-4s) + user response wait (N seconds) + confirmation (0.5s). For users who know exactly what they want, this is pure friction.
+Git creates `.git/index.lock` (for the main worktree) and `.git/worktrees/<name>/index.lock` (for linked worktrees) during write operations. If `ClaudeCodeSession` runs concurrent git operations inside multiple containers — each on their own worktree — they share the underlying `.git` object database. Pack operations, `git gc`, or index refresh operations that touch the shared `.git/objects/` directory can create lock contention across worktrees.
 
-A related problem: the scoping question generator fires for every `generic` task, including cases where the user's description is already fully scoped ("rename the `getUser` method in `src/auth/UserService.ts` to `fetchUser`" — file path specified, symbol specified, no ambiguity). The system asks "which file should be changed?" even though the answer is in the input.
+More practically: the existing `captureBaselineSha()` and `getWorkspaceDiff()` calls in `retry.ts` run `git diff` and `git log` commands on the host. If these run simultaneously with the agent's git operations inside Docker (which runs in the same worktree), the two processes can conflict on the index lock. The agent's container writes to the worktree index; the host reads from it. On some filesystems (NFS, some macOS APFS volumes under Docker Desktop), this can result in stale locks.
+
+This is confirmed as a real issue in [Anthropics/claude-code issue #11005](https://github.com/anthropics/claude-code/issues/11005): stale `.git/index.lock` files created by background git operations block user git commands for 20+ seconds.
 
 **Why it happens:**
-If scoping is implemented as an unconditional step in the generic task pipeline, it runs regardless of description completeness. The system does not distinguish between "rename getFoo in auth.ts" (fully scoped) and "rename getFoo" (needs scoping). Running the full scoping LLM call on a fully-scoped description wastes 2-4 seconds and produces irrelevant questions that confuse the user.
+The host-side `RetryOrchestrator` runs git commands against `workspaceDir` while the agent is running inside Docker. With a single worktree, this is the same directory. With multiple concurrent worktrees, the host-side commands and container-side commands both write to index lock files, and a crash in either leaves a stale lock.
 
 **How to avoid:**
-Gate scoping behind a completeness check, not a task type check. Before calling the scoping LLM, heuristically score the description for scope completeness: does it include a file path or module name? Does it name both the before and after state? Does it include a scope qualifier like "in the auth module"? Only invoke scoping when the description scores below a completeness threshold. The threshold can be simple and cheap to compute — no LLM call needed for the gate itself. Scoping questions are opt-in based on description quality, not mandatory for all generic tasks.
+Host-side git commands (`captureBaselineSha`, `getWorkspaceDiff`, `getChangedFilesFromBaseline`) should use `--no-optional-locks` flag where applicable (e.g., `git diff --no-optional-locks`) and should never run concurrently with the agent session — only before `session.start()` and after `session.stop()`. For `git status` polling, never poll during the session; capture baseline before and diff after. Implement a stale lock cleanup helper: before each host-side git command, check if `.git/index.lock` (or the worktree-specific lock) exists with no holding process, and remove it after a safety delay (5+ seconds since last modification time).
 
 **Warning signs:**
-- Scoping LLM call fires for tasks whose descriptions already include file paths and symbol names
-- Total pre-execution latency for a simple generic task exceeds 10 seconds
-- Scoping questions ask "which file?" when the user already specified `src/auth/UserService.ts`
+- `git diff` called from `RetryOrchestrator` occasionally fails with "Another git process seems to be running"
+- Tests with concurrent sessions occasionally produce lock errors
+- `captureBaselineSha()` or `getWorkspaceDiff()` timing out in integration tests
 
-**Phase to address:** Conversational scoping phase — the completeness gate must be designed alongside the scoping dialogue, not added as a later optimization.
+**Phase to address:** Git worktree isolation phase — the timing of host-side git commands relative to container execution must be explicitly documented and enforced in `RetryOrchestrator`.
 
 ---
 
-### Pitfall 6: Post-Hoc "create PR" Command Parsed as a Task Instruction
+### Pitfall 6: Tech Debt Cleanup Introduces Regressions in the Verification Pipeline
 
 **What goes wrong:**
-The user types "create a PR for that last task." The intent parser sees this as a natural language task instruction. The fast-path does not match. The LLM parser runs and may classify it as `taskType: 'generic'`, `description: 'create a PR for that last task'`. The agent is dispatched into Docker with this as its prompt, spends turns searching for what "that last task" means, finds nothing meaningful, and returns a `zero_diff` or `failed` result. The user never gets the PR.
+The existing tech debt list includes: exit code switch missing explicit `vetoed`/`turn_limit` cases, `SessionTimeoutError` dead code, cancelled tasks recorded as `failed` in session history, and `retry.ts` `configOnly` path bypassing `retryConfig.verifier`. These items are in production-critical paths. Fixing them in the same milestone as git worktree and exploration features means regressions in the verification pipeline can be masked by the new feature tests. A CI suite that passes does not confirm the existing 696 tests still cover the fixed paths — new tests may cover new features while old edge cases are accidentally broken.
 
-A related variant: the user types "also create a PR" mid-correction (after a correction to an existing intent). The correction loop in `confirmCb` calls `reparse("also create a PR")` which routes through `parseIntent`, producing an intent for a new task rather than flagging PR creation for the current one.
-
-**Why it happens:**
-"Create PR" is a meta-command about the session, not a code change task. The intent parser is designed to extract code change tasks from natural language. It has no concept of session meta-commands. All non-quit, non-history, non-empty inputs are routed through `parseIntent`. The command vocabulary is hardcoded to `'exit'`, `'quit'`, and `'history'` in `processInput()`. "Create PR" is not in that list.
-
-**How to avoid:**
-Add a meta-command recognition layer in `processInput()` before `parseIntent` is called. Pattern-match on "create pr", "make pr", "open pr", "pr for that", "pr for last", "make a pull request" (and variations) and route to the post-hoc PR creation path directly. Do not dispatch these phrases through the intent parser — they are unambiguous session commands, not task descriptions. The pattern list can be a small regex set; no LLM call needed. This also prevents LLM token waste on non-task inputs.
-
-**Warning signs:**
-- "create PR" typed after a successful task runs a new agent session with description "create PR"
-- `processInput()` calls `parseIntent` for input that contains "pr", "pull request", or "create PR" variants
-- No unit test covers the "create PR" input routing in `processInput()`
-
-**Phase to address:** REPL post-hoc PR creation phase — the meta-command recognizer must be implemented alongside the PR creation path so it is never routed through the agent.
-
----
-
-### Pitfall 7: Slack Adapter Bypasses the Confirm-Before-Execute Safety Gate
-
-**What goes wrong:**
-The Slack bot receives a message: "update lodash to 4.17.21 in my-project." The adapter parses intent, gets a high-confidence result, and — to avoid a multi-message round-trip with the user — calls `runAgent()` directly without the confirm step. The task runs, a PR is created, and the user gets a Slack reply with the PR link. This feels like a good UX. But the confirm step exists for a reason: it is the human-in-the-loop safety gate. Bypassing it means: wrong repo → PR against wrong project. Wrong task type → unintended change. Prompt injection via Slack message → unchecked agent execution.
-
-The subtler variant: the Slack adapter implements confirmation as a Slack interactive button ("Yes / No / Correct"). The user clicks "Yes." But the confirm callback does not support correction-loop follow-up — the only options are yes and no. A user who wants to redirect ("actually do this in the other project") cannot, so they click yes even though the intent is slightly wrong, leading to a PR against the wrong repo or with the wrong version.
+The specific risk: fixing the `configOnly` bypass (`retry.ts` bypasses `retryConfig.verifier` for config-only changes) is a logic change in `RetryOrchestrator.run()`. Any mistake here could skip verification for all config-only tasks silently — the code path that was previously buggy-but-harmless becomes correctly-routed-but-now-broken if the fix is wrong.
 
 **Why it happens:**
-Slack interactive confirmation adds complexity: the adapter must store pending intents keyed by message ID, handle button click events, correlate them back to the waiting `confirm` callback, and implement timeouts. Developers often skip this and implement a simpler "just run it" flow for high-confidence intents.
+Tech debt is cleaned up opportunistically — "while I'm in this file, let me fix that too." Without explicit phase boundaries, debt cleanup and feature work intermix in the same commits. When a test fails, it is unclear whether the failure is from the new feature, the debt cleanup, or an interaction between them. Bisecting is slow.
 
 **How to avoid:**
-Never call `runAgent()` without going through `SessionCallbacks.confirm`, even in the Slack adapter. The confirmation interaction model can differ (Slack button vs. readline), but the confirm step must always exist. Implement pending-intent storage with a timeout (e.g., 5 minutes: if not confirmed within 5 minutes, the intent expires). Support at least a text correction in the Slack confirmation reply — the user can reply with a correction, which routes through `reparse`, the same way the REPL confirm loop does. The `SessionCallbacks` abstraction exists precisely to make this implementable per-channel without touching the session core.
+Address tech debt in a **dedicated phase before** any worktree or exploration work. The debt phase should: (1) fix exactly the listed items, (2) add regression tests for each fix before making the fix ("test first, then fix"), (3) run the full 696-test suite and confirm no regressions. The phase should be a single PR with only debt fixes. Worktree and exploration phases follow after, in their own PRs, with the clean baseline. This also makes the diff reviewable — debt changes are separable from feature changes.
 
 **Warning signs:**
-- The Slack adapter calls `runAgent()` or `processInput()` without going through `callbacks.confirm`
-- High-confidence intents are auto-executed without user acknowledgment
-- The Slack confirmation UX only supports yes/no with no correction path
+- Debt fixes committed in the same PR as worktree infrastructure
+- The `configOnly` path in `retry.ts` is modified without a test that explicitly exercises the verifier being called (not bypassed) for a config-only change
+- `exit code` tests added for `vetoed` and `turn_limit` statuses do not exist before fixing the switch
 
-**Phase to address:** Slack adapter phase — confirm callback implementation must be the first thing built, before any message handling, to establish the correct architecture from the start.
-
----
-
-### Pitfall 8: TaskHistoryEntry Missing RetryResult Reference Breaks Post-Hoc PR for Earlier Tasks
-
-**What goes wrong:**
-`TaskHistoryEntry` currently stores `taskType`, `dep`, `version`, `repo`, and `status`. It does not store the `RetryResult`. Post-hoc PR creation for "the last task" can work by storing `lastResult` separately on `ReplState`. But cross-task follow-up referencing ("create PR for task 2") requires that `RetryResult` be retrievable for any history entry, not just the last one.
-
-If `RetryResult` is not stored in `TaskHistoryEntry`, the only PR-eligible task is always the most recent one. A user who ran 3 tasks and wants to create a PR for task 1 cannot, even though task 1 succeeded. The history command shows all three tasks but only the last one is actionable.
-
-**Why it happens:**
-`TaskHistoryEntry` was designed for intent parsing context only: the history tells the LLM parser what was recently done so it can resolve follow-up task references. Storing `RetryResult` in history was out of scope because there was no post-hoc PR feature. Now that both features are being added in the same milestone, there is a risk of implementing them with incompatible data models: post-hoc PR uses `state.lastResult`, cross-task referencing uses `history[n]`, and neither feeds into the other.
-
-**How to avoid:**
-Extend `TaskHistoryEntry` to include an optional `retryResult?: RetryResult` and `intent?: ResolvedIntent` (the confirmed intent, not the raw parse). Store these on every history entry when the task completes. The `MAX_HISTORY_ENTRIES` cap (currently 10) applies the same way — old entries are evicted. This gives both features a single source of truth: post-hoc PR for the last task reads `history[last].retryResult`, cross-task referencing reads `history[n].retryResult` by index. The `ReplState.lastResult` shortcut is then unnecessary and should be removed to avoid two sources of truth diverging.
-
-**Warning signs:**
-- `TaskHistoryEntry` does not include `retryResult` or `intent`
-- `ReplState` adds `lastResult` as a separate field parallel to `history`
-- "create PR for task 1" cannot work because `history[0].retryResult` is undefined
-
-**Phase to address:** Both post-hoc PR and follow-up referencing phases — `TaskHistoryEntry` schema extension must happen in the first phase that touches history, before either feature is fully implemented.
+**Phase to address:** Tech debt cleanup phase should be Phase 1 (first phase of v2.4), before git worktree or exploration work begins.
 
 ---
 
@@ -196,29 +155,30 @@ Shortcuts that seem reasonable but create long-term problems.
 
 | Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
 |----------|-------------------|----------------|-----------------|
-| Add scoping readline calls directly in `processInput()` | Faster to implement | Breaks Slack adapter; session core is no longer channel-agnostic | Never — always route through `SessionCallbacks` |
-| Share one `ReplState` across all Slack users | Simple implementation | Cross-user state corruption; wrong repo selected for different users | Never for multi-user bot; acceptable for single-user DM-only bot if documented |
-| Auto-execute high-confidence Slack intents without confirm | Smooth Slack UX | Removes safety gate; enables misparse-to-execution without human check | Never — confirm is non-negotiable per PROJECT.md constraints |
-| Store `lastResult` as separate `ReplState` field instead of in `TaskHistoryEntry` | Simpler for just post-hoc PR | Two sources of truth diverge; cross-task referencing cannot use it | Only if cross-task referencing is explicitly deferred to a later milestone |
-| Implement "create PR" by routing through intent parser | No new command recognizer needed | Agent dispatched for meta-commands; LLM token waste; PR never gets created | Never — meta-commands must bypass the intent parser |
-| Skip completeness gate and always run scoping questions for generic tasks | Simpler logic | Every generic task waits 2-4s extra even when fully scoped | Only in v2.3 spike/prototype, must be gated before shipping |
+| Use `workspaceDir` (main repo) as Docker mount instead of worktree path | No mount path refactoring | Agent edits main branch while session branch is elsewhere; diff is empty or wrong | Never — Docker must always mount the worktree path, not the main repo path |
+| Generate worktree branch names from task type only (no UUID) | Simpler naming | Concurrent sessions for the same task type collide on branch checkout | Never — always include a unique component (UUID/timestamp) |
+| Skip worktree cleanup in test teardown ("prune will handle it") | Faster test writing | Stale worktrees accumulate across test runs; `git branch -D` fails because branches are checked out | Never in test suite — each test must clean its own worktrees |
+| Rely on prompt alone to enforce read-only in exploration tasks | No code changes needed | Agent writes files, creates documentation, runs installs; judge approves it as "useful output" | Never — enforce at `PreToolUse` hook level, not prompt level |
+| Clean up worktrees only on graceful exit | Handles 99% of cases | SIGKILL/OOM kills during agent runs leave orphan worktrees; `git branch -D` fails on next run | Never for production use — startup scan is mandatory |
+| Mix debt fixes and feature code in the same PR | Faster velocity | Regressions are untraceable; bisect is slow; test failures ambiguous | Never — tech debt fixes in isolated commits or separate PR |
+| Re-use existing `verifier` pipeline for exploration tasks | No new task routing needed | Verification expects a diff; exploration produces none; `zero_diff` is surfaced as failure/unexpected | Never — exploration must have its own result path that treats `finalResponse` as the output |
 
 ---
 
 ## Integration Gotchas
 
-Common mistakes when wiring new features into the existing pipeline.
+Common mistakes when wiring git worktree and exploration features into the existing pipeline.
 
 | Integration | Common Mistake | Correct Approach |
 |-------------|----------------|------------------|
-| `SessionCallbacks` ↔ scoping dialogue | Add `readline` calls inside `processInput()` | Extend `SessionCallbacks` with a `scope` callback; session core calls it; CLI REPL and Slack implement it independently |
-| `ReplState` ↔ post-hoc PR | Store only `RetryResult` on `lastResult` field | Extend `TaskHistoryEntry` with `retryResult` and `intent`; remove separate `lastResult` field |
-| `processInput()` ↔ "create PR" input | Route "create PR" through `parseIntent` | Pattern-match on PR meta-commands before `parseIntent` is called; route directly to post-hoc creation path |
-| `GitHubPRCreator` ↔ post-hoc PR | Call `creator.create()` without checking git state | Verify git HEAD matches the session result's baseline before pushing; refuse if workspace has diverged |
-| Slack adapter ↔ `ReplState` | Create one `ReplState` for the bot process | Create per-user `ReplState` keyed by Slack user ID; garbage-collect idle sessions after inactivity timeout |
-| Slack adapter ↔ `parseIntent` | Allow cwd fallback in Slack context | Require explicit project name or channel-default project in Slack; pass `repoPath` explicitly, never rely on `process.cwd()` |
-| History follow-up ↔ `TaskHistoryEntry` | Use only `history[last]` for all cross-task references | Add `id` field to `TaskHistoryEntry`; extract positional references ("task 2", "the auth task") in LLM parser and resolve by id |
-| Scoping dialogue ↔ intent confidence | Run scoping even for `confidence: 'high'` intents | Only run scoping for `taskType: 'generic'` intents that lack file/module/symbol scope qualifiers; skip for high-confidence dep updates entirely |
+| `runAgent()` ↔ worktree path | Pass original `options.repo` to `SessionConfig.workspaceDir` | Create worktree first; set `workspaceDir` to worktree path before constructing `SessionConfig`; original repo path stored separately for cleanup |
+| `RetryOrchestrator` ↔ baseline SHA | `captureBaselineSha()` captures main repo HEAD, not worktree HEAD | SHA capture must run against the worktree directory, which starts at the same commit as main but diverges as the agent works |
+| `compositeVerifier` ↔ worktree | Verifier runs against `workspaceDir` (now the worktree); correct | No change needed — verifier already uses `workspaceDir` path; this is the one thing that works automatically |
+| `GitHubPRCreator` ↔ worktree branch | PR branch already exists (it's the worktree branch) | Use the worktree branch as the PR source branch; do not generate a new branch name inside `GitHubPRCreator` |
+| `getWorkspaceDiff()` ↔ worktree | Diff runs against worktree dir; correct | No change needed — diff already uses `workspaceDir`; verify with integration test |
+| Exploration task ↔ `RetryResult.finalStatus` | `zero_diff` returned for exploration tasks; surfaces as "nothing changed" warning | Add `exploration_complete` as a new `finalStatus` or handle `zero_diff` specially for exploration task type — display `finalResponse` as the report |
+| Worktree cleanup ↔ `AbortSignal` | Cleanup skipped when signal is aborted | `resetWorkspace()` in `RetryOrchestrator` currently only resets git state; must also call `git worktree remove` before returning `cancelled` status |
+| Stale worktree scan ↔ concurrent sessions | Scan runs and removes a worktree that is actively in use by another session | Sentinel PID file in worktree directory distinguishes live sessions from orphans; never remove a worktree whose PID is alive |
 
 ---
 
@@ -228,10 +188,10 @@ Patterns that work at small scale but fail as usage grows.
 
 | Trap | Symptoms | Prevention | When It Breaks |
 |------|----------|------------|----------------|
-| Scoping LLM call on every generic task regardless of description completeness | Adds 2-4s to every generic task; users with fully-scoped descriptions are penalized | Completeness gate before scoping LLM call; skip if description already specifies file + symbol | Every generic task from day one |
-| Per-message `ProjectRegistry` instantiation in Slack adapter | Creates new `conf` store reader on every Slack message; filesystem reads on hot path | Instantiate registry once at Slack bot startup; pass as a shared read-only dependency | After ~10 messages/minute |
-| Storing full `RetryResult` in `TaskHistoryEntry` with large `sessionResults` arrays | `ReplState` memory grows with each session; old session data not GC'd | Cap `sessionResults` stored in history entries (keep only `finalStatus`, `attempts`, `judgeResults`); store full result only for `lastCompleted` | After ~20 tasks in a long-running REPL session |
-| Pending Slack intent storage with no expiry | Memory leak if users start tasks and never confirm | Add expiry to pending intent map; evict after 5 minutes with a timeout Slack reply | After ~50 abandoned Slack confirmations |
+| Worktrees never pruned; disk fills up | Disk space alert; `git worktree list` shows dozens of stale entries | Startup scan with prune; limit max live worktrees per repo | After ~50 agent runs on same repo without cleanup |
+| `git worktree add` on large repos with full history | 3-5s delay per worktree creation on repos with large object stores | Worktrees share object store by design — no clone needed; this is acceptable. But if baseline SHA capture runs `git fetch` first, that is 10-30s | From first run if `git fetch` is accidentally included in setup |
+| Concurrent exploration tasks with heavy `grep`/`find` Bash | CPU spike; agent session timeout | Exploration tasks need the same 5-min timeout and 10-turn limit as code tasks | Immediate, with large repos |
+| Per-worktree `npm install` (preVerify hook) on concurrent npm update tasks | Multiple concurrent `npm install` processes writing to the same `node_modules` in different worktrees but with the same package.json path | Each worktree has its own `node_modules` (they are not shared); concurrent installs are safe because each worktree is a separate directory | Not a problem if worktree isolation is correct |
 
 ---
 
@@ -241,10 +201,10 @@ Domain-specific security issues introduced by the new features.
 
 | Mistake | Risk | Prevention |
 |---------|------|------------|
-| Slack message body used as `description` without length check | Long Slack messages (up to 40,000 chars) exceed `MAX_INPUT_LENGTH` and bypass the guard in `processInput()` that only applies after parsing | Apply `MAX_INPUT_LENGTH` check at Slack adapter entry point, before calling `processInput()` |
-| Slack bot responds in public channels with git diff content or PR diffs | Sensitive code diffs visible to all channel members | Send PR URLs only in public channels; send full result details only in DMs or ephemeral messages |
-| Post-hoc PR creation reads `GITHUB_TOKEN` in the Slack bot process | Token in bot process environment; leakage risk if bot logs are not sanitized | Apply same token-sanitization logic from `GitHubPRCreator.sanitize()` to all Slack reply messages; never log token in any Slack-facing code path |
-| Pending Slack intent stored with repo path and task description | If Slack message storage is compromised, repo paths and task descriptions are exposed | Store only intent hash in Slack message metadata; keep full intent in bot process memory keyed by hash; never serialize full `ResolvedIntent` to Slack metadata |
+| Exploration task Bash commands not constrained to read-only operations | Agent runs `curl`, `git push`, or other network/write operations under the guise of "exploration" | `PreToolUse` hook blocks write-capable Bash patterns for `readOnly: true` sessions; allowlist must include read-only patterns only (`cat`, `ls`, `find`, `grep`, `git log`, `git diff`, `git show`) |
+| Worktree path leaks into Slack bot responses | Absolute host paths like `/Users/kiruba/repos/my-app-bg-agent-a3f2b1c9` exposed in Slack thread | Sanitize worktree paths from all user-facing output; display only the branch name or session ID |
+| Agent in worktree has write access to shared `.git/config` | Agent could modify global git config (e.g., `core.hooksPath`, remotes) affecting all future operations on that repo | Mount worktree directory but NOT the parent `.git/config`; the PreToolUse hook already blocks direct `.git/` writes, but verify the pattern covers `../.git/config` relative paths |
+| Exploration report contains credentials or secrets found in repo | Agent reads `.env` files or configs and includes secrets in `finalResponse` which is logged | Exploration prompt must explicitly instruct: "Never include secrets, tokens, or credential values in your report. Note that credentials exist but do not reproduce them." |
 
 ---
 
@@ -254,11 +214,10 @@ Common user experience mistakes in the new features.
 
 | Pitfall | User Impact | Better Approach |
 |---------|-------------|-----------------|
-| Scoping questions asked after intent is already confirmed | User has already said "yes" and now gets questioned; feels like being second-guessed | Scoping happens before the confirm step, not after — user sees parsed intent + scoping answers together in the confirm display |
-| "create PR" accepted after a failed or zero_diff task | User expects a PR, gets an error message about no successful run; confusion | "create PR" command should check `lastCompleted.retryResult.finalStatus === 'success'` before proceeding; show clear message if last task was not successful |
-| Post-hoc PR command available but no indication in the REPL prompt or result block | Users never discover the feature exists | Add "  [type 'create pr' to open a pull request]" hint to the result block when `finalStatus === 'success'` and `createPr` was not set |
-| Slack bot takes 5+ seconds to respond to "confirm" before starting the agent run | Users think the bot is broken or their click was missed | Slack adapter should respond with an intermediate "Starting agent run..." message immediately when confirm is received, before the agent executes |
-| Scoping answers are silently ignored if the user cancels mid-dialogue | User provided 2 of 3 scoping answers, then pressed Ctrl+C; next run re-asks all questions with no memory | Scoping answers are not persisted — this is correct behavior; state clearly that scoping is per-run |
+| `zero_diff` displayed for exploration tasks | User sees "Agent produced no changes" — reads as failure when it is expected success | Route exploration task results to a separate display path: show `finalResponse` as the report output, not the diff-based result block |
+| Worktree branch name shown in PR (e.g., `bg-agent-a3f2b1c9`) without context | PR title and branch name are opaque | PR title generated from task description (existing behavior); branch name can remain UUID-based but PR body explains it |
+| Concurrent runs have no progress visibility | User starts two tasks; both show "running" with no differentiation | Session ID or task description shown in the running indicator for concurrent sessions |
+| Exploration task "report" is just agent's verbose thought process | User gets 2000 words of reasoning instead of structured findings | Exploration prompt must request a structured report format: "Return findings as a structured markdown report with sections: Summary, Key Findings, Recommendations." |
 
 ---
 
@@ -266,14 +225,14 @@ Common user experience mistakes in the new features.
 
 Things that appear complete but are missing critical pieces.
 
-- [ ] **Scoping callback:** Verify `SessionCallbacks.scope` is defined and that `processInput()` calls it — NOT that readline is called directly inside `processInput()`; check that removing the readline import from `repl/session.ts` does not break compilation
-- [ ] **Post-hoc PR git state check:** Verify that typing "create PR" after running task A then task B against a different repo creates a PR for task A in task A's repo (not task B's) — requires checking `history[last-with-success].intent.repo` not `state.currentProject`
-- [ ] **"create PR" meta-command routing:** Verify "create a pull request for the last task" does NOT dispatch an agent session — check that `processInput()` returns before calling `parseIntent` for PR meta-command inputs
-- [ ] **Per-user Slack state:** Verify two simultaneous Slack users cannot corrupt each other's `currentProject` — requires a test with two concurrent `processInput()` calls using different user-scoped states
-- [ ] **TaskHistoryEntry with result:** Verify `history[n].retryResult` is populated after a successful task completes — not undefined; check `session.test.ts` after `processInput()` returns
-- [ ] **Scoping completeness gate:** Verify "rename `getUser` in `src/auth/UserService.ts` to `fetchUser`" does NOT trigger scoping questions — fully-scoped descriptions should pass through without scoping LLM call
-- [ ] **Post-hoc PR hint in result block:** Verify the result block shows the "create pr" hint only when `finalStatus === 'success'` and `createPr` was not already set — does not appear for `zero_diff`, `failed`, or cancelled runs
-- [ ] **Slack `cwd` fallback blocked:** Verify the Slack adapter never reaches the `usedCwdFallback` path in `parseIntent()` — requires that all Slack inputs either specify a project name or the adapter rejects the message before calling `parseIntent`
+- [ ] **Worktree cleanup on crash:** Verify that after a `kill -9` on the host process, the next `runAgent()` call for the same repo successfully creates a new worktree — requires startup scan to prune the orphan from the previous run
+- [ ] **Docker mount points to worktree:** Verify `git log --oneline -1` inside the container shows the worktree branch, not `main`; verify `git log --oneline -1` in the main repo is unchanged after agent runs
+- [ ] **Read-only enforcement:** Verify that an exploration session with a Write tool call in the agent's response is blocked at `PreToolUse` with a clear error, not silently allowed
+- [ ] **Exploration result display:** Verify the REPL shows the agent's `finalResponse` as the report output for exploration tasks, not "Agent produced no changes (zero diff)"
+- [ ] **Concurrent session branch isolation:** Verify two simultaneous npm update sessions on the same repo do not produce the same branch name and do not corrupt each other's worktrees
+- [ ] **Worktree removed on cancellation:** Verify that Ctrl+C during an agent run removes the worktree directory and calls `git worktree remove` — not just `git reset --hard`
+- [ ] **Debt fixes have regression tests:** Verify each tech debt item (exit codes, configOnly bypass, dead code) has a test that fails before the fix and passes after
+- [ ] **`git worktree prune` on startup:** Verify that a stale worktree from a previous crashed run is automatically cleaned up on the next `runAgent()` invocation — no manual intervention required
 
 ---
 
@@ -283,11 +242,12 @@ When pitfalls occur despite prevention, how to recover.
 
 | Pitfall | Recovery Cost | Recovery Steps |
 |---------|---------------|----------------|
-| Scoping dialogue hardcoded to readline inside session core | HIGH | Audit all `createInterface` calls added to `repl/session.ts`; extract to `SessionCallbacks.scope`; Slack adapter blocked until refactored |
-| Post-hoc PR pushed wrong diff (stale git state) | MEDIUM | Close the wrong PR immediately; `git reset --hard` to baseline SHA in affected repo; re-run task; add git state verification before `creator.create()` |
-| Slack shared session state corrupted by concurrent users | HIGH | Restart bot process to clear state; per-user state isolation is a rewrite; no partial fix |
-| "create PR" input dispatched agent session in Docker | LOW | Session will produce `zero_diff` or `failed`; add meta-command recognizer to `processInput()`; add regression test |
-| `TaskHistoryEntry` schema changed without migrating existing session state | LOW | Session state is in-memory only (no persistence across restarts); restart REPL session; no migration needed |
+| Orphaned worktrees from crashes | LOW | `git worktree list` to identify orphans; `git worktree remove --force <path>` for each; `git worktree prune` to clean `.git/worktrees/` metadata; `git branch -D bg-agent-*` to remove orphan branches |
+| Docker mount pointing to main repo (agent edited main branch) | MEDIUM | `git reset --hard <baseline-sha>` to undo main branch changes; re-run task with corrected `workspaceDir` |
+| Exploration agent wrote files to repo | LOW | `git reset --hard HEAD` in the repo (no worktree needed — exploration uses main worktree or its own); verify diff is empty; add `PreToolUse` block before next run |
+| Stale index lock blocking git operations | LOW | Check `lsof /path/to/.git/index.lock`; if no process holds it, `rm /path/to/.git/index.lock`; add stale lock detection to startup scan |
+| Tech debt fix introduced regression | MEDIUM | `git revert` the debt-fix commit (isolated PR makes this clean); add the failing test; re-fix with correct implementation; re-merge |
+| Branch name collision (two sessions same branch) | LOW | The second session fails at `git worktree add`; increase uniqueness in branch name generation (longer UUID); existing session is unaffected |
 
 ---
 
@@ -297,24 +257,28 @@ How roadmap phases should address these pitfalls.
 
 | Pitfall | Prevention Phase | Verification |
 |---------|------------------|--------------|
-| Scoping readline in session core (breaks Slack) | Conversational scoping phase | `repl/session.ts` has no `createInterface` import; `SessionCallbacks` has `scope` field; unit test exercises scoping via mock callbacks |
-| Post-hoc PR pushed with stale git state | Post-hoc PR phase | Test: run task A, run task B in different repo, type "create PR" — should create PR for task A in task A's repo, not task B's |
-| "create PR" parsed as agent task | Post-hoc PR phase | Unit test: `processInput("create a pr for that")` does not call `parseIntent`; returns PR result or error message |
-| Missing `retryResult` on `TaskHistoryEntry` | Either post-hoc PR or follow-up referencing phase (whichever is first) | After `processInput()` returns success, `state.history[last].retryResult` is defined |
-| Slack per-user state isolation | Slack adapter phase | Concurrent-user test: two users in separate invocations do not share `ReplState` |
-| Slack cwd fallback | Slack adapter phase | Slack adapter test: message without project name returns clarification request, not cwd-based parse |
-| Slack bypasses confirm gate | Slack adapter phase | No Slack message path calls `runAgent()` without first going through `callbacks.confirm` |
-| Scoping runs on fully-scoped descriptions | Conversational scoping phase | "rename X in file.ts to Y" does not trigger scoping LLM call; verified by mock counting scoping invocations |
-| Cross-task referencing uses wrong history entry | Follow-up referencing phase | "create PR for task 1" in a 3-task session resolves to `history[0]`, not `history[2]` |
+| Tech debt regressions in verification pipeline | Phase 1: Tech debt cleanup | All 696 existing tests pass; new regression tests for each fixed item; debt phase PR contains only debt fixes |
+| Worktree not cleaned up on crash | Phase 2: Git worktree infrastructure | Test: `kill -9` host process during agent run; restart; `runAgent()` succeeds without "already checked out" error |
+| Docker mount pointing to main repo | Phase 2: Git worktree infrastructure | Integration test: agent commits go to worktree branch, main branch unchanged |
+| Branch name collision | Phase 2: Git worktree infrastructure | Test: two concurrent sessions for same repo never produce same branch name (UUID component required) |
+| Stale index lock | Phase 2: Git worktree infrastructure | Host-side git commands use `--no-optional-locks`; timing documented: baseline before session, diff after session |
+| Exploration agent writes files | Phase 3: Repo exploration tasks | Test: exploration session with Write tool call blocked at PreToolUse; `zero_diff` is expected result |
+| Exploration result displayed as failure | Phase 3: Repo exploration tasks | REPL test: exploration task with `finalResponse` set displays report, not "no changes" warning |
+| Worktree not removed on cancellation | Phase 2: Git worktree infrastructure | Test: Ctrl+C during session removes worktree directory and `git worktree list` no longer shows it |
 
 ---
 
 ## Sources
 
-- Direct code analysis: `src/repl/session.ts` (SessionCallbacks contract, processInput flow), `src/repl/types.ts` (ReplState, TaskHistoryEntry, SessionCallbacks), `src/orchestrator/pr-creator.ts` (GitHubPRCreator, git state assumptions), `src/intent/index.ts` (cwd fallback, history follow-up), `src/cli/commands/repl.ts` (readline ownership, confirm callback implementation) — HIGH confidence; first-party source
-- `.planning/PROJECT.md` constraints: "Human approval: PRs require human merge — no auto-merge" and "Auto-execute without confirmation — removes human-in-the-loop trust model" are listed as constraints/out-of-scope — HIGH confidence; confirms confirm gate is non-negotiable
-- Memory file: `SessionCallbacks injection — Decouples I/O (readline) from session logic — enables CLI, Slack, MCP adapters` — HIGH confidence; established architectural decision
+- [Git worktree documentation](https://git-scm.com/docs/git-worktree) — official reference for `add`, `remove`, `prune`, `lock`, and `repair` commands — HIGH confidence
+- [Stale worktrees never cleaned up — anthropics/claude-code issue #26725](https://github.com/anthropics/claude-code/issues/26725) — real-world failure modes: orphan branches, nested worktrees, disk accumulation — HIGH confidence (first-party issue tracker)
+- [Stale index.lock from background git ops — anthropics/claude-code issue #11005](https://github.com/anthropics/claude-code/issues/11005) — stale `.git/index.lock` files blocking git commands for 20+ seconds; `--no-optional-locks` workaround — HIGH confidence (verified with Git Trace2 logs)
+- [Git worktree conflicts with AI agents — Termdock](https://www.termdock.com/en/blog/git-worktree-conflicts-ai-agents) — build cache contamination, package lockfile divergence, index lock deadlocks — MEDIUM confidence (blog, but verified against git docs)
+- [Common git worktree mistakes — BSWEN](https://docs.bswen.com/blog/2026-03-30-git-worktree-troubleshooting/) — stale reference cleanup, path conflicts, manual deletion gotchas — MEDIUM confidence (blog)
+- [OWASP MCP Top 10 — MCP02:2025 Privilege Escalation via Scope Creep](https://owasp.org/www-project-mcp-top-10/2025/MCP02-2025%E2%80%93Privilege-Escalation-via-Scope-Creep) — read-only agents accumulating write behavior; enforcement at authorization layer — HIGH confidence (OWASP official)
+- [Docker bind mounts — official docs](https://docs.docker.com/engine/storage/bind-mounts/) — bind mount behavior, read-only mounts, recursive mount options — HIGH confidence
+- Direct code analysis: `src/orchestrator/retry.ts` (worktree cleanup gap in `resetWorkspace()`), `src/agent/index.ts` (`workspaceDir` threading), `src/types.ts` (`SessionConfig.workspaceDir` as mount path), `.planning/PROJECT.md` (tech debt list, isolation constraints) — HIGH confidence
 
 ---
-*Pitfalls research for: v2.3 Conversational Scoping & REPL Enhancements — adding scoping dialogue, post-hoc PR creation, cross-task follow-up referencing, and Slack bot to existing CLI agent platform*
-*Researched: 2026-03-25*
+*Pitfalls research for: v2.4 Git Worktree Isolation and Repo Exploration Tasks — adding worktree-based concurrency and read-only investigative mode to existing background coding agent*
+*Researched: 2026-04-05*

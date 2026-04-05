@@ -1,16 +1,16 @@
 # Feature Research
 
-**Domain:** Conversational coding agent — REPL enhancements, Slack adapter, cross-task referencing
-**Researched:** 2026-03-25
-**Confidence:** HIGH (core patterns verified against official docs and existing codebase), MEDIUM (Slack integration specifics)
+**Domain:** Background coding agent — git worktree isolation for concurrent execution and read-only repo exploration tasks
+**Researched:** 2026-04-05
+**Confidence:** HIGH (worktree mechanics from official git docs + ecosystem patterns), MEDIUM (exploration task subtypes based on general agent patterns)
 
 ---
 
 ## Context
 
-This milestone (v2.3) adds four features to the existing background coding agent. Already shipped and not re-researched: REPL + one-shot CLI, LLM intent parser with fast-path regex + verb guard, confirm-before-execute with inline correction, generic task type with scope-fenced end-state prompting, multi-turn sessions with bounded history injection, GitHub PR creation with Octokit, RetryOrchestrator with composite verifier + LLM Judge, SessionCallbacks injection for channel-agnostic I/O, project registry.
+This milestone (v2.4) adds two new feature areas to the existing background coding agent, plus accumulated tech debt cleanup. Already shipped and not re-researched: REPL/one-shot/Slack interfaces, intent parser, confirm-before-execute, generic + dep-update task types, composite verifier + LLM Judge, RetryOrchestrator, post-hoc PR creation, SessionCallbacks, conversational scoping dialogue, follow-up referencing.
 
-The research question: what do conversational scoping dialogue, post-hoc PR creation, follow-up task referencing, and Slack bot interface each require — and what are the expected interaction patterns?
+The research question: what do git worktree isolation and repo exploration tasks require — what are the expected mechanics, user-facing behaviors, and integration patterns?
 
 ---
 
@@ -18,109 +18,112 @@ The research question: what do conversational scoping dialogue, post-hoc PR crea
 
 ### Table Stakes (Users Expect These)
 
-Features that users of a multi-turn agent REPL expect once sessions feel "conversational." Missing these makes the experience feel rigid.
+Features users expect once concurrent agent execution is offered. Missing these makes the feature feel broken.
 
 | Feature | Why Expected | Complexity | Notes | Depends On |
 |---------|--------------|------------|-------|-----------|
-| Post-hoc PR creation via REPL command | "Make a PR" typed after a successful run is the most natural workflow. Forcing users to include "and create PR" upfront requires knowing ahead of time. Most REPL-style tools (git, npm) support deferred decisions. | LOW | Store `RetryResult` + confirmed intent on `ReplState.lastResult`. Add `pr` / `create pr` as a recognized REPL command that invokes `GitHubPRCreator` with stored context. No change to the pipeline. See memory: `project_repl_post_hoc_pr.md`. | `RetryResult` type (exists in `src/types.ts`), `ReplState` (minor extension), `GitHubPRCreator` (already built) |
-| Optional scoping questions before generic task confirmation | For generic tasks, users expect the agent to ask about scope constraints before running, not fail silently or over-edit. Industry pattern: CLI tools ask clarifying questions before destructive or wide-ranging operations. | MEDIUM | Trigger only for `generic` taskType, not dep updates (those are already parameterized). Three questions max: target files/dirs, test update expectation, exclusion list. Each answer appended to SCOPE block of `buildGenericPrompt`. Skip-on-empty (user presses Enter) is essential — don't block on it. See memory: `project_generic_task_prompts.md`. | `buildGenericPrompt` (exists in `src/prompts/generic.ts`), confirm-loop (extend, not replace) |
-| Follow-up commands can reference the previous task outcome | "Now add tests for that" or "Create a PR for what you just did" are expected follow-up inputs. Without referencing the last result, the REPL forgets what just happened the moment the result block renders. | LOW | Already partially in place: `TaskHistoryEntry` is injected into LLM parser as history context. What's missing: `ReplState.lastResult` is not stored — the `RetryResult` is discarded after `renderResultBlock()`. Store it. Intent parser already receives `history` — augment the history entry to include description (not just `dep`). | `ReplState` (minor extension), `processInput` return path, `TaskHistoryEntry` type |
-| Slack bot responds in thread to the triggering mention | When an app_mention triggers an agent run, all subsequent messages (confirmation prompt, progress, PR link) must appear in the same Slack thread. Slack users expect threaded responses from bots. | MEDIUM | Use `thread_ts` from the event to route all replies into the same thread. The `SessionCallbacks` architecture already decouples I/O — a Slack adapter injects Slack-specific `confirm`, `clarify`, and progress callbacks. Confirmation via interactive message buttons (Block Kit). | `SessionCallbacks` (exists), Slack Bolt `@slack/bolt`, Block Kit interactive buttons |
+| One worktree per agent session | Concurrent runs must not share a working directory — file edits from run A would corrupt run B. This is the foundational isolation primitive. | LOW | `git worktree add <path> -b <branch>` creates a linked working directory sharing the same `.git` object store. No full clone needed. Host-side git execution is already established (Key Decision: "Host-side git execution"). | Existing `ClaudeCodeSession` Docker mount path (must mount worktree dir, not main repo dir) |
+| Sibling directory naming that avoids collisions | Multiple simultaneous worktrees need unique paths. Predictable naming aids debugging and cleanup. | LOW | Standard pattern: `<repo-name>-worktrees/<branch-slug>` as sibling directory. Branch slug generated from task description: slugify + short UUID suffix to guarantee uniqueness. Example: `my-api-worktrees/rename-fetchuser-a3f7`. | Branch name generation (auto-generates today, extend to include UUID suffix) |
+| Worktree cleanup after PR creation or task failure | Abandoned worktrees accumulate and consume disk. Users expect cleanup to be automatic, not manual. | MEDIUM | `git worktree remove <path>` + `git worktree prune` must run post-task (success + PR, failure, veto, zero-diff). Important: cleanup must happen even if agent errors mid-run — wrap in finally block. Branch deletion is separate: `git branch -d <branch>` only after PR is merged or explicitly abandoned (don't delete on failure — PR may still be raised). | `RetryOrchestrator` result handling path, existing branch name management |
+| Docker container mounts worktree directory, not main repo | Container must see the worktree's working files. If the main repo directory is mounted, the container operates on the wrong filesystem state. | MEDIUM | Current pattern: bind-mount repo root into container. With worktrees, bind-mount the worktree directory instead. The `.git` pointer file in the worktree root is sufficient — container doesn't need access to the main `.git` directory for reads/edits. Git ops that need the object store (commits, push) remain host-side. | Docker run config in `ClaudeCodeSession`, existing host-side git execution pattern |
+| Exploration tasks do not produce PRs or code changes | Read-only tasks return a textual report. Users expect a clear distinction: code-change tasks → PR, exploration tasks → report output. Mixing these would erode trust in the pipeline. | LOW | Separate task type: `explore`. No `GitHubPRCreator` invoked. No verifier pipeline. Output is a markdown report string written to stdout / REPL / Slack thread. | Intent parser (add `explore` taskType), pipeline routing in `runAgent()` |
+| Exploration tasks still run in Docker with no network | Security model is non-negotiable per PROJECT.md constraints. Exploration tasks read the repo — they don't need network access and should not be granted it. | LOW | Use the same Docker + iptables setup. No new security surface introduced. The read-only nature is enforced by prompt construction (no write tools in the prompt), not by OS-level restrictions — consistent with how the agent SDK works. | Existing Docker isolation infrastructure |
 
 ### Differentiators (Competitive Advantage)
 
-Features that raise the quality of the conversational experience beyond what's expected.
+Features that raise the quality of worktree and exploration beyond baseline expectations.
 
 | Feature | Value Proposition | Complexity | Notes | Depends On |
 |---------|-------------------|------------|-------|-----------|
-| Scoping dialogue answers are user-correctable at confirm step | Showing the user the final assembled prompt scope (after scoping answers are merged in) at the confirm step means the scope contract is visible and fixable before the run. Most agents hide the prompt. | LOW | The existing `displayIntent` function in `confirm-loop.ts` already shows `description`. Extend it to also render the assembled SCOPE block when scoping answers are present. Zero new infrastructure. | Scoping dialogue (above), `displayIntent` in `confirm-loop.ts` |
-| `pr` command gracefully handles no-result state | A `pr` command that fails silently or crashes when there's no last result is worse than no `pr` command. Clear error: "No completed task in this session — run a task first." | LOW | Guard on `ReplState.lastResult` being null. Single `console.log` with helpful message. The post-hoc PR feature needs this to feel finished. | Post-hoc PR (table stakes) |
-| Slack confirmation via Block Kit buttons, not text input | Text-based Y/n confirmation in Slack is awkward (users must type a reply). Block Kit buttons ("Proceed" / "Cancel") are the standard Slack UX pattern for approvals. | MEDIUM | Send an interactive message with two actions: `proceed_action` and `cancel_action`. Listen for action callbacks with the same `message_ts` to update the original message. The button handler calls `processInput` with the confirmed intent. Uses `ack()` + async background execution (Slack requires ack within 3 seconds; agent runs take 60-300 seconds, so fire-and-forget pattern is required). | Slack Bolt `@slack/bolt`, Block Kit, 3-second ack constraint |
-| Slack posts PR link as final thread message | When the agent finishes and a PR is created, posting the PR URL as the last message in the thread gives users a direct action without leaving Slack. | LOW | `onAgentEnd` callback posts to thread. `SessionCallbacks.onAgentEnd` already exists; Slack adapter just provides a Slack-specific implementation. | Post-hoc PR table-stakes feature, thread_ts tracking |
+| Worktree-aware branch name shown at confirm step | User sees the exact branch that will be created before proceeding. Improves transparency and lets user catch naming issues before the run starts. | LOW | The branch name is generated during intent parsing today. Display it at the confirm step alongside task description and repo. Zero new infrastructure — add `branchName` to the `displayIntent` output. | Branch name generation (already exists), `confirm-loop.ts` |
+| Exploration report structured with clear section headers | Raw LLM output is hard to skim. A report with `## Branching Strategy`, `## CI Pipeline`, `## File Structure` sections is scannable and actionable. | LOW | Prompt construction for `explore` tasks specifies a markdown section structure. The agent uses Read/Glob/Grep/Bash(git log, gh run list) to gather data, then writes a structured report. Section schema defined per exploration subtype. | `buildExplorePrompt` (new prompts module function) |
+| Exploration subtypes: branching strategy, CI checks, project structure | General "explore this repo" is too vague for the agent to produce a high-signal report. Explicit subtypes scoped to known questions produce better output consistently. | MEDIUM | Three subtypes to begin with: `git-strategy` (branching model, PR workflow, commit conventions), `ci-checks` (workflows in `.github/workflows/`, common failure patterns, test coverage signals), `project-structure` (directory layout, key modules, dependency graph summary). Each subtype has a purpose-built prompt section. | `buildExplorePrompt`, intent parser update |
+| Worktree cleanup runs even on SIGINT / process exit | If the user Ctrl+Cs mid-run, orphaned worktrees accumulate silently. Cleanup on exit makes worktrees feel ephemeral. | MEDIUM | Register a `process.on('SIGINT')` and `process.on('beforeExit')` handler that prunes known worktrees. Track active worktrees in a module-level set. `git worktree prune` as the fallback sweep. Critical: don't leave orphaned `.git/worktrees/` metadata entries. | Worktree lifecycle manager (new module), process signal handling |
+| Tech debt: cancelled tasks recorded as `failed` fixed | Misleading status in session history makes it harder to reason about what happened. `cancelled` should map to its own terminal state. | LOW | Exit code switch in CLI output handler has missing explicit `vetoed` and `turn_limit` cases; `cancelled` goes to `failed`. Add explicit cases. This is cleanup work but improves observability across all task types. | `src/cli/output.ts` or equivalent status-mapping path |
 
 ### Anti-Features (Commonly Requested, Often Problematic)
 
 | Feature | Why Requested | Why Problematic | Alternative |
 |---------|---------------|-----------------|-------------|
-| Slack bot accepts multi-turn corrections after task starts | "While the agent is running, I want to redirect it" sounds useful | The agent is already running in Docker with no mechanism for mid-run input injection. Adding a mid-run input channel would require a side-channel into the container, breaking the isolation invariant and making the run non-deterministic. | All scoping happens pre-confirmation. Scoping dialogue collects constraints before the run. User cancels (Ctrl+C / "Cancel" button) and restarts if direction needs to change. |
-| Scoping dialogue for dependency update tasks | Could ask "which version?" before confirm | Dep updates are already fully parameterized (`dep`, `version` sentinel). The intent parser extracts these precisely. Adding scoping questions would introduce unnecessary friction for the common case. | Scoping dialogue is `generic` taskType only. Dep updates use the existing fast-path + confirm flow. |
-| Persistent cross-session history so follow-ups survive restart | "Remember what I was working on yesterday" | Stale context causes misparses. PROJECT.md explicitly rejects this: "stale context causes misparses, sessions reset on restart." Cross-session memory requires a serialization strategy that risks injecting outdated or conflicting context. | Single-session history (`ReplState.history`, max 10 entries). On restart, fresh state. Users reference prior work explicitly in their next command. |
-| Slack bot auto-executes without a confirmation step | Reduces clicks — "just do it" | Removes the human-in-the-loop safety model that is core to the project's trust contract. Auto-execute violates the project's "never auto-execute without confirmation" constraint. | Block Kit buttons make confirmation fast (one click). The confirm step is non-negotiable. |
-| Scoping dialogue asks unlimited follow-up questions | More information = better results | Each round-trip in Slack adds latency and user friction. Research on clarification dialogues shows diminishing returns beyond 2-3 targeted questions. More questions signals the system is underconfident, eroding trust. | Maximum 3 scoping questions, all optional (skip with Enter/empty submit). Questions are fixed (files, test-update expectation, exclusion list) — not dynamically generated per-task. |
-| Slack bot stores confirmed intent in Slack message metadata | Avoids needing bot-side state | Slack message metadata requires parsing the action payload back into an intent, which introduces a serialization round-trip and type safety issues. The action payload includes the `block_id` / `action_id` but not the full `ResolvedIntent`. | Bot-side state: store `pendingConfirmations: Map<string, ResolvedIntent>` keyed on `message_ts`. Clean up on action receipt. Small in-memory map — no persistence needed. |
+| Shared worktree across multi-turn REPL tasks | "Reuse the same branch for a series of related changes" sounds productive | PROJECT.md explicitly out-of-scope: "Shared workspace across multi-turn tasks — breaks one-container-per-task isolation invariant." Two tasks in the same worktree create ordering dependencies and make the verifier's diff ambiguous. | Each REPL task gets its own worktree + branch. "Now add tests for that" creates a second branch from the first one's HEAD if the first was merged, or from main if not. |
+| Exploration tasks that write code as a side-effect | "Analyze and then fix the CI failures you find" is appealing — one step instead of two | Mixing read and write in the same session makes the scope contract ambiguous. The verifier cannot determine what changes are in-scope. The LLM Judge has no clear criterion. The trust model requires human review of changes, which presupposes the scope was declared upfront. | Exploration returns a report. User reads the report, then issues a separate code-change task with a specific instruction drawn from the report. |
+| Auto-cleanup of worktree branches after PR merge | "I shouldn't have to think about branch cleanup at all" | Auto-detecting a merged PR requires polling the GitHub API or listening to webhooks — infrastructure that does not exist in this project and is explicitly out-of-scope (no queue/webhook triggers). Silent deletion of branches could surprise users who expected them to persist. | Worktree directory and agent-local metadata are cleaned after task completion. The remote branch's lifecycle follows normal GitHub PR merge + delete workflow (automated or manual per repo settings). |
+| Exploration tasks that modify `.github/workflows/` or CI config | "The agent found a CI problem — let it fix it too" | Config-only changes have their own verification routing path (lint-only), but CI config changes are especially high-risk — a bad workflow file can break all future PRs. The trust model requires human review for any config change, and exploration tasks are designed to be zero-risk. | Exploration identifies the issue and describes the fix in the report. User issues a separate generic task: "Fix the YAML syntax error in `.github/workflows/ci.yml` described in [report]." |
+| Worktrees stored inside the repo directory | "Simpler path management if worktrees live in a subdirectory of the repo" | Placing worktrees inside the repo means they appear as untracked directories in `git status`, confuse file-based search tools (Glob/Grep would traverse them), and risk being accidentally committed. | Sibling directory pattern: `<repo>-worktrees/<slug>`. Standard convention used across the ecosystem. Entirely outside the repo directory. |
 
 ---
 
 ## Feature Dependencies
 
 ```
-Post-Hoc PR Creation
-    └──requires──> ReplState.lastResult (new field on existing ReplState)
-    └──requires──> RetryResult stored after agent run in processInput()
-    └──uses──>     GitHubPRCreator (already built, no changes)
-    └──requires──> `pr` command handler in REPL loop (currently unrecognized)
+Git Worktree Isolation
+    └──requires──> Worktree lifecycle manager (new: create, track, cleanup)
+    └──requires──> Branch name generation with UUID suffix (extend existing)
+    └──requires──> Docker mount path targets worktree dir (change to ClaudeCodeSession)
+    └──requires──> Worktree cleanup in RetryOrchestrator result path (finally block)
+    └──enhances──> Concurrent execution (multiple simultaneous sessions without conflict)
 
-Scoping Dialogue
-    └──requires──> Generic task identification (taskType === 'generic', already in parser)
-    └──requires──> buildGenericPrompt SCOPE block (already in src/prompts/generic.ts)
-    └──enhances──> buildGenericPrompt — answers merge into SCOPE block
-    └──uses──>     SessionCallbacks.clarify (exists but only for low-confidence clarifications)
+Worktree Lifecycle Manager
+    └──requires──> git worktree add / remove / prune (host-side git, already established)
+    └──requires──> Active worktree tracking (module-level set or map)
+    └──enables──>  SIGINT cleanup handler (register once at startup)
 
-Follow-Up Task Referencing
-    └──requires──> TaskHistoryEntry includes description (currently only dep/version/taskType/repo)
-    └──requires──> ReplState.lastResult for "create PR for last task" pattern
-    └──uses──>     LLM intent parser history injection (already implemented)
-    └──enhances──> Post-Hoc PR Creation (follow-up input "create a pr" routes to stored lastResult)
+Repo Exploration Tasks
+    └──requires──> New `explore` taskType in intent parser
+    └──requires──> buildExplorePrompt (new prompts module function)
+    └──requires──> Exploration subtype routing (git-strategy | ci-checks | project-structure)
+    └──requires──> Report output path in runAgent() (bypass verifier + PR creation)
+    └──uses──>     Existing Docker isolation (same container, no network)
+    └──uses──>     Existing SessionCallbacks (report text posted via onMessage)
 
-Slack Bot Interface
-    └──requires──> SessionCallbacks (already built — Slack adapter is a new implementation)
-    └──requires──> processInput() (already built — takes text + state + callbacks)
-    └──requires──> @slack/bolt installed and configured
-    └──requires──> Slack app credentials (Bot Token, Signing Secret)
-    └──requires──> In-memory pendingConfirmations map (new, trivial)
-    └──uses──>     parseIntent() (already built)
-    └──uses──>     runAgent() (already built)
-    └──uses──>     GitHubPRCreator (already built)
-    └──conflicts─> Auto-execute without confirm (must not do this — safety model)
+Tech Debt Cleanup
+    └──touches──>  Exit code switch (CLI status mapping)
+    └──touches──>  SessionTimeoutError dead code removal
+    └──touches──>  retry.ts configOnly path (bypasses retryConfig.verifier)
+    └──touches──>  Slack dead code (buildIntentBlocks, buildStatusMessage)
+    └──touches──>  Slack multi-turn history population
 
-Scoping Dialogue ──feeds──> Follow-Up Task Referencing
-    (scoping answers become part of description stored in history)
+Git Worktree Isolation ──independent──> Repo Exploration Tasks
+    (separate feature areas, no ordering dependency between them)
 
-Post-Hoc PR Creation ──requires──> Follow-Up Task Referencing
-    (detecting "create pr" as follow-up to last result requires lastResult in state)
+Git Worktree Isolation ──does NOT conflict──> Existing single-run flows
+    (worktree is created + cleaned per run; REPL single-task UX unchanged)
 ```
 
 ### Dependency Notes
 
-- **Post-hoc PR is the lowest-risk feature:** It requires only a new field on `ReplState`, a check in the result handling path of `processInput`, and a new `pr` command branch. No pipeline changes.
-- **Scoping dialogue extends the confirm loop, not the pipeline:** The answers feed into `buildGenericPrompt`. Nothing downstream changes — the agent, verifier, and judge receive a prompt with tighter scope constraints.
-- **Follow-up referencing is partially built:** `TaskHistoryEntry` already injects context into the LLM parser. The gap is that `description` is not stored in the history entry, so generic task follow-ups lack the description context. Small schema change.
-- **Slack bot requires the most net-new code:** New package (`@slack/bolt`), new event listener, Block Kit message composition, action handler, pending confirmation state, and a Slack-specific `SessionCallbacks` implementation. But it calls the same `processInput` function — no agent logic changes.
-- **The 3-second ack constraint is the critical Slack integration pattern:** Slack requires `ack()` within 3 seconds. Agent runs take 60-300 seconds. The pattern is: call `ack()` immediately, then execute the agent in the background, then post results to the thread via `chat.postMessage`. Do not `await` the agent run inside the action handler.
+- **Worktree isolation depends on Docker mount change:** The single most load-bearing change is `ClaudeCodeSession` passing the worktree path as the bind-mount root instead of the repo root. Everything else (cleanup, naming) is orchestration around this.
+- **Exploration tasks are pipeline bypass:** They go through intent parsing and Docker execution, but skip the composite verifier, LLM Judge, and PR creation entirely. The routing branch is in `runAgent()` (or a sibling function). This is the cleanest implementation boundary.
+- **Tech debt cleanup is independent:** None of the tech debt items block or are blocked by the two feature areas. They can be done in any phase or interleaved.
+- **Worktree cleanup in finally block is critical:** If cleanup is only in the success path, failure or cancellation leaves orphaned worktrees. The `RetryOrchestrator` result handling path must wrap worktree cleanup in a `finally` block.
 
 ---
 
 ## MVP Definition
 
-### Launch With (v2.3)
+### Launch With (v2.4)
 
 Minimum for this milestone to deliver value end-to-end.
 
-- [ ] **Post-hoc PR creation** — `ReplState.lastResult` field, `pr` command in REPL, guard for no-result state. Required because this is the most frequently-requested UX gap from multi-turn REPL usage.
-- [ ] **Follow-up task referencing: description in history** — Extend `TaskHistoryEntry` to include `description` for generic tasks. Ensures "create PR for last task" + "do this again for that file too" work without re-specifying intent.
-- [ ] **Conversational scoping dialogue** — 3 optional pre-confirm questions for generic tasks. Answers merge into `buildGenericPrompt` SCOPE block. Required because generic tasks on complex codebases show scope drift without constraints.
-- [ ] **Slack bot interface** — `@slack/bolt` adapter, `app_mention` event listener, Block Kit confirm buttons, async fire-and-forget execution, thread reply with PR link. Required as the fourth target feature in the milestone.
+- [ ] **Worktree lifecycle manager** — `createWorktree(repoPath, branchName): worktreePath`, `removeWorktree(worktreePath)`, `pruneWorktrees(repoPath)`. Required as the foundation for all isolation work.
+- [ ] **Docker mount uses worktree path** — `ClaudeCodeSession` bind-mounts the worktree directory, not the repo root. Required to actually achieve file isolation.
+- [ ] **Worktree cleanup in finally block** — Post-task cleanup (success, failure, veto, zero-diff, cancelled) ensures no orphans. Required for the feature to be production-usable.
+- [ ] **Sibling directory naming with UUID suffix** — `<repo>-worktrees/<slug>-<uuid>`. Required for concurrent runs without path collisions.
+- [ ] **Exploration taskType in intent parser** — Parse "explore", "investigate", "analyze", "check the CI", "what is the branching strategy" into `explore` taskType with subtype. Required for the new task category to be reachable.
+- [ ] **buildExplorePrompt with subtype routing** — Structured prompt per exploration subtype. Required for useful report output.
+- [ ] **Report output path in runAgent()** — Skip verifier + PR, return report string. Display via `onMessage` callback. Required for end-to-end completion.
+- [ ] **Tech debt: exit code switch explicit cases** — `vetoed`, `turn_limit`, `cancelled` as explicit cases in status mapping. Required as stated tech debt item.
 
-### Add After Validation (v2.3.x)
+### Add After Validation (v2.4.x)
 
-- [ ] **Scoping dialogue shown in confirm display** — Show assembled SCOPE block at confirm step so user can see how their scoping answers were incorporated. Trigger: scoping answers producing unexpected agent behavior in real usage.
-- [ ] **`pr` command shows last task summary before creating PR** — Remind user what task is being PR'd ("Creating PR for: rename X to Y in auth.ts"). Trigger: user confusion about which task the PR is for in long sessions.
+- [ ] **SIGINT cleanup handler** — Register once at startup, prune known worktrees on process exit. Trigger: orphaned worktrees observed in real usage.
+- [ ] **Worktree branch shown at confirm step** — Display the branch name being created in the confirm UI. Trigger: user feedback that they couldn't predict the branch name.
 
-### Future Consideration (v2.4+)
+### Future Consideration (v2.5+)
 
-- [ ] **Slack bot: multiple concurrent pending confirmations** — Current in-memory map works for single-user usage. Multi-user Slack workspace requires keying by user ID + channel. Trigger: team-shared Slack workspace adoption.
-- [ ] **Persistent Slack conversation history across restarts** — Requires a database for the pending confirmations map and session state. Trigger: Slack adapter adoption by teams who want bot restarts to be transparent.
-- [ ] **Dynamic scoping questions generated per-task** — LLM generates 1-3 clarifying questions based on the specific instruction. Higher quality than fixed questions but adds an LLM API call on the critical path before the run. Trigger: fixed questions showing low signal-to-noise for specific task types.
+- [ ] **Exploration subtype: security scan** — Analyze package.json/pom.xml for known vulnerable deps without making changes. Higher complexity (needs a defined vulnerability data source). Defer until basic subtypes are validated.
+- [ ] **Exploration results stored in session history for follow-up referencing** — "Based on the CI report, fix the flaky test" as a follow-up. Requires storing report text in `TaskHistoryEntry`. Trigger: exploration → action workflow becoming common.
+- [ ] **Parallel agent execution orchestration** — Expose concurrent runs as a first-class feature (queue multiple tasks, run in parallel worktrees). Requires a task queue, concurrency limits, and a status display. Worktree isolation is the prerequisite; orchestration is the follow-on.
 
 ---
 
@@ -128,17 +131,22 @@ Minimum for this milestone to deliver value end-to-end.
 
 | Feature | User Value | Implementation Cost | Priority |
 |---------|------------|---------------------|----------|
-| Post-hoc PR creation | HIGH | LOW | P1 |
-| Follow-up referencing (description in history) | HIGH | LOW | P1 |
-| Conversational scoping dialogue | HIGH | MEDIUM | P1 |
-| Slack bot interface | HIGH | MEDIUM-HIGH | P1 |
-| Scoping answers shown at confirm step | MEDIUM | LOW | P2 |
-| `pr` command task summary before creating | LOW | LOW | P2 |
-| Persistent Slack state across restarts | LOW | HIGH | P3 |
-| Dynamic per-task scoping questions | MEDIUM | MEDIUM | P3 |
+| Worktree lifecycle manager | HIGH | LOW | P1 |
+| Docker mount uses worktree path | HIGH | LOW | P1 |
+| Worktree cleanup in finally block | HIGH | LOW | P1 |
+| Sibling directory naming + UUID | HIGH | LOW | P1 |
+| Exploration taskType + intent parsing | HIGH | MEDIUM | P1 |
+| buildExplorePrompt (3 subtypes) | HIGH | MEDIUM | P1 |
+| Report output path (bypass verifier/PR) | HIGH | LOW | P1 |
+| Tech debt: exit code switch | MEDIUM | LOW | P1 |
+| Tech debt: dead code removal | LOW | LOW | P1 |
+| SIGINT cleanup handler | MEDIUM | LOW | P2 |
+| Branch name shown at confirm step | MEDIUM | LOW | P2 |
+| Exploration → follow-up referencing | MEDIUM | MEDIUM | P3 |
+| Parallel execution orchestration | HIGH | HIGH | P3 |
 
 **Priority key:**
-- P1: Required for v2.3 milestone
+- P1: Required for v2.4 milestone
 - P2: Add after P1 validated in real usage
 - P3: Future milestone
 
@@ -146,99 +154,82 @@ Minimum for this milestone to deliver value end-to-end.
 
 ## Interaction Pattern Reference
 
-### Scoping Dialogue — Expected Pattern
+### Worktree Isolation — What Changes (Internal, Not User-Facing)
 
 ```
-> rename the fetchUser method to getUser across the codebase
+Before (v2.3):
+  runAgent(repoPath: /home/user/my-api, branch: rename-fetchuser)
+    └──> Docker bind-mount: /home/user/my-api → /repo
+    └──> Agent edits /repo/src/... (directly on main checkout)
+    └──> git commit + push (host-side)
+
+After (v2.4):
+  runAgent(repoPath: /home/user/my-api, branch: rename-fetchuser-a3f7)
+    └──> git worktree add /home/user/my-api-worktrees/rename-fetchuser-a3f7 -b rename-fetchuser-a3f7
+    └──> Docker bind-mount: /home/user/my-api-worktrees/rename-fetchuser-a3f7 → /repo
+    └──> Agent edits /repo/src/... (on isolated worktree)
+    └──> git commit + push (host-side, from worktree path)
+    └──> [finally] git worktree remove /home/user/my-api-worktrees/rename-fetchuser-a3f7
+```
+
+User-visible change: concurrent REPL tasks no longer block on each other. The branch name includes a short UUID suffix. Otherwise UX is identical.
+
+### Exploration Tasks — Expected Interaction Pattern
+
+```
+REPL:
+  > what is the branching strategy for my-api?
 
   Parsed Intent:
-    Task:    refactor
-    Action:  rename the fetchUser method to getUser across the codebase
-    Project: my-api
+    Task:     explore
+    Subtype:  git-strategy
+    Project:  my-api
 
-  Before confirming, a few quick scoping questions (press Enter to skip):
-  Which files or directories should this touch? (e.g. src/users/): src/
-  Should tests be updated too? [Y/n]: y
-  Any files that must NOT change? (e.g. generated/): generated/
+  Proceed? [Y/n] y
 
-  Proceed? [Y/n]
+  Investigating... (read-only, no changes will be made)
+
+  ## Git Branching Strategy — my-api
+
+  **Model:** Trunk-based development with short-lived feature branches.
+  **Default branch:** main
+  **Branch naming:** feature/<ticket-id>-<slug>, hotfix/<slug>
+  **PR workflow:** All changes via PR, squash merge preferred (observed in 80% of recent merges).
+  **Commit conventions:** Conventional Commits enforced by commitlint (found in package.json scripts).
+  **Branch protection:** main is protected (inferred from no direct pushes in git log).
+
+  ---
+
+Slack:
+  User: @coding-agent check the CI for my-api
+  Bot (thread): Task: explore / ci-checks / my-api  [Proceed] [Cancel]
+  User: [Proceed]
+  Bot (thread): Investigating... (read-only)
+  Bot (thread): [Formatted CI report as thread message]
 ```
 
 Key behaviors:
-- Questions appear only for `generic` tasks, not dep updates
-- All three questions are skippable (Enter = no constraint added)
-- Answers appear in the SCOPE block of the prompt, visible to the agent and verifiable by the Judge
-- The scoping section appears between intent display and the final `Proceed?` prompt
-
-### Post-Hoc PR Creation — Expected Pattern
-
-```
-> rename the fetchUser method to getUser
-
-  [task runs... result block renders...]
-
-  Agent completed successfully.
-
-> create a pr
-  Creating PR for: rename the fetchUser method to getUser (my-api)
-  PR created: https://github.com/org/my-api/pull/42
-
-> pr
-  [same as above — both "pr" and "create a pr" are recognized]
-
-> pr
-  No completed task in this session. Run a task first.
-  [renders when lastResult is null]
-```
-
-Key behaviors:
-- `pr` and `create pr` (and natural language "create a PR") all route to the same post-hoc flow
-- Requires the last task to have `finalStatus === 'success'` (not `zero_diff`, not `failed`)
-- `lastResult` is cleared on session start, not on each task — persists until next task completes
-- Zero confirmation prompt needed — user already confirmed the task; the PR is just packaging it
-
-### Slack Bot — Expected Interaction Pattern
-
-```
-User in #dev-tools:  @coding-agent rename fetchUser to getUser in my-api
-
-Bot (threaded reply):
-  ┌─────────────────────────────────────────────┐
-  │  Task:    refactor                           │
-  │  Action:  rename fetchUser to getUser        │
-  │  Project: my-api                             │
-  │  [Proceed]  [Cancel]                         │
-  └─────────────────────────────────────────────┘
-
-User clicks [Proceed]
-
-Bot (same thread):  Running... (this may take a few minutes)
-
-Bot (same thread):  Done. PR created: https://github.com/org/my-api/pull/42
-```
-
-Key technical constraints:
-- `ack()` must be called within 3 seconds of button click (before agent starts)
-- Agent runs fire-and-forget: `ack()` first, then launch agent async, then `chat.postMessage` results
-- All messages use `thread_ts` from the original `app_mention` event
-- Scoping dialogue in Slack is deferred: Block Kit modals could support it but adds significant complexity; in v2.3 the Slack adapter skips the scoping questions (generic tasks use auto-detected scope only)
+- No confirm-and-wait for result — exploration is read-only so the confirm step can be lightweight
+- No PR link posted — the output IS the result, rendered inline
+- "Investigating..." progress indicator to signal read-only mode (distinct from "Running..." for code tasks)
+- Report is markdown, rendered in terminal via REPL or as Slack message blocks
 
 ---
 
 ## Sources
 
-- Slack Bolt Node.js: [Acknowledging requests](https://docs.slack.dev/tools/bolt-js/concepts/acknowledge/) — HIGH confidence; 3-second ack constraint, ack-then-process pattern
-- Slack Bolt Node.js: [bolt-js reference](https://tools.slack.dev/bolt-js/reference) — HIGH confidence; Socket Mode vs HTTP Mode comparison
-- Slack: [Comparing HTTP and Socket Mode](https://docs.slack.dev/apis/events-api/comparing-http-socket-mode/) — HIGH confidence; Socket Mode recommended for private tools, HTTP for production/marketplace
-- Slack: [Creating interactive messages](https://api.slack.com/messaging/interactivity) — HIGH confidence; Block Kit interactive components, button action pattern
-- Slack: [Responding to app mentions tutorial](https://api.slack.com/tutorials/tracks/responding-to-app-mentions) — HIGH confidence; app_mention event, threaded replies
-- Knock: [Creating interactive Slack apps with Bolt and Node.js](https://knock.app/blog/creating-interactive-slack-apps-with-bolt-and-nodejs) — MEDIUM confidence; practical Bolt patterns
-- MAC Framework: [Multi-Agent Clarification (arXiv 2512.13154)](https://arxiv.org/pdf/2512.13154) — MEDIUM confidence; research on scoping questions, 2-3 targeted questions is optimal
-- Anthropic: [2026 Agentic Coding Trends Report](https://resources.anthropic.com/hubfs/2026%20Agentic%20Coding%20Trends%20Report.pdf) — HIGH confidence; context continuity, follow-up capability as top developer expectation
-- EclipseSource: [Structured AI Coding with Task Context](https://eclipsesource.com/blogs/2025/07/01/structure-ai-coding-with-task-context/) — MEDIUM confidence; task context persistence patterns
-- Project memory: `project_repl_post_hoc_pr.md`, `project_generic_task_prompts.md`, `project_conversational_interface.md` — HIGH confidence; directly from prior project decisions
+- Git official docs: [git-worktree](https://git-scm.com/docs/git-worktree) — HIGH confidence; `git worktree add/remove/prune` semantics, shared `.git` object store behavior
+- BSWEN blog: [Worktree Isolation in AI Agents](https://docs.bswen.com/blog/2026-03-18-ai-agent-worktree-isolation/) — MEDIUM confidence; one-task-one-worktree-one-agent pattern, concurrent execution
+- Upsun Developer Center: [Git worktrees for parallel AI coding agents](https://devcenter.upsun.com/posts/git-worktrees-for-parallel-ai-coding-agents/) — MEDIUM confidence; sibling directory naming, Docker bind-mount interaction
+- Nick Mitchinson: [Git Worktrees for Multi-Feature Development with AI Agents](https://www.nrmitchi.com/2025/10/using-git-worktrees-for-multi-feature-development-with-ai-agents/) — MEDIUM confidence; branch-per-task, naming conventions
+- Penligent: [Git Worktrees Need Runtime Isolation](https://www.penligent.ai/hackinglabs/git-worktrees-need-runtime-isolation-for-parallel-ai-agent-development/) — MEDIUM confidence; shared `.git` pitfall, silent fallback failure mode
+- Jon Roosevelt: [Git Worktrees Ate My Edits](https://jonroosevelt.com/blog/git-worktrees-broke-dedicated-machines-fixed-it) — MEDIUM confidence; worktree error → main checkout fallback pitfall
+- Paperclip RFC: [Adapter-level worktree isolation](https://github.com/paperclipai/paperclip/issues/175) — MEDIUM confidence; adapter-level creation pattern, path naming `<project>-worktrees/<slug>`
+- GitHub Blog: [Automate repository tasks with GitHub Agentic Workflows](https://github.blog/ai-and-ml/automate-repository-tasks-with-github-agentic-workflows/) — MEDIUM confidence; CI analysis, branching strategy, project structure as canonical exploration task subtypes
+- Anthropic: [Claude Code common workflows](https://code.claude.com/docs/en/common-workflows) — MEDIUM confidence; worktree cleanup pattern (no changes → auto-remove branch + worktree)
+- Project memory: `project_repo_exploration_tasks.md` — HIGH confidence; directly from prior project decisions, read-only investigative tasks returning reports
 
 ---
 
-*Feature research for: conversational scoping, post-hoc PR creation, follow-up referencing, Slack bot (background-coding-agent v2.3)*
-*Researched: 2026-03-25*
+*Feature research for: git worktree isolation, repo exploration tasks, tech debt cleanup (background-coding-agent v2.4)*
+*Researched: 2026-04-05*

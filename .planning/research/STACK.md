@@ -1,132 +1,135 @@
 # Stack Research
 
-**Domain:** Conversational scoping dialogue, REPL post-hoc PR creation, follow-up task referencing, Slack bot interface — background-coding-agent v2.3
-**Researched:** 2026-03-25
-**Confidence:** HIGH — npm registry live checks, official Slack docs, and direct codebase inspection
+**Domain:** Git worktree isolation and repo exploration tasks — background-coding-agent v2.4
+**Researched:** 2026-04-05
+**Confidence:** HIGH — live codebase inspection, npm registry, and direct runtime verification
 
 ---
 
 ## Scope
 
-This file covers ONLY what changes for the v2.3 milestone. The validated existing stack is NOT re-researched:
+This file covers ONLY what changes for the v2.4 milestone. The validated existing stack is NOT re-researched:
 
 - Node.js 20, TypeScript (NodeNext / ESM `"type": "module"`)
 - `@anthropic-ai/claude-agent-sdk@^0.2.77`, `@anthropic-ai/sdk@^0.80.0`
-- Commander.js, Pino, Vitest, ESLint v10, Zod 4, conf@15
-- Interactive REPL with readline, intent parser (fast-path regex + LLM)
-- SessionCallbacks injection pattern, GitHubPRCreator (Octokit)
-- simple-git, write-file-atomic, picocolors, nanospinner
+- `simple-git@^3.32.3`, Commander.js, Pino, Vitest, ESLint v10, Zod 4, conf@15
+- `@slack/bolt@^4.6.0`, `octokit@^5.0.5`, `write-file-atomic@^7.0.0`
+- Docker (Alpine, multi-stage), `git`, `bash`, `ripgrep` already in image
 
 ---
 
-## New Stack Addition
+## New Dependencies: None
 
-One new package is needed for the Slack bot interface. All other v2.3 features are pure TypeScript logic changes to existing modules.
+**No new npm packages are required for v2.4.**
 
-### `@slack/bolt@^4.6.0`
+Both features — git worktree management and repo exploration tasks — are implemented entirely with:
 
-| Field | Value |
-|-------|-------|
-| Current version | 4.6.0 (released 2025-10-28) |
-| Node.js requirement | >=18 (project runs Node.js 20 — compatible) |
-| Module format | CommonJS — compatible with ESM host via `esModuleInterop: true` (already enabled in tsconfig.json) |
-| Bundled dependencies | `@slack/socket-mode@^2.0.5`, `@slack/web-api@^7.12.0` — no separate install needed |
-| Peer dependency | `@types/express@^5.0.0` — install as devDependency for TypeScript types on the receiver |
+1. **`simple-git` already in the project (v3.32.3)** — its `.raw()` method accepts arbitrary git subcommands, including all worktree operations. Live-verified:
+   ```
+   git.raw(['worktree', 'list', '--porcelain'])  // returns worktree entries
+   git.raw(['worktree', 'add', '-b', branch, path])  // creates worktree
+   git.raw(['worktree', 'remove', '--force', path])   // removes worktree
+   git.raw(['worktree', 'prune'])                      // cleans stale references
+   ```
+   `simple-git` has no dedicated `.worktree()` method (confirmed by TypeScript typings and runtime inspection). `.raw()` is the correct and supported path — used elsewhere in the project (`pr-creator.ts` uses `.raw(['merge-base', ...])` and `.raw(['cherry-pick', ...])`).
 
-**Why Bolt over raw `@slack/events-api`:** Bolt is the official Slack SDK for building apps. It ships a `SocketModeReceiver` that handles WebSocket lifecycle, reconnection, and payload acknowledgement — the same concerns that `SessionCallbacks.getSignal()` handles for the REPL. Raw events-api is the legacy SDK, last updated 2022, and does not support Socket Mode or Block Kit interactivity.
+2. **Node.js stdlib** — `node:path`, `node:fs/promises`, `node:os` for worktree directory path construction and cleanup.
 
-**Why Socket Mode over HTTP receiver:** The agent is an internal tool, not a public Slack Marketplace app. Socket Mode requires no public HTTPS URL, no reverse proxy, no ngrok. An app-level token with `connections:write` scope opens a WebSocket to Slack's infrastructure. The bot listens for `app_mention` events and slash commands without exposing any port. Socket Mode is explicitly recommended by Slack for internal tools — official docs confirm marketplace distribution is not allowed via Socket Mode, which is fine for this use case.
-
-**ESM interop:** `@slack/bolt` ships as CommonJS. The project uses `"type": "module"` with `"module": "NodeNext"` and `"esModuleInterop": true` in tsconfig.json. Named imports work: `import { App } from '@slack/bolt'`. The official Slack Bolt TypeScript starter template (bolt-ts-starter-template on GitHub) also uses `"type": "module"` with `@slack/bolt@^4.6.0` and TypeScript — confirmed working pattern.
+3. **Pure TypeScript changes** — new task type (`exploration`), new prompt builder, modified orchestration path for read-only execution (no verification gate, no PR creation).
 
 ---
 
 ## Changes to Existing Modules
 
-### 1. REPL State — Store `RetryResult` for Post-Hoc PR Creation
+### 1. Git Worktree Manager — new module
 
-**File:** `src/repl/types.ts`
+**File:** `src/agent/worktree.ts` (new)
 
-**What changes:** `ReplState` currently tracks `currentProject`, `currentProjectName`, and `history`. Add a `lastResult` field to hold the most recent completed `RetryResult` plus the options and prompt used to produce it.
+**What it does:** Encapsulates all `git worktree` lifecycle operations. Called by `runAgent()` before Docker launch (create worktree) and in a `finally` block (remove worktree).
 
 ```typescript
-export interface LastRunContext {
-  result: RetryResult;
-  options: AgentOptions;  // needed to reconstruct PR body
-  prompt: string;         // the full prompt sent to the agent
+export interface WorktreeHandle {
+  worktreePath: string;   // absolute path to the created worktree
+  branch: string;         // the branch checked out in that worktree
 }
 
-export interface ReplState {
-  currentProject: string | null;
-  currentProjectName: string | null;
-  history: TaskHistoryEntry[];
-  lastResult: LastRunContext | null;  // new
-}
+export async function createWorktree(
+  repoPath: string,
+  branch: string,
+): Promise<WorktreeHandle>
+
+export async function removeWorktree(
+  repoPath: string,
+  worktreePath: string,
+): Promise<void>
 ```
 
-The `LastRunContext` shape gives `GitHubPRCreator` exactly what it needs: the `RetryResult` (verification results, judge verdict, session results) plus the `AgentOptions` (repo, taskType, dep) to derive branch name and PR body. No new data structures required beyond the types already defined in `src/types.ts`.
+**Path convention:** Worktrees are created as siblings of the repo directory:
+```
+/path/to/repo/         ← original checkout
+/path/to/repo-wt-<sessionId>/   ← worktree created for this run
+```
 
-**Why this is the right place:** `ReplState` is already the mutable session container owned by the REPL loop. Storing `lastResult` here follows the pattern for `history` and `currentProject`. `processInput()` in `src/repl/session.ts` has full access to update it after `runAgent()` returns.
+Using `path.dirname(repoPath) + path.basename(repoPath) + '-wt-' + sessionId` produces a predictable, collision-safe path. The parent directory is guaranteed to be writable (it already contains the repo). No `/tmp` — worktrees must be on the same filesystem as `.git/` to avoid cross-device issues.
 
-### 2. REPL Session — `create pr` Command Handler
+**Why sibling rather than subdirectory:** `git worktree add` rejects paths inside the repo itself (`.git/` is inside). A sibling directory is the conventional pattern and avoids any conflict with the existing workspace mount.
+
+**Error handling:** If `removeWorktree` fails (e.g., process killed mid-run), `git worktree prune` is called as a fallback. Stale worktree locks are cleaned with `--force` on remove.
+
+**Integration point:** `runAgent()` in `src/agent/index.ts` currently receives `repo` as the workspace dir passed to Docker. For worktree runs, `worktreePath` replaces `repo` as `workspaceDir`. The original `repo` is still needed for `createWorktree` — pass both.
+
+### 2. AgentOptions — `useWorktree` flag
+
+**File:** `src/agent/index.ts`
+
+**What changes:** Add optional `useWorktree?: boolean` to `AgentOptions`. When true, `runAgent()` calls `createWorktree()` before Docker launch and `removeWorktree()` in a `finally` block after the run completes (success, failure, or cancellation). The Docker container is launched with the worktree path as `workspaceDir` instead of `repo`.
+
+This is the minimal invasive change: one boolean flag, three lines of code around the Docker launch, no changes to the verification pipeline or ClaudeCodeSession.
+
+### 3. Task Types — add `exploration`
+
+**File:** `src/intent/types.ts`
+
+**What changes:**
+
+```typescript
+export const TASK_TYPES = [
+  'npm-dependency-update',
+  'maven-dependency-update',
+  'generic',
+  'exploration',   // new
+] as const;
+```
+
+`exploration` is a read-only investigative task. The agent uses `git log`, `grep`, `find`, `cat`, and `ripgrep` (all already in the Docker image) to produce a report. No writes. No verification gate. No PR.
+
+**Why a distinct task type over a generic task with "read-only" instructions:** The orchestration path diverges meaningfully — exploration runs skip the entire verification pipeline (`compositeVerifier`, `llmJudge`, zero-diff check) and PR creation. A task type flag makes that routing explicit and testable rather than inferred from `taskCategory`.
+
+### 4. Prompts — `buildExplorationPrompt`
+
+**File:** `src/prompts/exploration.ts` (new)
+
+**What it does:** Builds a read-only agent prompt that:
+- Opens with an explicit instruction that the agent must not modify, create, or delete files
+- Lists the investigative question(s) from the user
+- Instructs the agent to return a structured Markdown report as its final response
+- Lists allowed tools: `Read`, `Bash` (git/grep/ripgrep only), `Glob`, `Grep`
+
+The agent already has `Read`, `Bash`, `Glob`, `Grep` as built-in tools from the Claude Agent SDK. The PreToolUse hook in `ClaudeCodeSession` will block any write attempts (it already blocks `Edit`, `Write` outside the workspace — for exploration tasks it should block all writes).
+
+### 5. RetryOrchestrator — exploration fast path
+
+**File:** `src/orchestrator/retry.ts`
+
+**What changes:** When `taskType === 'exploration'`, `RetryOrchestrator` runs one session and returns the `finalResponse` directly. No retries (nothing to correct — read-only output), no verification, no judge, no PR. `RetryResult.finalStatus` is `'success'` if the session completes without error, regardless of diff state.
+
+**Integration:** `runAgent()` passes `taskType` through to `RetryOrchestrator`. The orchestrator already receives `RetryConfig`; exploration can set `verifier: undefined` and `judge: undefined` to skip both. The routing decision (to skip verification) lives in `runAgent()` based on `taskType`, keeping `RetryOrchestrator` generic.
+
+### 6. REPL — `ExplorationResult` display
 
 **File:** `src/repl/session.ts`
 
-**What changes:** Add a `create pr` / `pr` command branch in `processInput()`, evaluated before intent parsing. When the user types `create pr` (or `pr`):
-- If `state.lastResult` is null → print "No completed task in this session."
-- If `state.lastResult.result.finalStatus !== 'success'` → print "Last task did not succeed; cannot create PR."
-- Otherwise → call `GitHubPRCreator` with the stored context and post the PR URL.
-
-No new callback signatures needed — `GitHubPRCreator` is already a direct call in `runAgent()`. The REPL invokes it directly here with the stored options.
-
-**Why not route through intent parser:** The memory file (`project_repl_post_hoc_pr.md`) identifies the core problem: "a follow-up 'create a PR' input parses as a new generic task instead of acting on the previous run." Adding a hardcoded command branch (like `history` and `exit`) bypasses intent parsing for known REPL meta-commands. This is the same pattern used for `history`, `exit`, and `quit` — consistent with existing session.ts structure.
-
-### 3. Intent Parser — Scoping Questions for Generic Tasks
-
-**Files:** `src/intent/types.ts`, `src/repl/types.ts`, `src/repl/session.ts`, `src/repl/confirm-loop.ts`
-
-**What changes:** After intent parsing returns a `generic` task, and before the confirm loop, inject a brief scoping dialogue that asks up to three questions and populates a `ScopingContext` object. The answers feed into the `SCOPE` block of `buildGenericPrompt()`.
-
-```typescript
-// In src/intent/types.ts
-export interface ScopingContext {
-  fileScope?: string;       // "Which files/directories should this touch?"
-  updateTests?: boolean;    // "Should tests be updated?"
-  excludedFiles?: string;   // "Any files that must NOT change?"
-}
-```
-
-The scoping dialogue is:
-- Only triggered for `generic` tasks (not dependency updates — those are already well-scoped)
-- Optional — the user can press Enter to skip any question and use auto-detected scope
-- Implemented with `readline/promises` (already imported in confirm-loop.ts)
-- Responses are appended to the `description` passed into `buildGenericPrompt()` as scope constraints
-
-**Why inline in the existing readline flow:** The existing `confirm-loop.ts` already manages a readline conversation with the user (`confirmLoop` function). The scoping dialogue uses the same `createInterface` pattern. No new readline instances, no new dependencies.
-
-**How ScopingContext feeds into buildGenericPrompt:** The generic prompt's `SCOPE` block accepts optional constraints. When `ScopingContext.fileScope` is set, it appends "Only modify files in: X" to the scope block. When `excludedFiles` is set, it appends "Do NOT modify: X". `updateTests: false` appends "Do NOT update test files."
-
-### 4. Slack Adapter — Thin Wrapper Over processInput()
-
-**File:** `src/slack/index.ts` (new module)
-
-**What it does:** Initializes `@slack/bolt` App with Socket Mode, listens for `app_mention` events and optionally a `/agent` slash command, and routes each message through the existing `processInput()` function with a Slack-specific `SessionCallbacks` implementation.
-
-**SessionCallbacks mapping for Slack:**
-
-| Callback | Slack implementation |
-|----------|---------------------|
-| `confirm` | Post a message with Block Kit buttons (Approve / Correct). Listen for `action` event on the block. Return the resolved intent or null. |
-| `clarify` | Post an ephemeral message with Block Kit button options. Listen for `action` event. Return the selected intent string. |
-| `getSignal` | Create a fresh `AbortController` per message, stored in a per-channel map. |
-| `onAgentStart` | Post "Running agent..." update to the thread. |
-| `onAgentEnd` | Update the thread message with the result. |
-
-**Block Kit for confirmation:** Use `section` + `actions` blocks with button elements. Button `action_id` values encode the intent (Approve → proceed, Decline → cancel). The `ack()` call acknowledges within 3 seconds (Slack requirement). Actual agent execution runs after `ack()` in a deferred callback.
-
-**Thread-scoped state:** Each incoming message creates a pending `AgentRun` keyed by `channel:ts`. This is an in-memory `Map` on the adapter. No persistent store needed — concurrent runs per channel are sequential (one active run per channel, queue or reject if busy).
-
-**Why no separate queue library (Bull, BullMQ):** The agent runs in Docker containers on the same machine as the bot process. Concurrency control via an in-memory Map is sufficient for a team-internal tool. A full job queue would require Redis and adds operational complexity. If the bot process restarts, pending runs are lost — acceptable for an internal tool. If multi-machine deployment becomes needed, add a queue at that point.
+**What changes:** When `RetryResult.finalStatus === 'success'` and the task type is `exploration`, render `result.sessionResults[0].finalResponse` as the report output instead of the standard diff/verification summary block. Exploration results never have a PR to create, so `state.lastResult` still stores them (for `history`) but the `pr` command should print "Exploration tasks do not create PRs."
 
 ---
 
@@ -134,26 +137,23 @@ The scoping dialogue is:
 
 | Avoid | Why | Use Instead |
 |-------|-----|-------------|
-| `@slack/events-api` | Legacy HTTP-only SDK, last updated 2022, no Socket Mode support, no Block Kit interactive message handling. | `@slack/bolt@^4.6.0` (bundles `@slack/socket-mode` and `@slack/web-api`) |
-| `@slack/web-api` (separate install) | Already bundled by `@slack/bolt`. Installing separately risks version mismatches between Bolt's internal `@slack/web-api` and a separately installed one. | Use `app.client` from the Bolt App instance |
-| `@slack/socket-mode` (separate install) | Bundled by `@slack/bolt@^4.6.0` as `@slack/socket-mode@^2.0.5`. Direct install not needed when using Bolt. | `socketMode: true` in Bolt App constructor |
-| Redis / BullMQ / pg-boss | v2.3 Slack bot is a single-process internal tool. Job queue adds Redis dependency, operational overhead, and persistence complexity for no benefit at this scale. | In-memory `Map` per channel in the Slack adapter |
-| ngrok / public HTTPS endpoint | Required for HTTP receiver mode but not needed with Socket Mode. Adds infrastructure complexity. | Socket Mode (app-level token with `connections:write`) |
-| Persistent cross-session context store | PROJECT.md explicitly rejects: "Persistent cross-session context — stale context causes misparses, sessions reset on restart." | In-memory `ReplState` per REPL session; Slack adapter uses per-message context |
-| `express` / HTTP server | Only needed for HTTP receiver mode. Socket Mode has no inbound port. | Bolt's built-in `SocketModeReceiver` (no HTTP server required) |
-| A conversation state database | Follow-up task referencing works within a session by extending `TaskHistoryEntry` with `RetryResult` reference (already tracked in `lastResult`). No cross-session persistence needed. | `ReplState.lastResult` + `ReplState.history` |
-| Separate LLM call for scoping questions | Scoping dialogue uses static question templates. Generating questions via LLM adds latency and cost for no accuracy benefit — the three canonical questions (file scope, test updates, exclusions) cover the useful space. | Static readline prompts in confirm-loop.ts |
+| `execa` npm package | `.raw()` on the existing `simple-git` instance handles all git worktree commands with no shell injection risk and no new dependency. `node:child_process.execFile` (already used in `agent/index.ts`, `verifier.ts`, `docker/index.ts`) covers the remaining subprocess needs. | `simple-git.raw()` for git ops, `node:child_process.execFile` (already imported) for other subprocesses |
+| `git-worktree` npm package (alexweininger/git-worktree) | 27 stars, last commit 2020, unmaintained. Does not support modern git worktree features. | `simple-git.raw(['worktree', ...])` |
+| `simple-worktree` npm package (max-winderbaum) | 3 stars, focused on file syncing across worktrees for human developers. Not an API library. Solves the wrong problem. | `simple-git.raw(['worktree', ...])` |
+| New Docker image layer for exploration | `git`, `bash`, `ripgrep` are already installed in the Alpine image. Exploration uses the same image as code-change tasks. | Existing `background-agent:latest` image |
+| Write-blocking via a separate Docker flag (`--read-only` already set) | Container is already `--read-only` with `/workspace` as the only writable volume. The PreToolUse hook already blocks writes outside repo. For exploration, strengthen the hook to reject all write tools. | PreToolUse hook in `ClaudeCodeSession` |
+| Separate "exploration" Docker network or container config | Exploration tasks have the same isolation requirements as code-change tasks. Same network, same iptables rules (Anthropic API access only, rest blocked). | Existing `buildDockerRunArgs()` unchanged |
+| A dedicated report storage system | Exploration reports are returned as `RetryResult.sessionResults[0].finalResponse` — plain Markdown text in the existing result object. REPL prints to terminal. No persistence needed. | `RetryResult.finalResponse` (already in `SessionResult`) |
+| `taskCategory` extension for exploration | `exploration` is a first-class task type, not a category of `generic`. It routes to a completely different orchestration path. Adding it as a category would require detecting it in multiple places. | `TASK_TYPES` enum extension |
 
 ---
 
 ## Installation
 
 ```bash
-# One new production dependency:
-npm install @slack/bolt@^4.6.0
-
-# One new dev dependency (TypeScript types for the Express receiver, peer dep of @slack/bolt):
-npm install -D @types/express@^5.0.0
+# No new dependencies for v2.4
+# simple-git already installed; update to latest if desired:
+npm install simple-git@^3.33.0
 ```
 
 ---
@@ -162,9 +162,9 @@ npm install -D @types/express@^5.0.0
 
 | Package | Version | Notes |
 |---------|---------|-------|
-| `@slack/bolt` | `^4.6.0` (latest as of 2026-03-25) | Requires Node.js >=18 — project is Node.js 20, compatible. Bundles `@slack/socket-mode@^2.0.5` and `@slack/web-api@^7.12.0`. |
-| `@slack/bolt` + `"type": "module"` | CJS package in ESM project | Works with `esModuleInterop: true` (already in tsconfig.json). Named import `import { App } from '@slack/bolt'` is confirmed in official Bolt TypeScript starter template using the same `"type": "module"` setup. |
-| `@types/express` | `^5.0.0` | Peer dependency of `@slack/bolt@4.6.0`. Needed only for TypeScript to type-check the HTTP receiver code path (even if not using it). `skipLibCheck: true` is already in tsconfig.json but installing the types avoids potential downstream issues. |
+| `simple-git` | `3.32.3` (installed), `3.33.0` (latest as of 2026-04-05) | `.raw()` worktree commands verified working on installed version. Patch bump is safe. |
+| `node:child_process` | Node.js 20 built-in | `execFile` + `promisify` pattern already used across 6 files in the project. No changes needed. |
+| `node:path`, `node:fs/promises`, `node:os` | Node.js 20 built-in | Sufficient for worktree path construction (`path.dirname`, `path.basename`, `path.join`) and cleanup. |
 
 ---
 
@@ -172,30 +172,27 @@ npm install -D @types/express@^5.0.0
 
 | Recommended | Alternative | Why Not |
 |-------------|-------------|---------|
-| `@slack/bolt` with Socket Mode | Raw WebSocket to Slack (no SDK) | Slack's WebSocket protocol requires app-level token negotiation, heartbeat handling, reconnection logic, and payload envelope parsing. Bolt handles all of this. No benefit to reimplementing. |
-| `@slack/bolt` with Socket Mode | `@slack/bolt` with HTTP receiver + Express | HTTP receiver requires a public HTTPS endpoint with a valid SSL cert. Adds infrastructure dependency (load balancer, SSL termination) for an internal tool. Socket Mode is simpler and equally capable for this use case. |
-| `create pr` as hardcoded REPL command | Intent parser detection of "create PR for last task" | The memory file (`project_repl_post_hoc_pr.md`) identifies exactly this failure mode: "a follow-up 'create a PR' input parses as a new generic task." Hardcoded command is reliable. |
-| Static scoping questions (readline) | LLM-generated scoping questions | Static questions are deterministic, have zero latency, and cover the useful space. LLM-generated questions would require an API call, add 500ms–2s latency, and could produce inconsistent question phrasing that confuses users. |
-| In-memory `Map` for Slack concurrency | Redis + BullMQ | Adds Redis operational dependency with no benefit for a single-process internal tool. Job durability is not required — if the process restarts, the user retries. |
+| `simple-git.raw(['worktree', ...])` | `execFile('git', ['worktree', ...])` directly | Both work. `.raw()` is preferred because it reuses the existing `simpleGit(repoPath)` instance (same `cwd` binding), consistent error handling, and matches the pattern already used in `pr-creator.ts`. |
+| Worktree as sibling directory | Worktree inside repo (e.g. `repo/.worktrees/session-id/`) | `git worktree add` rejects paths inside the repository. Git documentation recommends siblings or separate top-level paths. |
+| Worktree as sibling directory | `/tmp/agent-worktrees/session-id/` | `/tmp` may be a different filesystem than the repo root on macOS (APFS volumes vs. tmpfs). `git worktree add` can fail cross-device. Sibling directories are always on the same filesystem. |
+| `useWorktree?: boolean` flag on `AgentOptions` | Always use worktrees | Worktrees add a git dependency overhead and disk space cost. For single-session REPL runs, it's unnecessary. Default off, explicitly enabled for concurrent scenarios. |
+| `exploration` as a distinct `TASK_TYPES` entry | `generic` task with `taskCategory: 'exploration'` | The orchestration path diverges at `RetryOrchestrator` (no verification, no PR, no retries). Routing on `taskCategory` spreads the conditional logic across multiple layers. A named task type makes the routing explicit and keeps verification bypass in one place. |
 
 ---
 
 ## Sources
 
-- npm registry live: `npm show @slack/bolt version` → `4.6.0`, released 2025-10-28 (HIGH confidence — live npm registry)
-- npm registry live: `npm show @slack/bolt engines` → `node: >=18` (HIGH confidence — live npm registry)
-- npm registry live: `npm show @slack/bolt dependencies` → `@slack/socket-mode@^2.0.5` bundled (HIGH confidence — live npm registry)
-- [Slack Bolt Socket Mode docs](https://docs.slack.dev/tools/bolt-js/concepts/socket-mode/) — `socketMode: true` + `appToken` init pattern, no public URL needed (HIGH confidence — official Slack docs)
-- [Slack Socket Mode overview](https://api.slack.com/apis/socket-mode) — internal tools appropriate use case, marketplace restriction confirmed (HIGH confidence — official Slack docs)
-- [bolt-ts-starter-template package.json](https://raw.githubusercontent.com/slack-samples/bolt-ts-starter-template/main/package.json) — `"type": "module"`, `@slack/bolt@^4.6.0`, TypeScript 5.9.3 confirmed working together (HIGH confidence — official Slack GitHub sample)
-- `tsconfig.json` (project): `"esModuleInterop": true`, `"module": "NodeNext"`, `"skipLibCheck": true` — CJS/ESM interop already configured (HIGH confidence — live project file)
-- `src/repl/types.ts` — `ReplState`, `SessionCallbacks`, `TaskHistoryEntry` interfaces (HIGH confidence — live source)
-- `src/types.ts` — `RetryResult`, `AgentOptions` interfaces (HIGH confidence — live source)
-- `src/repl/confirm-loop.ts` — readline pattern for REPL dialogue (HIGH confidence — live source)
-- `.claude/projects/memory/project_repl_post_hoc_pr.md` — "RetryResult discarded after renderResultBlock(); follow-up 'create a PR' misparses as generic task" (HIGH confidence — project memory)
-- `.claude/projects/memory/project_generic_task_prompts.md` — scoping questions and ScopingContext shape (HIGH confidence — project memory)
-- `.claude/projects/memory/project_conversational_interface.md` — Slack adapter as thin layer over processInput() (HIGH confidence — project memory)
+- `node_modules/simple-git/typings/simple-git.d.ts` — no `.worktree()` method in TypeScript typings (HIGH confidence — live file)
+- Runtime test: `simpleGit(repoPath).raw(['worktree', 'list', '--porcelain'])` — returns current worktree entry successfully (HIGH confidence — live test)
+- `src/orchestrator/pr-creator.ts` lines 362, 460 — `git.raw(['merge-base', ...])` and `git.raw(['cherry-pick', ...])` confirm `.raw()` is the established pattern for arbitrary git commands (HIGH confidence — live source)
+- `npm show simple-git version` → `3.33.0` (HIGH confidence — live npm registry)
+- `docker/Dockerfile` — `git`, `bash`, `ripgrep` confirmed installed in Alpine image (HIGH confidence — live file)
+- `src/cli/docker/index.ts` line 79 — `-v ${workspaceDir}:/workspace:rw` volume mount pattern (HIGH confidence — live source)
+- `src/intent/types.ts` — `TASK_TYPES`, `TASK_CATEGORIES` current definitions (HIGH confidence — live source)
+- `src/types.ts` — `RetryResult`, `SessionResult.finalResponse` fields (HIGH confidence — live source)
+- [git worktree official docs](https://git-scm.com/docs/git-worktree) — `add`, `list`, `remove`, `prune` subcommands (HIGH confidence — official git documentation)
+- [Upsun: Git Worktrees for Parallel AI Agents](https://devcenter.upsun.com/posts/git-worktrees-for-parallel-ai-coding-agents/) — worktree isolation pattern for AI agents, confirmed same-filesystem requirement (MEDIUM confidence — technical blog, 2025)
 
 ---
-*Stack research for: Conversational scoping dialogue, REPL post-hoc PR creation, follow-up task referencing, Slack bot interface (background-coding-agent v2.3)*
-*Researched: 2026-03-25*
+*Stack research for: Git worktree isolation and repo exploration tasks (background-coding-agent v2.4)*
+*Researched: 2026-04-05*

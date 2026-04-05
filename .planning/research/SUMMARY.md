@@ -1,17 +1,17 @@
 # Project Research Summary
 
-**Project:** background-coding-agent v2.3
-**Domain:** Conversational coding agent — REPL enhancements, Slack bot interface, cross-task follow-up referencing
-**Researched:** 2026-03-25
+**Project:** background-coding-agent v2.4
+**Domain:** Git worktree isolation for concurrent agent execution + read-only repo exploration tasks
+**Researched:** 2026-04-05
 **Confidence:** HIGH
 
 ## Executive Summary
 
-The v2.3 milestone adds four features to an already-operational CLI coding agent (v2.2): REPL post-hoc PR creation, conversational scoping dialogue for generic tasks, follow-up task referencing via enriched session history, and a Slack bot adapter. All four features share a single architectural insight: the existing `SessionCallbacks` injection pattern is the correct extension point. The session core (`processInput()`) is channel-agnostic by design, and all four features either add optional callbacks to that interface or enrich the in-memory `ReplState` / `TaskHistoryEntry` types. No new backend infrastructure is required — the addition of `@slack/bolt@^4.6.0` is the only new dependency.
+This milestone (v2.4) adds two independent capability tracks to an already-operational Node.js/TypeScript background coding agent: git worktree isolation to enable safe concurrent agent runs, and read-only repo exploration tasks that return structured reports instead of code changes. Both tracks build on the existing architecture — `workspaceDir` threading, `RetryOrchestrator`, `ClaudeCodeSession`, Docker isolation — with minimal invasive changes. No new npm dependencies are required; `simple-git`'s `.raw()` method handles all worktree operations, and the existing `node:` stdlib covers path management.
 
-The recommended build order is strictly dictated by data dependencies: post-hoc PR creation first (establishes `ReplState.lastResult` / `TaskHistoryEntry` enrichment and the meta-command intercept pattern), then scoping dialogue (adds `SessionCallbacks.askQuestion` and `buildGenericPrompt` extension), then follow-up referencing (enriches the LLM history block with `finalResponse` already captured in Phase 1), and finally the Slack adapter (depends on all callbacks being stable). Deviating from this order — particularly building the Slack adapter before the callbacks are finalized — creates rework risk.
+The recommended approach is to deliver in three sequential phases: tech debt cleanup first (isolated from feature work to prevent regression entanglement), then git worktree infrastructure (the foundational isolation seam), then exploration tasks (which depend on the `readOnly` Docker mount pattern established in phase 2 but are otherwise independent of worktrees). The two feature areas share almost no code — worktrees are a write-isolation concern, exploration tasks are a read-only routing concern. They intersect only at `runAgent()`: worktrees are skipped for exploration tasks, and exploration tasks use a `:ro` Docker mount that code-change tasks never use.
 
-The most dangerous pitfalls are not technical complexity but architectural discipline: scoping I/O must never be hardcoded inside the session core (breaks Slack), "create PR" typed in the REPL must be intercepted before the intent parser (or it dispatches a Docker agent session), and the Slack adapter must create per-user `ReplState` instances (shared state causes cross-user corruption). All three are avoidable with correct initial design, but all three have high recovery cost if caught late. The research unanimously points to the `SessionCallbacks` abstraction as the safeguard against all of them.
+The key risks are: (1) orphaned worktrees after host process crashes — requires a startup-scan cleanup with PID sentinel files before shipping, never ship worktree creation without the orphan recovery path; (2) exploration agents writing files despite read-only intent — must be enforced at the `PreToolUse` hook level, not by prompt alone; (3) mixing tech debt fixes with feature code in the same commits, which makes regressions untraceable. All three risks have clear mitigations and are well-understood patterns in the ecosystem.
 
 ---
 
@@ -19,135 +19,129 @@ The most dangerous pitfalls are not technical complexity but architectural disci
 
 ### Recommended Stack
 
-The v2.3 stack is the v2.2 stack plus one package. The existing Node.js 20 / TypeScript (NodeNext ESM) / Vitest / `@anthropic-ai/claude-agent-sdk` stack is validated and not re-researched. The single new production dependency is `@slack/bolt@^4.6.0` (released 2025-10-28), which ships `@slack/socket-mode` and `@slack/web-api` as bundled dependencies — no separate installs needed. One dev dependency, `@types/express@^5.0.0`, is required as a peer dependency for TypeScript type resolution.
-
-Socket Mode is the correct Bolt receiver for an internal tool: it requires no public HTTPS URL, no reverse proxy, and no ngrok. An app-level token with `connections:write` scope opens a WebSocket to Slack — the official Slack docs explicitly recommend Socket Mode for non-marketplace internal apps. All other v2.3 changes are pure TypeScript logic against existing modules.
+The v2.4 stack is the v2.3 stack with zero new production dependencies. The entire feature set is implemented with already-installed packages. `simple-git@3.32.3` (installed) handles all git worktree operations via its `.raw()` method — confirmed against TypeScript typings (no `.worktree()` method exists) and verified by live runtime test. This is consistent with how `pr-creator.ts` already uses `.raw(['merge-base', ...])` and `.raw(['cherry-pick', ...])`. The existing Docker Alpine image already contains `git`, `bash`, and `ripgrep` — no new image layers needed. The `node:path`, `node:fs/promises`, and `node:os` stdlib modules cover all path construction and cleanup needs. All v2.4 changes are pure TypeScript against existing modules plus three new files.
 
 **Core technologies:**
-- `@slack/bolt@^4.6.0`: Slack bot framework — Socket Mode, Block Kit interactive messages, bundled WebSocket lifecycle management
-- `@types/express@^5.0.0` (devDep): Peer dependency for Bolt type resolution — required even when not using the HTTP receiver
-- All other packages: no version changes from v2.2
+- `simple-git@3.32.3` via `.raw(['worktree', ...])`: all worktree lifecycle operations — already installed, `.raw()` is the established pattern in this codebase
+- `node:child_process.execFile`: already used in 6 files; no changes needed for worktree work
+- `node:path` / `node:fs/promises` / `node:crypto`: worktree sibling directory path construction and UUID generation — Node 20 stdlib, zero overhead
+- TypeScript changes only: new `src/orchestrator/worktree.ts`, `src/prompts/investigation.ts`, additive flags on existing interfaces
 
-**Critical version requirements:**
-- `@slack/bolt@^4.6.0` requires Node.js >=18; project is Node.js 20 — compatible
-- CJS/ESM interop works via `esModuleInterop: true` already set in `tsconfig.json`; named `import { App } from '@slack/bolt'` confirmed in official Bolt TypeScript starter template
+**Version compatibility:** `simple-git` can optionally be updated from 3.32.3 to 3.33.0 (latest as of 2026-04-05); patch bump is safe. No other version changes required.
 
 ### Expected Features
 
-All four v2.3 features are P1 (required for milestone) — none are deferred to v2.3.x at launch. Research validates them as "table stakes" for a multi-turn conversational agent REPL.
+**Must have (table stakes — P1 for v2.4):**
+- Worktree lifecycle manager (`createWorktree`, `removeWorktree`, `pruneWorktrees`) — foundational isolation primitive; all concurrent-run safety depends on this
+- Docker mount uses worktree path, not main repo path — the single most load-bearing change; without it, isolation is illusory
+- Worktree cleanup in `finally` block — orphaned worktrees on failure/cancellation are unacceptable in production
+- Sibling directory naming with UUID suffix — prevents branch name collisions for concurrent sessions on the same repo
+- `investigation` task type in intent parser — exploration tasks unreachable without this
+- `buildInvestigationPrompt()` with subtype routing — structured prompt per exploration subtype (git-strategy, ci-checks, project-structure)
+- Report output path in `runAgent()` — bypass verifier + PR, return `finalResponse`; display via adapter
+- Tech debt: exit code switch with explicit `vetoed`/`turn_limit`/`cancelled` cases — removes misleading `failed` status
 
-**Must have (table stakes — v2.3):**
-- Post-hoc PR creation via `pr` / `create pr` REPL command — store last `RetryResult` context on `ReplState` / `TaskHistoryEntry` and invoke `GitHubPRCreator` without requiring upfront `--create-pr` flag
-- Follow-up task referencing — `TaskHistoryEntry` enriched with `description` / `finalResponse` so "also do this in the auth module" and "create PR for that" resolve correctly via the LLM intent parser
-- Conversational scoping dialogue — up to 3 optional pre-confirm questions for `generic` tasks (file scope, test updates, exclusions); answers injected into `buildGenericPrompt` SCOPE block
-- Slack bot adapter — `@slack/bolt` App with Socket Mode, `app_mention` listener, Block Kit confirm buttons, async fire-and-forget execution, threaded PR link reply
+**Should have (P2 — add after validation):**
+- SIGINT cleanup handler — prune known worktrees on process exit; add when orphaned worktrees are observed in real usage
+- Worktree branch name shown at confirm step — add when users report inability to predict branch names
 
-**Should have (v2.3.x after validation):**
-- Scoping answers shown in the confirm display so users can see the merged scope before proceeding
-- `pr` command shows task summary before creating PR to prevent confusion in long sessions
+**Defer (v2.5+):**
+- Exploration subtype: security scan (needs vulnerability data source)
+- Exploration results stored in session history for follow-up referencing
+- Parallel agent execution orchestration (worktree isolation is the prerequisite; queuing/status display is the follow-on)
 
-**Defer (v2.4+):**
-- Multiple concurrent pending Slack confirmations keyed by user ID (current in-memory map sufficient for initial deployment)
-- Persistent Slack conversation history across bot restarts (requires database; adds operational complexity)
-- Dynamic per-task scoping questions generated by LLM (adds API call on critical path; fixed questions cover the useful space)
-
-**Anti-features (reject explicitly):**
-- Auto-execute Slack intents without a confirm step — violates the human-in-the-loop contract in PROJECT.md
-- Scoping dialogue for dependency update tasks — already fully parameterized; adding questions introduces friction for no benefit
-- Persistent cross-session history — explicitly rejected in project memory; stale context causes misparses
-- Mid-run agent redirection via Slack — no input channel into the Docker container; breaks isolation invariant
+**Anti-features to avoid:**
+- Shared worktree across multi-turn REPL tasks — breaks one-container-per-task isolation invariant (explicitly out-of-scope in PROJECT.md)
+- Exploration tasks that write code as a side-effect — mixing read/write breaks the scope contract and the verifier's diff criterion
+- Worktrees stored inside the repo directory — `git worktree add` rejects paths inside the repo; sibling is the correct convention
 
 ### Architecture Approach
 
-v2.3 is purely additive. The session core (`processInput()` in `src/repl/session.ts`) acquires four changes: a `pr` meta-command intercept before `parseIntent()`, a `runScopingDialogue()` call after confirm for generic tasks, `state.lastResult` population after successful runs, and enriched `appendHistory()` with `RetryResult` context. All four are changes of roughly 10-40 lines each. The `SessionCallbacks` interface gains three optional methods (`askQuestion`, `onMessage`, `onPrCreated`). The `buildGenericPrompt()` function gains one optional parameter (`scopeHints`). A new `src/slack/` directory implements `SessionCallbacks` for Slack — the entire orchestration, agent execution, verifier, judge, and PR creator layers are completely unchanged.
+v2.4 threads two routing branches through `runAgent()` using `workspaceDir` as the single isolation seam. All downstream components (`ClaudeCodeSession` Docker mount, `compositeVerifier`, `llmJudge`, `captureBaselineSha`, `GitHubPRCreator`) already accept `workspaceDir` as a parameter and are path-agnostic — changing what path it points to (main repo vs. worktree) changes isolation behavior without touching any downstream code. The `RetryOrchestrator` is extended via a `skipVerification?: boolean` flag on `RetryConfig`, following the established capability-gating pattern. Three new files, eleven modified files (all additive changes), fifteen files entirely unchanged.
 
-**Major components and responsibilities:**
-1. **`src/repl/scoping.ts` (new)** — Owns the scope question-answer loop; pure function taking `ResolvedIntent` + `SessionCallbacks`, returning `ScopingResult`; testable with mock callbacks
-2. **`src/slack/` (new directory)** — `adapter.ts` implements `SessionCallbacks` for Slack (Block Kit, thread replies, `ack()` + async fire-and-forget); `bot.ts` owns event listeners and per-user `ReplState` map; `state.ts` manages per-channel/user state lifecycle
-3. **`src/repl/types.ts` (modified)** — Three additive changes: `ReplState.lastResult: LastTaskContext | null`, optional fields on `TaskHistoryEntry` (`finalResponse?`, `branch?`), optional methods on `SessionCallbacks` (`askQuestion?`, `onMessage?`, `onPrCreated?`)
-4. **`src/repl/session.ts` (modified)** — `pr` command intercept, `runScopingDialogue()` call, `lastResult` storage, enriched `appendHistory()` — ~50 lines total
-5. **`src/prompts/generic.ts` (modified)** — `buildGenericPrompt(description, repoPath?, scopeHints?)` gains optional third parameter; backward compatible
+**Major components:**
 
-**Key patterns to follow:**
-- All new I/O goes through `SessionCallbacks` — never import `readline` or call Slack APIs inside the session core
-- New `SessionCallbacks` methods are always optional (`?`) with graceful degradation (scoping skipped if `askQuestion` absent)
-- New `ReplState` / `TaskHistoryEntry` fields are always nullable or optional — no required new fields that break existing state initialization
-- Meta-commands (`pr`, `create pr`) are intercepted before `parseIntent()` — same pattern as `history`, `exit`
+1. `WorktreeManager` (`src/orchestrator/worktree.ts` — NEW) — lifecycle for worktree create/remove/prune; host-side git operations only; called from `runAgent()` with `finally` cleanup guarantee
+2. `buildInvestigationPrompt()` (`src/prompts/investigation.ts` — NEW) — read-only analysis prompt with explicit file-write prohibition; routes through existing `buildPrompt()` dispatcher
+3. `runAgent()` (`src/agent/index.ts` — MODIFIED, ~30 lines) — conditional worktree creation for non-investigation tasks; passes worktree path as `workspaceDir`; sets `readOnly: true` and `skipVerification: true` for investigation tasks
+4. `buildDockerRunArgs()` (`src/cli/docker/index.ts` — MODIFIED, ~5 lines) — new `readOnly?: boolean` in `DockerRunOptions`; `:ro` vs `:rw` mount based on flag
+5. `RetryOrchestrator` (`src/orchestrator/retry.ts` — MODIFIED, ~10 lines) — short-circuit verification when `skipVerification: true`
+
+**Unchanged:** `ClaudeCodeSession` (receives updated `workspaceDir`), `compositeVerifier`, `llmJudge`, all REPL/Slack/processInput infrastructure
 
 ### Critical Pitfalls
 
-1. **Scoping dialogue hardcoded to `readline` inside `processInput()`** — If scoping questions call `readline` directly in `repl/session.ts`, the Slack adapter cannot reuse `processInput()`. Prevention: all scoping I/O goes through `callbacks.askQuestion?`; verify no `createInterface` import in `repl/session.ts`.
+1. **Worktree not removed on host process crash (SIGKILL / OOM / terminal close)** — `finally` block does not run on SIGKILL. Mitigation: implement startup-scan orphan cleanup using a PID sentinel file (`.bg-agent-pid`) in each worktree directory; `process.kill(pid, 0)` distinguishes live sessions from orphans. Also run `git worktree prune` on each `runAgent()` invocation. Confirmed real-world failure mode in claude-code issue #26725 (12 orphan branches, 7 nested worktrees from a single session).
 
-2. **"create PR" input dispatched as a Docker agent session** — "create a PR for that" typed in the REPL will be classified by the intent parser as a generic coding task and dispatched into Docker, where the agent finds nothing to change and returns `zero_diff`. Prevention: pattern-match on PR meta-command variants before `parseIntent()` is called; never route these phrases through the intent parser.
+2. **Docker bind mount points to main repo instead of worktree path** — If `SessionConfig.workspaceDir` is not updated to the worktree directory before container start, the agent edits the main branch while the worktree branch sits empty. Mitigation: create worktree first, then construct `SessionConfig` with `workspaceDir = worktreeInfo.worktreeDir`. Verify with integration test: agent commits appear on worktree branch; main branch HEAD is unchanged.
 
-3. **Shared `ReplState` across concurrent Slack users** — A single `ReplState` instance for the bot process means user A's `currentProject` is overwritten by user B's task. Prevention: `Map<userId, ReplState>` created per incoming Slack message; `createSessionState()` called per user, not at module load.
+3. **Exploration agent writes files despite "read-only" intent** — The prompt saying "do not write files" is insufficient; the Claude Agent SDK exposes Write/Edit tools by default. The agent may write a report `.md` file, which the LLM Judge approves as "useful output." Mitigation: `PreToolUse` hook blocks `Write`, `Edit`, `MultiEdit`, and write-capable `Bash` patterns when `readOnly: true`. OWASP MCP Top 10 (2025) MCP02 identifies this as the second most critical MCP risk pattern.
 
-4. **Post-hoc PR pushed with stale git state** — Storing `RetryResult` on `state.lastResult` after task A, then running task B in a different repo, leaves `lastResult` pointing to task A's result but the workspace reflecting task B's commits. Prevention: verify git HEAD against the session result's baseline before calling `GitHubPRCreator`; refuse with a clear message if workspace has diverged.
+4. **Branch name collision between concurrent sessions** — Deterministic branch names from task type alone (e.g., always `bg-agent-npm-update`) guarantee collision on the second concurrent session for the same repo. Mitigation: use `{task-type-prefix}-{8-hex-uuid}` for all worktree branch names. UUID generated with `crypto.randomBytes(4).toString('hex')`.
 
-5. **`TaskHistoryEntry` schema split between post-hoc PR and follow-up referencing** — If Phase 1 stores `RetryResult` only on `state.lastResult` (separate from history) and Phase 3 extends `TaskHistoryEntry` separately, there are two sources of truth that can diverge. Prevention: extend `TaskHistoryEntry` with `retryResult?` and `intent?` in Phase 1; make `state.lastResult` a reference to `history[last]` rather than a parallel field.
+5. **Tech debt fixes mixed with feature code cause untraceable regressions** — The `configOnly` bypass fix in `retry.ts` is a logic change in a production-critical path. Intermixed with worktree work, a regression is hard to bisect. Mitigation: dedicated Phase 1 with only debt fixes, each fix preceded by a failing test. Full 696-test suite must pass before Phase 2 begins.
 
 ---
 
 ## Implications for Roadmap
 
-Based on combined research, the phase structure is dictated primarily by data model dependencies and the need to establish correct architectural patterns before building the Slack adapter.
+The build order is unambiguous. Three phases with clear dependency rationale:
 
-### Phase 1: Post-Hoc PR Creation and State Foundation
+### Phase 1: Tech Debt Cleanup
 
-**Rationale:** Most self-contained feature with no new callbacks. Establishes the `state.lastResult` / `TaskHistoryEntry` enrichment that every other feature depends on. Also establishes the meta-command intercept pattern that prevents "create PR" from being routed to the intent parser — a critical safety fix that must exist before the Slack adapter is built. Lowest implementation risk.
+**Rationale:** Tech debt items touch the same files (`retry.ts`, `src/cli/output.ts`) that worktree integration also modifies. Fixing debt first establishes a clean, verified baseline where any regression introduced by Phase 2 or Phase 3 work is immediately attributable. PITFALLS.md explicitly warns: "never ship debt fixes and feature code in the same PR — regressions become untraceable." The configOnly bypass fix in `retry.ts` is a logic change in the same function Phase 2 modifies for `skipVerification`; doing it first means Phase 2's diff is unambiguously feature-only.
 
-**Delivers:** `pr` / `create pr` REPL command; `ReplState.lastResult` storage; `TaskHistoryEntry` extended with `retryResult?` and `intent?`; `onPrCreated` callback in CLI adapter; meta-command recognizer before `parseIntent()`; git state verification guard before `GitHubPRCreator` call
+**Delivers:** Clean codebase, full 696-test baseline passing, explicit exit code cases for `vetoed`/`turn_limit`/`cancelled`, dead code removed (`SessionTimeoutError`, Slack dead code), `retry.ts` configOnly verifier bypass corrected, cancelled tasks recorded as `cancelled` not `failed`
 
-**Addresses:** Post-hoc PR creation (P1 feature), follow-up task referencing foundation (P1 feature)
+**Addresses:** Exit code switch (FEATURES.md tech debt items), dead code removal, Slack multi-turn history population
 
-**Avoids:** "create PR" parsed as agent task (Pitfall 6); `TaskHistoryEntry` schema divergence between features (Pitfall 8); stale git state on post-hoc PR push (Pitfall 2)
+**Avoids:** Pitfall 6 (regression in verification pipeline masking from mixed commits)
 
-### Phase 2: Conversational Scoping Dialogue
+**Research flag:** No deeper research needed — these are enumerated items in PROJECT.md Known Tech Debt list. Execute only.
 
-**Rationale:** Adds `SessionCallbacks.askQuestion?` — the new optional callback that the Slack adapter must implement. Building scoping before the Slack adapter ensures the callback interface is stable when the adapter is written. `buildGenericPrompt` extension is backward-compatible. `runScopingDialogue()` is a pure function testable with mock callbacks.
+### Phase 2: Git Worktree Isolation
 
-**Delivers:** `src/repl/scoping.ts` with `runScopingDialogue()`; `SessionCallbacks.askQuestion?`; `buildGenericPrompt(description, repoPath?, scopeHints?)` extension; CLI adapter `askQuestion` implementation via readline; completeness gate to skip scoping for already-scoped descriptions (file path + symbol present)
+**Rationale:** `WorktreeManager` establishes `workspaceDir` as the isolation seam — the architectural pattern that Phase 3's read-only Docker mount also relies on. Building worktrees second establishes `sessionId` threading through `SessionConfig`, which provides consistent log correlation for all subsequent task types. The `readOnly` Docker mount flag can be introduced here as infrastructure (alongside the worktree-path change to `buildDockerRunArgs`) so Phase 3 has no Docker layer changes to make.
 
-**Addresses:** Conversational scoping dialogue (P1 feature)
+**Delivers:** `WorktreeManager` (create/remove/prune with PID sentinel for orphan detection), `workspaceDir` updated to worktree path in `runAgent()`, `finally`-block cleanup, UUID-suffix branch names, `sessionId` threading on `SessionConfig`, startup orphan scan, `readOnly?: boolean` flag on `DockerRunOptions` and `SessionConfig`, concurrent-safe agent runs
 
-**Avoids:** Scoping readline in session core breaking Slack (Pitfall 1); scoping LLM call on every generic task regardless of completeness (Pitfall 5)
+**Uses:** `simple-git.raw(['worktree', ...])`, `crypto.randomBytes(4)`, existing `AgentOptions` extension pattern
 
-### Phase 3: Follow-Up Task Referencing Enrichment
+**Implements:** `WorktreeManager`, modified `runAgent()`, modified `SessionConfig`/`RetryConfig`/`types.ts`, modified `buildDockerRunArgs`
 
-**Rationale:** Low-risk enrichment of existing `TaskHistoryEntry`. The `finalResponse` field is populated from `RetryResult` already stored in history by Phase 1. The LLM history block change in `llm-parser.ts` is purely additive. Placing this before the Slack adapter ensures enriched history context is available in all channels from day one.
+**Avoids:** Pitfalls 1, 2, 3, 5 (orphan cleanup, mount path correctness, branch collision, stale index lock)
 
-**Delivers:** `TaskHistoryEntry.finalResponse?` populated via enriched `appendHistory()`; `buildHistoryBlock()` includes agent change summary in LLM context; `id` field on history entries for positional follow-up reference resolution ("task 2", "the auth task")
+**Research flag:** No deeper research needed — integration points fully mapped in ARCHITECTURE.md against live source. Critical verification: integration test confirming agent commits appear on worktree branch and main HEAD unchanged after each run.
 
-**Addresses:** Follow-up task referencing (P1 feature)
+### Phase 3: Repo Exploration Tasks
 
-**Avoids:** Cross-task referencing using wrong history entry (Pitfall 3); follow-up references always defaulting to `history[last]` regardless of user's actual intent
+**Rationale:** Exploration depends on the `readOnly` Docker mount flag (established in Phase 2), `skipVerification` in `RetryConfig` (additive to Phase 2's types), and the `investigation` task type in the intent layer. None of these depend on worktrees — exploration tasks explicitly do not create worktrees. Phase 3 is cleanly independent after Phase 2 establishes the shared infrastructure. If scope must be cut, Phase 2 delivers standalone value (concurrent runs) without Phase 3.
 
-### Phase 4: Slack Bot Adapter
+**Delivers:** `investigation` task type in intent parser + LLM schema with verb examples, `buildInvestigationPrompt()` with 3 subtypes (git-strategy, ci-checks, project-structure), `skipVerification: true` + `maxRetries: 1` routing for investigation tasks, `finalResponse` display path in REPL and Slack adapters, `PreToolUse` write-blocking enforcement for `readOnly: true` sessions
 
-**Rationale:** Depends on all `SessionCallbacks` additions being complete and stable (Phases 1-3). The adapter is a new directory with zero modifications to existing code — purely additive. Building last means the CLI REPL is fully functional and testable throughout the milestone; Slack is an additional channel that shares the same core pipeline.
+**Implements:** `src/prompts/investigation.ts`, modified `llm-parser.ts`, modified `RetryOrchestrator` skip path, modified REPL + Slack adapters for report display
 
-**Delivers:** `src/slack/` directory (`adapter.ts`, `bot.ts`, `state.ts`); `@slack/bolt` integration with Socket Mode; per-user `ReplState` isolation keyed by Slack user ID; Block Kit confirm buttons with Approve/Cancel; async fire-and-forget execution with `ack()` + background agent run; threaded PR link reply; `MAX_INPUT_LENGTH` check at adapter entry point; explicit project required (no `cwd` fallback)
+**Avoids:** Pitfall 4 (exploration agent writes files — `PreToolUse` enforcement required before any prompt work); `zero_diff` displayed as failure for exploration tasks (result rendering checks `taskType === 'investigation'` before interpreting `finalStatus`)
 
-**Addresses:** Slack bot interface (P1 feature)
-
-**Avoids:** Shared session state across concurrent Slack users (Pitfall 4); Slack bypassing the confirm-before-execute gate (Pitfall 7); `cwd` fallback in Slack context (Pitfall 4 variant); Slack message body without length check (security)
+**Research flag:** No deeper research needed for core routing infrastructure. The three exploration subtype prompts (git-strategy, ci-checks, project-structure) will benefit from prompt engineering iteration against real repos — treat initial implementations as v1 with expectation of tuning.
 
 ### Phase Ordering Rationale
 
-- Phase 1 must come first: the meta-command intercept pattern and `TaskHistoryEntry` schema extension are foundations that all subsequent phases build on. Getting the schema right in Phase 1 prevents the two-source-of-truth pitfall that would require rework in Phases 3 and 4.
-- Phase 2 must come before Phase 4: the `SessionCallbacks.askQuestion?` interface must be finalized before the Slack adapter implements it.
-- Phase 3 is logically dependent on Phase 1 (`finalResponse` flows from `RetryResult` stored in Phase 1) but independent of Phase 2; sequential ordering is safer than parallel.
-- Phase 4 last: no architectural choice here — the Slack adapter requires all callbacks to be stable, and requires the correct per-user `ReplState` management patterns established in Phases 1-3.
+- **Debt first:** Prevents regression entanglement. The `retry.ts` `configOnly` fix is in the same function that Phase 2 modifies for `skipVerification`. Doing debt first means Phase 2's diff is unambiguously feature-only. Full test suite must pass as the gate between Phase 1 and Phase 2.
+- **Worktrees before exploration:** Phase 2 establishes the `workspaceDir`-as-seam pattern, the `sessionId` threading, and the `readOnly` Docker flag. Phase 3 adds a parallel routing branch through `runAgent()` — reading Phase 2's code makes the exploration routing straightforward to implement.
+- **Exploration last:** It is the most self-contained addition. If Phase 3 slips, Phase 2 delivers standalone value. If Phase 3 is accelerated, it has no blockers once Phase 2's Docker flag is in place.
+- **Both features are independent after Phase 1:** Phase 2 and Phase 3 can be delivered as separate milestones if scope is cut. Neither blocks the other.
 
 ### Research Flags
 
-Phases with well-documented patterns (skip research-phase):
-- **Phase 1 (Post-Hoc PR):** All integration points verified in source. Architecture document provides exact type signatures and data flows. Meta-command intercept follows established `history` / `exit` pattern.
-- **Phase 2 (Scoping Dialogue):** `runScopingDialogue()` is a pure function. Completeness gate uses a cheap lexical heuristic (presence of file path + symbol name) — no LLM call needed.
-- **Phase 3 (Follow-Up Referencing):** `buildHistoryBlock()` change is additive. `finalResponse` truncated to 300 chars to avoid bloating the LLM context. Standard enrichment pattern.
+Phases with standard, well-documented patterns (no `/gsd:research-phase` needed):
+- **Phase 1 (Tech Debt):** All items enumerated in PROJECT.md Known Tech Debt. No research needed — execution only.
+- **Phase 2 (Worktrees):** Integration points fully mapped in ARCHITECTURE.md against live source. `simple-git.raw()` worktree operations verified by runtime test. Official git docs are authoritative.
+- **Phase 3 (Exploration):** Core routing and Docker flag changes fully specified. Prompt subtype schemas are well-understood.
 
-Phases likely needing deeper research during planning:
-- **Phase 4 (Slack Adapter):** The Block Kit interactive confirmation flow — pending intent storage, `ack()` + async execution pattern, button action correlation with `message_ts` — has more surface area than the other phases. The 3-second ack constraint means the agent run cannot be awaited inside the action handler; the fire-and-forget pattern needs a careful test harness. Recommend targeted research on Bolt action handler patterns and timeout/expiry handling before implementation begins.
+Phases that may benefit from light research during execution:
+- **Phase 2 — PID sentinel file placement:** The sentinel-file-with-PID orphan detection pattern is documented but the exact hook point (module init vs. first `runAgent()` call) should be confirmed against the REPL startup sequence before implementation.
+- **Phase 3 — Exploration subtype prompt quality:** The three subtype prompts need prompt engineering iteration. The routing is specified; the output quality emerges from testing against real repos.
 
 ---
 
@@ -155,41 +149,50 @@ Phases likely needing deeper research during planning:
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | npm registry live checks confirm `@slack/bolt@4.6.0`; official Slack docs and bolt-ts-starter-template confirm Socket Mode + ESM interop; no speculation |
-| Features | HIGH | Four features directly from project memory and PROJECT.md milestone spec; interaction patterns validated against official Slack docs and arXiv scoping research (MAC Framework) |
-| Architecture | HIGH | All integration points verified by direct first-party codebase inspection; exact type signatures and data flows documented in ARCHITECTURE.md; build order validated by dependency analysis |
-| Pitfalls | HIGH | Derived from direct code analysis of v2.2 source; each pitfall identifies the specific file and line-level mistake; prevention strategies verified against established architectural decisions in project memory |
+| Stack | HIGH | Live codebase inspection: `simple-git` typings checked, `.raw()` runtime-verified, Docker image confirmed, npm registry checked. No inference — all findings are from primary sources. |
+| Features | HIGH | Worktree mechanics from official git docs; ecosystem patterns from multiple MEDIUM-confidence sources agree. Exploration subtypes from GitHub Blog canonical reference. Anti-features from PROJECT.md explicit constraints. |
+| Architecture | HIGH | First-party codebase analysis. Every integration point (`workspaceDir` threading, `DockerRunOptions`, `RetryConfig`, `SessionConfig`) verified against live source. Component boundary map is authoritative. |
+| Pitfalls | HIGH | Pitfalls 1 and 5 confirmed by first-party claude-code issue tracker (#26725, #11005). Pitfall 4 confirmed by OWASP MCP Top 10 (2025). Pitfalls 2, 3, 6 confirmed by direct code analysis. No significant gaps. |
 
-**Overall confidence:** HIGH
+**Overall confidence: HIGH**
 
 ### Gaps to Address
 
-- **Scoping completeness gate threshold:** Research recommends a lexical heuristic (file path present? symbol named?) but the exact threshold is not specified. Implementation should start conservative (skip scoping only if both file path AND symbol name are present) and adjust based on real usage.
-- **`filesChanged` field on `TaskHistoryEntry`:** Architecture research explicitly defers this — it requires a `git diff --name-only` call after the agent run, adding async work to `appendHistory()`. The `finalResponse` field covers most follow-up reference cases without it. Mark as deferred to a follow-up iteration.
-- **Slack session garbage collection:** Per-user `ReplState` instances accumulate in the in-memory `Map`. An eviction strategy (TTL after N minutes of inactivity) is noted in pitfalls research but not fully specified. Decide on eviction TTL before the Slack adapter ships.
-- **Scoping dialogue intentionally skipped in Slack v2.3:** Features research explicitly defers scoping questions for the Slack adapter in v2.3 — generic tasks use auto-detected scope only. The optional `callbacks.askQuestion?` design ensures the Slack adapter works correctly without implementing this callback. Document this as a known v2.3 limitation.
+- **PID sentinel file startup scan placement:** The startup-scan orphan cleanup requires knowing when `runAgent()` is first called per process. The exact hook point (module init vs. first `runAgent()` call) needs to be confirmed against the REPL startup sequence in `src/cli/commands/repl.ts` during Phase 2 implementation. Low risk — the pattern is clear, just needs placement.
+
+- **`zero_diff` handling for exploration tasks:** PITFALLS.md and ARCHITECTURE.md agree that `zero_diff` result code should not surface as "failure" for exploration tasks. FEATURES.md suggests `exploration_complete` as a new `finalStatus`; ARCHITECTURE.md says `finalResponse` as success criterion is sufficient. Resolution: use task-type-aware result rendering in the REPL adapter (check `intent.taskType === 'investigation'` before interpreting `finalStatus`). Decide in Phase 3 implementation.
+
+- **Worktree branch lifecycle after PR creation:** The worktree branch (`agent/{sessionId}`) is created by `WorktreeManager`. `GitHubPRCreator` pushes that branch to the remote for the PR. If `WorktreeManager.remove()` deletes the local branch before the PR is created, the push fails. Resolution: the local worktree branch must not be deleted until after `GitHubPRCreator` completes. Clarify exact call sequence in Phase 2 implementation against the `runAgent()` finally block ordering.
 
 ---
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- `src/repl/session.ts`, `src/repl/types.ts`, `src/cli/commands/repl.ts`, `src/orchestrator/pr-creator.ts`, `src/prompts/generic.ts`, `src/intent/llm-parser.ts` — live codebase, all v2.3 integration surfaces
-- npm registry live: `npm show @slack/bolt version` → 4.6.0; `npm show @slack/bolt engines` → Node.js >=18; bundled deps confirmed
-- [Slack Bolt Socket Mode docs](https://docs.slack.dev/tools/bolt-js/concepts/socket-mode/) — Socket Mode init pattern, no public URL needed
-- [Slack: Acknowledging requests](https://docs.slack.dev/tools/bolt-js/concepts/acknowledge/) — 3-second ack constraint, ack-then-process pattern
-- [Slack: Comparing HTTP and Socket Mode](https://docs.slack.dev/apis/events-api/comparing-http-socket-mode/) — Socket Mode recommended for private tools
-- [bolt-ts-starter-template package.json](https://raw.githubusercontent.com/slack-samples/bolt-ts-starter-template/main/package.json) — `"type": "module"` + `@slack/bolt@^4.6.0` + TypeScript confirmed working
-- `.planning/PROJECT.md` — v2.3 milestone spec, confirmed constraints (no auto-execute, human-in-the-loop non-negotiable)
-- Project memory files: `project_repl_post_hoc_pr.md`, `project_generic_task_prompts.md`, `project_conversational_interface.md`
+- `node_modules/simple-git/typings/simple-git.d.ts` — no `.worktree()` method; `.raw()` is the only interface
+- `src/orchestrator/pr-creator.ts` lines 362, 460 — `.raw(['merge-base', ...])`, `.raw(['cherry-pick', ...])` establish `.raw()` as the project's pattern
+- `src/cli/docker/index.ts` — `buildDockerRunArgs`, `-v workspaceDir:/workspace:rw` mount
+- `src/agent/index.ts` — `runAgent()` entry point, `workspaceDir` threading
+- `src/orchestrator/retry.ts` — `RetryConfig`, `RetryOrchestrator.run()`, `resetWorkspace()` pattern
+- `src/types.ts` — `SessionConfig`, `RetryResult`, `SessionResult.finalResponse`
+- `src/intent/types.ts` — `TASK_TYPES`, `TASK_CATEGORIES`
+- `.planning/PROJECT.md` — v2.4 milestone spec, Key Decisions, Known Tech Debt
+- [git-worktree official docs](https://git-scm.com/docs/git-worktree) — `add`, `list`, `remove`, `prune`, `lock`, `repair`
+- [anthropics/claude-code issue #26725](https://github.com/anthropics/claude-code/issues/26725) — orphaned worktrees/branches failure mode confirmed
+- [anthropics/claude-code issue #11005](https://github.com/anthropics/claude-code/issues/11005) — stale index.lock blocking git ops confirmed
+- [OWASP MCP Top 10 MCP02:2025](https://owasp.org/www-project-mcp-top-10/2025/MCP02-2025%E2%80%93Privilege-Escalation-via-Scope-Creep) — scope creep / privilege escalation in read-only agents
+- [Docker bind mounts official docs](https://docs.docker.com/engine/storage/bind-mounts/) — `:ro` mount behavior
 
 ### Secondary (MEDIUM confidence)
-- [MAC Framework: Multi-Agent Clarification (arXiv 2512.13154)](https://arxiv.org/pdf/2512.13154) — 2-3 targeted questions is optimal for clarification dialogues; diminishing returns beyond that
-- [Anthropic: 2026 Agentic Coding Trends Report](https://resources.anthropic.com/hubfs/2026%20Agentic%20Coding%20Trends%20Report.pdf) — context continuity and follow-up capability as top developer expectations
-- [EclipseSource: Structured AI Coding with Task Context](https://eclipsesource.com/blogs/2025/07/01/structure-ai-coding-with-task-context/) — task context persistence patterns
-- [Knock: Creating interactive Slack apps with Bolt and Node.js](https://knock.app/blog/creating-interactive-slack-apps-with-bolt-and-nodejs) — practical Bolt Block Kit patterns
+- [Upsun: Git Worktrees for Parallel AI Agents](https://devcenter.upsun.com/posts/git-worktrees-for-parallel-ai-coding-agents/) — sibling directory convention, Docker volume interaction, same-filesystem requirement
+- [BSWEN: Worktree Isolation in AI Agents](https://docs.bswen.com/blog/2026-03-18-ai-agent-worktree-isolation/) — one-task-one-worktree-one-agent pattern
+- [Nick Mitchinson: Git Worktrees for Multi-Feature AI Dev](https://www.nrmitchi.com/2025/10/using-git-worktrees-for-multi-feature-development-with-ai-agents/) — branch-per-task, naming conventions
+- [Penligent: Git Worktrees Need Runtime Isolation](https://www.penligent.ai/hackinglabs/git-worktrees-need-runtime-isolation-for-parallel-ai-agent-development/) — shared `.git` pitfall, silent fallback failure mode
+- [Jon Roosevelt: Git Worktrees Ate My Edits](https://jonroosevelt.com/blog/git-worktrees-broke-dedicated-machines-fixed-it) — worktree error causing main checkout fallback
+- [GitHub Blog: Automate Repo Tasks with Agentic Workflows](https://github.blog/ai-and-ml/automate-repository-tasks-with-github-agentic-workflows/) — canonical exploration subtypes
+- [Termdock: Worktree Conflicts with AI Agents](https://www.termdock.com/en/blog/git-worktree-conflicts-ai-agents) — build cache contamination, index lock deadlocks
+- `project_repo_exploration_tasks.md` (project memory) — read-only investigative tasks returning reports as prior project decision
 
 ---
-
-*Research completed: 2026-03-25*
+*Research completed: 2026-04-05*
 *Ready for roadmap: yes*
