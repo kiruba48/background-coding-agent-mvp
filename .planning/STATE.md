@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.3
-milestone_name: Conversational Scoping & REPL Enhancements
-status: archived
-stopped_at: Milestone v2.3 archived
-last_updated: "2026-04-05T12:30:00.000Z"
-last_activity: 2026-04-05 — Milestone v2.3 archived
+milestone: v2.4
+milestone_name: Git Worktree & Repo Exploration
+status: active
+stopped_at: Defining requirements
+last_updated: "2026-04-05T13:00:00.000Z"
+last_activity: 2026-04-05 — Milestone v2.4 started
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 7
-  completed_plans: 7
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
 ---
 
 # Project State
@@ -20,12 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-05)
 
 **Core value:** The full verification loop must work: agent changes code, deterministic verifiers catch failures, LLM Judge catches scope creep, and only verified changes proceed.
-**Current focus:** Planning next milestone
+**Current focus:** v2.4 Git Worktree & Repo Exploration
 
 ## Current Position
 
-Milestone v2.3 shipped. No active milestone.
-Next action: `/gsd:new-milestone`
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-04-05 — Milestone v2.4 started
 
 ## Performance Metrics
 
@@ -40,7 +42,7 @@ Next action: `/gsd:new-milestone`
 
 ### Decisions
 
-(Cleared at milestone boundary — all decisions archived to PROJECT.md Key Decisions table)
+(None yet — milestone just started)
 
 ### Pending Todos
 
@@ -48,11 +50,11 @@ None.
 
 ### Blockers/Concerns
 
-None — milestone archived.
+None.
 
 ## Session Continuity
 
 Last session: 2026-04-05
-Stopped at: Milestone v2.3 archived
+Stopped at: Defining requirements for v2.4
 Resume file: None
-Next action: `/gsd:new-milestone`
+Next action: Define requirements → create roadmap

@@ -51,6 +51,15 @@ The full verification loop must work: agent changes code, deterministic verifier
 
 ### Active
 
+#### Current Milestone: v2.4 Git Worktree & Repo Exploration
+
+**Goal:** Enable concurrent agent runs via git worktree isolation, add read-only repo exploration tasks, and clean up accumulated tech debt.
+
+**Target features:**
+- Git worktree isolation — each agent session gets its own worktree in a sibling directory for concurrent execution without branch conflicts
+- Repo exploration tasks — read-only investigative mode (git strategy, CI checks, project structure) returning reports instead of code changes, running in Docker
+- Tech debt cleanup — dead code removal, exit code fixes, and other accumulated debt items
+
 #### Deferred (future milestone)
 
 - [ ] Tab completion for project names and common task patterns
@@ -152,4 +161,4 @@ Replaced the custom agent loop with the Claude Agent SDK. Deleted 1,989 lines of
 | Fire-and-forget agent in Slack | processSlackMention fires void async IIFE, decoupled from Bolt 3s ack timing | ✓ Good — no timeout issues |
 
 ---
-*Last updated: 2026-04-05 after v2.3 milestone*
+*Last updated: 2026-04-05 after v2.4 milestone started*
