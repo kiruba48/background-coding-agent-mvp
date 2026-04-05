@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.4
 milestone_name: Git Worktree & Repo Exploration
 status: planning
-stopped_at: Completed 25-01-PLAN.md
-last_updated: "2026-04-05T13:46:35.890Z"
+stopped_at: Completed 25-02-PLAN.md
+last_updated: "2026-04-05T13:47:50.438Z"
 last_activity: 2026-04-05 — Roadmap created, 16 requirements mapped to 3 phases
 progress:
   total_phases: 3
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 2
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -50,6 +50,8 @@ Progress: [░░░░░░░░░░] 0% (0/3 phases complete)
 - Exploration tasks explicitly do NOT create worktrees — they use `:ro` Docker mount from Phase 26 infrastructure only
 - [Phase 25]: Explicit switch cases for vetoed/turn_limit exit codes prevent future silent defaults
 - [Phase 25]: SessionTimeoutError deleted: timeout signaled via RetryResult.finalStatus, no thrown class needed
+- [Phase 25]: appendHistory exported from session.ts so Slack and REPL adapters share the same bounded-history logic
+- [Phase 25]: configOnly verification now routes through injected retryConfig.verifier — compositeVerifier import removed from retry.ts
 
 ### Pending Todos
 
@@ -63,7 +65,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-05T13:46:35.887Z
-Stopped at: Completed 25-01-PLAN.md
+Last session: 2026-04-05T13:47:50.435Z
+Stopped at: Completed 25-02-PLAN.md
 Resume file: None
 Next action: `/gsd:plan-phase 25`

@@ -28,9 +28,9 @@ Requirements for git worktree isolation, repo exploration tasks, and tech debt c
 - [x] **DEBT-01**: Exit code switch includes explicit cases for `vetoed`, `turn_limit`, and `cancelled` statuses
 - [x] **DEBT-02**: `SessionTimeoutError` dead code removed from `src/errors.ts`
 - [x] **DEBT-03**: Cancelled tasks recorded as `cancelled` (not `failed`) in session history
-- [ ] **DEBT-04**: `retry.ts` configOnly path routes through `retryConfig.verifier` instead of direct `compositeVerifier` call
-- [ ] **DEBT-05**: Slack dead code removed (`buildIntentBlocks`, `buildStatusMessage`)
-- [ ] **DEBT-06**: Slack multi-turn history populated in thread sessions
+- [x] **DEBT-04**: `retry.ts` configOnly path routes through `retryConfig.verifier` instead of direct `compositeVerifier` call
+- [x] **DEBT-05**: Slack dead code removed (`buildIntentBlocks`, `buildStatusMessage`)
+- [x] **DEBT-06**: Slack multi-turn history populated in thread sessions
 
 ## Future Requirements
 
@@ -67,9 +67,9 @@ Deferred to v2.5+.
 | DEBT-01 | Phase 25 | Complete |
 | DEBT-02 | Phase 25 | Complete |
 | DEBT-03 | Phase 25 | Complete |
-| DEBT-04 | Phase 25 | Pending |
-| DEBT-05 | Phase 25 | Pending |
-| DEBT-06 | Phase 25 | Pending |
+| DEBT-04 | Phase 25 | Complete |
+| DEBT-05 | Phase 25 | Complete |
+| DEBT-06 | Phase 25 | Complete |
 | WKTREE-01 | Phase 26 | Pending |
 | WKTREE-02 | Phase 26 | Pending |
 | WKTREE-03 | Phase 26 | Pending |
