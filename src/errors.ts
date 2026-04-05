@@ -13,9 +13,3 @@ export class TurnLimitError extends Error {
   }
 }
 
-export class SessionTimeoutError extends Error {
-  constructor(timeoutMs?: number) {
-    super(timeoutMs ? `Session timed out after ${timeoutMs}ms` : 'Session timeout');
-    this.name = 'SessionTimeoutError';
-  }
-}
