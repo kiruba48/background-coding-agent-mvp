@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildConfirmationBlocks, buildIntentBlocks, buildStatusMessage, stripMention } from '../slack/blocks.js';
+import { buildConfirmationBlocks, stripMention } from '../slack/blocks.js';
 import type { ResolvedIntent } from '../intent/types.js';
 
 const genericIntent: ResolvedIntent = {
@@ -79,44 +79,6 @@ describe('buildConfirmationBlocks', () => {
     const cancelBtn = actionsBlock?.elements?.find((e) => e.action_id === 'cancel_task');
     expect(cancelBtn).toBeDefined();
     expect(cancelBtn?.style).toBe('danger');
-  });
-});
-
-describe('buildIntentBlocks', () => {
-  it('returns section block with mrkdwn text containing taskType and repo', () => {
-    const blocks = buildIntentBlocks(genericIntent);
-    expect(Array.isArray(blocks)).toBe(true);
-
-    const sectionBlock = blocks.find((b) => b.type === 'section') as { type: string; text?: { type: string; text: string } };
-    expect(sectionBlock).toBeDefined();
-    expect(sectionBlock?.text?.type).toBe('mrkdwn');
-    expect(sectionBlock?.text?.text).toContain('generic');
-    expect(sectionBlock?.text?.text).toContain('my-app');
-  });
-
-  it('does not contain an actions block (no buttons)', () => {
-    const blocks = buildIntentBlocks(genericIntent);
-    const actionsBlock = blocks.find((b) => b.type === 'actions');
-    expect(actionsBlock).toBeUndefined();
-  });
-});
-
-describe('buildStatusMessage', () => {
-  it('returns single section block with mrkdwn text', () => {
-    const blocks = buildStatusMessage('Running...');
-    expect(Array.isArray(blocks)).toBe(true);
-    expect(blocks.length).toBe(1);
-
-    const sectionBlock = blocks[0] as { type: string; text?: { type: string; text: string } };
-    expect(sectionBlock.type).toBe('section');
-    expect(sectionBlock?.text?.type).toBe('mrkdwn');
-    expect(sectionBlock?.text?.text).toBe('Running...');
-  });
-
-  it('passes through any text content', () => {
-    const blocks = buildStatusMessage('Task cancelled.');
-    const sectionBlock = blocks[0] as { type: string; text?: { type: string; text: string } };
-    expect(sectionBlock?.text?.text).toBe('Task cancelled.');
   });
 });
 

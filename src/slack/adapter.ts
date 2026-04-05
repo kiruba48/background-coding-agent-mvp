@@ -3,7 +3,7 @@ import { LlmParseError } from '../intent/llm-parser.js';
 import { runAgent, type AgentOptions, type AgentContext } from '../agent/index.js';
 import { ProjectRegistry } from '../agent/registry.js';
 import { createLogger } from '../cli/utils/logger.js';
-import { buildConfirmationBlocks, buildStatusMessage } from '../slack/blocks.js';
+import { buildConfirmationBlocks } from '../slack/blocks.js';
 import type { ThreadSession, SlackContext } from '../slack/types.js';
 import type { SessionCallbacks, ScopeHint } from '../repl/types.js';
 import type { ResolvedIntent } from '../intent/types.js';
