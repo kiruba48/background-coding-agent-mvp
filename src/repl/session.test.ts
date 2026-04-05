@@ -535,6 +535,23 @@ describe('src/repl/session.ts', () => {
     expect(state.history[0].status).toBe('cancelled');
   });
 
+  // Test 18b: processInput records 'cancelled' when runAgent returns { finalStatus: 'cancelled' } (non-throw path)
+  it('18b. processInput records cancelled in history when runAgent returns cancelled (non-throw)', async () => {
+    const intent = makeIntent();
+    mockParseIntent.mockResolvedValue(intent);
+    mockRunAgent.mockResolvedValueOnce(makeRetryResult({ finalStatus: 'cancelled' }));
+
+    const state = createSessionState();
+    const callbacks = makeCallbacks({
+      confirm: vi.fn().mockResolvedValue(intent),
+    });
+
+    await processInput('update lodash', state, callbacks, registry);
+
+    expect(state.history.length).toBe(1);
+    expect(state.history[0].status).toBe('cancelled');
+  });
+
   // Test 19: history NOT appended when user cancels at confirm (confirm returns null)
   it('19. history NOT appended when user cancels at confirm', async () => {
     const intent = makeIntent();
