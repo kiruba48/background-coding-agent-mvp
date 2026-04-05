@@ -260,6 +260,8 @@ export async function processInput(
       ? 'success'
       : result.finalStatus === 'zero_diff'
       ? 'zero_diff'
+      : result.finalStatus === 'cancelled'
+      ? 'cancelled'
       : 'failed';
     return { action: 'continue', result, intent: confirmed };
   } catch (err) {
