@@ -166,6 +166,6 @@ Plans:
 | 22. Conversational Scoping Dialogue | v2.3 | 2/2 | Complete | 2026-03-26 |
 | 23. Follow-Up Task Referencing | v2.3 | 1/1 | Complete | 2026-04-01 |
 | 24. Slack Bot Adapter | v2.3 | 2/2 | Complete | 2026-04-05 |
-| 25. Tech Debt Cleanup | v2.4 | 0/2 | Not started | - |
+| 25. Tech Debt Cleanup | 1/2 | In Progress|  | - |
 | 26. Git Worktree Isolation | v2.4 | 0/? | Not started | - |
 | 27. Repo Exploration Tasks | v2.4 | 0/? | Not started | - |

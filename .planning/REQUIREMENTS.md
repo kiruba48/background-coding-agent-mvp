@@ -25,9 +25,9 @@ Requirements for git worktree isolation, repo exploration tasks, and tech debt c
 
 ### Tech Debt
 
-- [ ] **DEBT-01**: Exit code switch includes explicit cases for `vetoed`, `turn_limit`, and `cancelled` statuses
-- [ ] **DEBT-02**: `SessionTimeoutError` dead code removed from `src/errors.ts`
-- [ ] **DEBT-03**: Cancelled tasks recorded as `cancelled` (not `failed`) in session history
+- [x] **DEBT-01**: Exit code switch includes explicit cases for `vetoed`, `turn_limit`, and `cancelled` statuses
+- [x] **DEBT-02**: `SessionTimeoutError` dead code removed from `src/errors.ts`
+- [x] **DEBT-03**: Cancelled tasks recorded as `cancelled` (not `failed`) in session history
 - [ ] **DEBT-04**: `retry.ts` configOnly path routes through `retryConfig.verifier` instead of direct `compositeVerifier` call
 - [ ] **DEBT-05**: Slack dead code removed (`buildIntentBlocks`, `buildStatusMessage`)
 - [ ] **DEBT-06**: Slack multi-turn history populated in thread sessions
@@ -64,9 +64,9 @@ Deferred to v2.5+.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DEBT-01 | Phase 25 | Pending |
-| DEBT-02 | Phase 25 | Pending |
-| DEBT-03 | Phase 25 | Pending |
+| DEBT-01 | Phase 25 | Complete |
+| DEBT-02 | Phase 25 | Complete |
+| DEBT-03 | Phase 25 | Complete |
 | DEBT-04 | Phase 25 | Pending |
 | DEBT-05 | Phase 25 | Pending |
 | DEBT-06 | Phase 25 | Pending |
