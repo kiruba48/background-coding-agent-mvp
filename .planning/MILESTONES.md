@@ -1,5 +1,28 @@
 # Milestones
 
+## v2.3 Conversational Scoping & REPL Enhancements (Shipped: 2026-04-05)
+
+**Phases completed:** 4 phases (21-24), 7 plans
+**Timeline:** 11 days (2026-03-26 → 2026-04-05)
+**LOC:** 18,121 TypeScript (+2,180 lines) | **Tests:** 696 unit tests (+121 from v2.2)
+
+**Key accomplishments:**
+- REPL post-hoc PR creation — `pr` command creates GitHub PR for last completed task without upfront `--create-pr` flag
+- Conversational scoping dialogue — up to 3 optional pre-execution questions tighten generic task prompts via SCOPE block
+- Follow-up task referencing — enriched session history with change summaries enables "now add tests for that" style follow-ups
+- Slack bot adapter — full agent pipeline (intent parse → Block Kit confirm → async execute → PR link) via `@slack/bolt` Socket Mode
+- SessionCallbacks extensibility — `askQuestion`, `onMessage`, `onPrCreated` optional methods enable channel-agnostic adapters
+
+**Known gaps (accepted as tech debt):**
+- SUMMARY frontmatter gaps in 21-02 and 24-01 (documentation drift, not code gaps)
+- Dead code: `buildIntentBlocks`, `buildStatusMessage` in Slack module
+- Slack multi-turn history not populated (deferred to SLCK-08/09/10)
+- Nyquist validation partial for phases 21-24
+
+**Archives:** [v2.3-ROADMAP.md](milestones/v2.3-ROADMAP.md) | [v2.3-REQUIREMENTS.md](milestones/v2.3-REQUIREMENTS.md) | [v2.3-MILESTONE-AUDIT.md](milestones/v2.3-MILESTONE-AUDIT.md)
+
+---
+
 ## v2.2 Deterministic Task Support (Shipped: 2026-03-25)
 
 **Phases completed:** 3 phases (18-20), 6 plans, ~11 tasks

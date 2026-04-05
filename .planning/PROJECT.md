@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A background coding agent platform that automates software maintenance and code change tasks in isolated Docker containers. Users interact via conversational interface (interactive REPL or one-shot CLI) — natural language input is parsed into structured task parameters (dependency updates or generic code change instructions), confirmed with the user, then executed by the Claude Agent SDK (`query()`) inside Alpine containers with iptables network isolation. Changes are verified by a context-aware pipeline (build/test/lint for code, lint-only for config, zero-diff detection for no-ops, + MCP mid-session self-check + LLM Judge with refactoring awareness), and only verified changes produce GitHub PRs for human review.
+A background coding agent platform that automates software maintenance and code change tasks in isolated Docker containers. Users interact via conversational interface (interactive REPL, one-shot CLI, or Slack bot) — natural language input is parsed into structured task parameters (dependency updates or generic code change instructions), optionally scoped through follow-up questions, confirmed with the user, then executed by the Claude Agent SDK (`query()`) inside Alpine containers with iptables network isolation. Changes are verified by a context-aware pipeline (build/test/lint for code, lint-only for config, zero-diff detection for no-ops, + MCP mid-session self-check + LLM Judge with refactoring awareness), and only verified changes produce GitHub PRs for human review.
 
 ## Core Value
 
@@ -43,18 +43,13 @@ The full verification loop must work: agent changes code, deterministic verifier
 - ✓ Config-only verification routing (lint+judge only, skip build+test) — v2.2
 - ✓ LLM Judge enriched with refactoring NOT-scope-creep entries — v2.2
 - ✓ GA structured outputs API migration (intent parser + judge) — v2.2
+- ✓ REPL post-hoc PR creation — `pr` command creates PR for last task — v2.3
+- ✓ Conversational scoping dialogue — optional pre-execution questions tighten generic task prompts — v2.3
+- ✓ Follow-up task referencing — enriched session history enables "now add tests for that" — v2.3
+- ✓ Slack bot adapter — full pipeline via @slack/bolt Socket Mode with Block Kit confirm — v2.3
+- ✓ SessionCallbacks extensibility — channel-agnostic adapters (CLI, Slack, future MCP) — v2.3
 
 ### Active
-
-#### Current Milestone: v2.3 Conversational Scoping & REPL Enhancements
-
-**Goal:** Improve agent effectiveness through pre-execution scoping dialogue, post-hoc PR creation, follow-up task referencing, and Slack bot interface.
-
-**Target features:**
-- [ ] Conversational scoping dialogue — REPL asks follow-up questions for generic tasks to tighten scope constraints
-- [ ] REPL post-hoc PR creation — create PR for last completed task without upfront request
-- [ ] Follow-up tasks can explicitly reference previous task results
-- [ ] Slack bot interface using same intent parser and project registry
 
 #### Deferred (future milestone)
 
@@ -77,8 +72,15 @@ The full verification loop must work: agent changes code, deterministic verifier
 - Auto-execute without confirmation — removes human-in-the-loop trust model
 - Persistent cross-session context — stale context causes misparses, sessions reset on restart
 - Task discovery/analysis ("find all deprecated calls") — requires explicit user instructions; agent can't validate self-defined scope
-- Complex multi-file migrations (Scio, Backstage) — deferred to v2.3+ after generic path proven in v2.2
+- Complex multi-file migrations (Scio, Backstage) — deferred to future milestone after generic path proven in v2.2
 - Hardcoded task-type handlers per category — generic execution path proven in v2.2
+- Mid-run input injection in Slack — breaks Docker isolation invariant; all scoping happens pre-confirmation
+- Persistent cross-session Slack history — stale context causes misparses; sessions reset on restart
+- Slack auto-execute without confirmation — removes human-in-the-loop trust model
+
+## Shipped: v2.3 Conversational Scoping & REPL Enhancements (2026-04-05)
+
+REPL post-hoc PR creation (`pr` command), conversational scoping dialogue (up to 3 optional questions for generic tasks), follow-up task referencing via enriched session history, and Slack bot adapter (`@slack/bolt` Socket Mode with Block Kit confirm/cancel, async agent execution, PR link posting). SessionCallbacks interface extended with `askQuestion`, `onMessage`, `onPrCreated` for channel-agnostic adapters.
 
 ## Shipped: v2.2 Deterministic Task Support (2026-03-25)
 
@@ -99,14 +101,15 @@ Replaced the custom agent loop with the Claude Agent SDK. Deleted 1,989 lines of
 **Shipped v2.0** (Claude Agent SDK Migration) with 4 phases in 3 days. 8,167 LOC TypeScript, 271 tests.
 **Shipped v2.1** (Conversational Mode) with 4 phases in 4 days. 13,780 LOC TypeScript, 513 tests.
 **Shipped v2.2** (Deterministic Task Support) with 3 phases in 3 days. 15,941 LOC TypeScript, 575 tests.
+**Shipped v2.3** (Conversational Scoping & REPL Enhancements) with 4 phases in 11 days. 18,121 LOC TypeScript, 696 tests.
 
-**Tech stack:** Node.js 20, TypeScript (NodeNext), Docker (Alpine, multi-stage), Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`), Anthropic SDK (LLM Judge + intent parser), Commander.js, Pino, Vitest, ESLint v10, Zod, conf@15.
+**Tech stack:** Node.js 20, TypeScript (NodeNext), Docker (Alpine, multi-stage), Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`), Anthropic SDK (LLM Judge + intent parser), Commander.js, Pino, Vitest, ESLint v10, Zod, conf@15, @slack/bolt@^4.6.0.
 
-**Architecture:** CLI → {REPL | one-shot} → Intent Parser (fast-path regex + LLM with verb guard) → Confirm → runAgent() → RetryOrchestrator → zero-diff check → config-only routing → ClaudeCodeSession (`query()`) → Docker container (iptables, non-root UID 1001). Built-in tools (Read, Write, Edit, Bash, Glob, Grep). PreToolUse hook for security, PostToolUse hook for audit. MCP verifier server for mid-session self-check. Composite verifier (build+test+lint for code, lint-only for config) as outer gate. LLM Judge (Claude Haiku 4.5, GA structured output, refactoring-aware) evaluates scope post-verification.
+**Architecture:** CLI → {REPL | one-shot | Slack bot} → Intent Parser (fast-path regex + LLM with verb guard) → Scoping Dialogue (generic tasks) → Confirm → runAgent() → RetryOrchestrator → zero-diff check → config-only routing → ClaudeCodeSession (`query()`) → Docker container (iptables, non-root UID 1001). Built-in tools (Read, Write, Edit, Bash, Glob, Grep). PreToolUse hook for security, PostToolUse hook for audit. MCP verifier server for mid-session self-check. Composite verifier (build+test+lint for code, lint-only for config) as outer gate. LLM Judge (Claude Haiku 4.5, GA structured output, refactoring-aware) evaluates scope post-verification. Post-hoc PR creation via REPL `pr` command.
 
-**Test suite:** 575 unit tests (Vitest), 100% passing. Integration tests require Docker + API key.
+**Test suite:** 696 unit tests (Vitest), 100% passing. Integration tests require Docker + API key.
 
-**Known tech debt:** CLI-05 partial (cost tracking), exit code switch missing explicit vetoed/turn_limit cases, SessionTimeoutError dead code, cancelled tasks recorded as 'failed' in session history, retry.ts configOnly path bypasses retryConfig.verifier, Nyquist validation partial for phases 18-20.
+**Known tech debt:** CLI-05 partial (cost tracking), exit code switch missing explicit vetoed/turn_limit cases, SessionTimeoutError dead code, cancelled tasks recorded as 'failed' in session history, retry.ts configOnly path bypasses retryConfig.verifier, Nyquist validation partial for phases 18-24, Slack dead code (buildIntentBlocks, buildStatusMessage), Slack multi-turn history not populated.
 
 ## Constraints
 
@@ -141,6 +144,12 @@ Replaced the custom agent loop with the Claude Agent SDK. Deleted 1,989 lines of
 | End-state prompting discipline | Description verbatim as task statement, never paraphrased or rewritten | ✓ Good — outperforms step-by-step on capable models |
 | Config-only verification routing | Config changes skip build+test to avoid false failures from pre-existing issues | ✓ Good — lint catches config syntax errors |
 | Zero-diff as distinct status | Empty diffs are not retried (same prompt can't produce different result) | ✓ Good — clean signal through CLI/REPL |
+| TaskHistoryEntry schema extended once in Phase 21 | Single extension point for retryResult + intent prevents schema divergence | ✓ Good — Phase 23 adds finalResponse only, no new schema change |
+| SessionCallbacks methods always optional | `askQuestion?`, `onMessage?`, `onPrCreated?` graceful degradation | ✓ Good — Slack adapter skips scoping dialogue cleanly |
+| Scoping dialogue skipped in Slack v2.3 | Optional `askQuestion` handles this; document as known limitation | ✓ Good — defer to SLCK-10 (Block Kit modals) |
+| Per-user ReplState in Slack | `Map<userId, ReplState>` per incoming message prevents cross-user corruption | ✓ Good — independent sessions verified |
+| Deferred-promise pattern for Slack confirm | pendingConfirm resolver stored on ThreadSession, resolved by action handler | ✓ Good — clean async bridge between Bolt events and session pipeline |
+| Fire-and-forget agent in Slack | processSlackMention fires void async IIFE, decoupled from Bolt 3s ack timing | ✓ Good — no timeout issues |
 
 ---
-*Last updated: 2026-03-25 after v2.3 milestone started*
+*Last updated: 2026-04-05 after v2.3 milestone*

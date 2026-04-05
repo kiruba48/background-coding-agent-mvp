@@ -218,6 +218,53 @@
 
 ---
 
+## Milestone: v2.3 — Conversational Scoping & REPL Enhancements
+
+**Shipped:** 2026-04-05
+**Phases:** 4 | **Plans:** 7 | **Timeline:** 11 days
+
+### What Was Built
+- REPL `pr` command for post-hoc PR creation from last completed task
+- Conversational scoping dialogue with up to 3 optional pre-execution questions merged into SCOPE block
+- Follow-up task referencing via enriched session history (300-char summaries, positional addressing)
+- Slack bot adapter via @slack/bolt Socket Mode with Block Kit confirm/cancel and async agent execution
+- SessionCallbacks extended with `askQuestion`, `onMessage`, `onPrCreated` for channel-agnostic adapters
+
+### What Worked
+- SessionCallbacks optional-method design: Slack adapter cleanly skips scoping dialogue without any special-casing
+- Deferred-promise pattern for Slack confirmations: bridges async Bolt event handlers to synchronous session pipeline
+- Fire-and-forget IIFE for agent runs in Slack: decouples from Bolt's 3-second ack requirement
+- TDD RED/GREEN pattern continued: every plan started with failing tests — zero regressions across 121 new tests
+- Phase 21 as single schema extension point: prevented schema divergence across Phases 22-24
+
+### What Was Inefficient
+- SUMMARY frontmatter `requirements_completed` still not populated consistently (21-02, 24-01) — persistent gap since v1.0
+- Dead code shipped: `buildIntentBlocks` exported/tested but never called in production; `buildStatusMessage` imported but unused
+- Slack multi-turn history not populated: `processSlackMention` doesn't call `appendHistory` after agent run
+- Nyquist validation still partial for all 4 phases — same gap as v2.0-v2.2
+- 11-day timeline (vs 3 days for v2.2) — Phase 24 Slack adapter required deeper research and more complex async patterns
+
+### Patterns Established
+- Post-hoc meta-command interception: PR_COMMANDS regex checked before intent parser dispatch in processInput
+- Scoping dialogue threading: `scopeHints` array threaded through AgentOptions → PromptOptions → buildGenericPrompt SCOPE HINTS
+- History enrichment: `summarize()` utility for 300-char sentence-boundary truncation of agent output
+- Slack adapter factory: `createSlackCallbacks(app, threadTs)` returns SessionCallbacks implementation
+- Per-thread state isolation: `Map<threadTs, ThreadSession>` prevents cross-user contamination
+
+### Key Lessons
+1. Optional callback methods (`askQuestion?`) are the cleanest way to handle feature gaps across adapters — no feature flags needed
+2. Deferred-promise pattern bridges event-driven UIs (Slack buttons) to sequential pipelines elegantly
+3. Dead code should be caught before merge — `buildIntentBlocks` was designed, tested, but never wired in
+4. Slack's 3-second ack constraint fundamentally shapes architecture — fire-and-forget is the only viable pattern for long-running agent tasks
+5. SUMMARY frontmatter consistency remains the #1 documentation gap across all milestones — needs tooling enforcement
+
+### Cost Observations
+- Model mix: balanced profile (sonnet for execution, haiku for intent parsing + judge)
+- Plan execution: 7 plans in 11 days (~1.6 days/plan, slower than v2.2's 0.5 days/plan)
+- Notable: Phase 24 (Slack) was the complexity driver — required Bolt SDK research, async patterns, and Block Kit design
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -229,6 +276,7 @@
 | v2.0 | 3 days | 4 | 8 | SDK migration, 1,989 lines deleted |
 | v2.1 | 4 days | 4 | 10 | Conversational interface (REPL + intent parser) |
 | v2.2 | 3 days | 3 | 6 | Generic task support, verification routing |
+| v2.3 | 11 days | 4 | 7 | Scoping dialogue, post-hoc PR, Slack bot |
 
 ### Cumulative Quality
 
@@ -239,6 +287,7 @@
 | v2.0 | 271 | Vitest | 8,167 |
 | v2.1 | 513 | Vitest | 13,780 |
 | v2.2 | 575 | Vitest | 15,941 |
+| v2.3 | 696 | Vitest | 18,121 |
 
 ### Top Lessons (Verified Across Milestones)
 
@@ -246,6 +295,8 @@
 2. Deterministic verification beats LLM-based checking for structured output (build errors, test failures)
 3. SUMMARY frontmatter `requirements_completed` must be populated during execution, not retrofitted
 4. End-state prompting outperforms step-by-step instructions for agent tasks
-5. SDK abstractions dramatically reduce per-plan execution time (2.3 → 1.1 → 0.4 → 0.4 → 0.5 days/plan)
+5. SDK abstractions dramatically reduce per-plan execution time (2.3 → 1.1 → 0.4 → 0.4 → 0.5 → 1.6 days/plan)
 6. Channel-agnostic architecture (callback injection) pays off immediately — enables multiple entry points without duplication
 7. Generic execution path with scope-fenced prompting outperforms per-category handlers for code change tasks
+8. Optional callback methods are the cleanest adapter abstraction — no feature flags, no conditionals, just `?.` invocation
+9. Dead code detection should happen before merge, not during milestone audit — exported-but-unused is easy to miss
