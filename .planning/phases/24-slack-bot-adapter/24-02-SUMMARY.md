@@ -23,10 +23,11 @@ decisions:
   - "Mock client cast as 'any' in tests to avoid TS2352 — Pick<WebClient, 'chat'> is structurally too wide for inline mock objects"
   - "ProjectRegistry mock uses function (not arrow) in vi.fn().mockImplementation for vitest constructor compatibility"
   - "Two-promise blocking pattern (mockReturnValueOnce with pending promises) used to test concurrent session independence"
+requirements-completed: [SLCK-01, SLCK-04, SLCK-05]
 metrics:
-  duration: "4 minutes"
-  completed: "2026-04-02"
-  tasks_completed: 2
+  duration: "~3 hours (including code review iterations and human-verify)"
+  completed: "2026-04-05"
+  tasks_completed: 3
   tasks_total: 3
   files_created: 3
   files_modified: 1
@@ -88,9 +89,13 @@ CLI slack subcommand with dynamic import of startSlack():
 - **Files modified:** src/slack/index.test.ts
 - **Commit:** 0a88c57
 
-## Checkpoint
+## Human Verification
 
-**Task 3 (human-verify):** Awaiting user verification of full Slack bot flow in a real workspace. Automated verification (all tests pass, TypeScript clean) is complete.
+**Task 3 (human-verify):** APPROVED by user on 2026-04-05. User tested full Slack bot flow in a real workspace:
+- Mentioned bot with a task → Block Kit intent preview with Proceed/Cancel buttons appeared in thread
+- Clicked Proceed → buttons replaced with "Confirmed — running...", agent ran, result/PR link posted in thread
+- Clicked Cancel → buttons replaced with "Cancelled."
+- Empty mention → "Please include a task description after the mention." error posted
 
 ## Verification Results
 
@@ -102,3 +107,5 @@ npx tsx src/cli/index.ts slack --help — "Start the Slack bot adapter (Socket M
 ```
 
 ## Self-Check: PASSED
+
+**Plan 24-02 is complete.** All 3 tasks done (2 auto + 1 human-verify approved). Phase 24 fully shipped.
