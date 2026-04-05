@@ -84,7 +84,7 @@ Full details: [v2.3-ROADMAP.md](milestones/v2.3-ROADMAP.md)
 
 </details>
 
-### 🚧 v2.4 Git Worktree & Repo Exploration (In Progress)
+### v2.4 Git Worktree & Repo Exploration (In Progress)
 
 **Milestone Goal:** Enable concurrent agent runs via git worktree isolation, add read-only repo exploration tasks, and clean up accumulated tech debt.
 
@@ -119,10 +119,11 @@ Plans:
   2. After a task completes (success, failure, veto, zero-diff, or cancellation), the worktree directory and branch are removed — no worktrees accumulate across runs
   3. Restarting the process after a simulated crash finds and prunes any worktree whose PID sentinel file references a dead process
   4. Git operations from the agent (commit, push) land on the worktree branch — the main branch HEAD does not move during a run
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 26-01: TBD
+- [ ] 26-01-PLAN.md — WorktreeManager class with create, remove, buildWorktreePath, pruneOrphans + unit tests
+- [ ] 26-02-PLAN.md — Integrate WorktreeManager into runAgent(), REPL orphan scan, post-hoc PR branch support
 
 ### Phase 27: Repo Exploration Tasks
 **Goal**: Users can ask the agent to investigate a repo (git strategy, CI setup, project structure) and receive a structured report — no code changes, no PR, no verifier run
@@ -167,5 +168,5 @@ Plans:
 | 23. Follow-Up Task Referencing | v2.3 | 1/1 | Complete | 2026-04-01 |
 | 24. Slack Bot Adapter | v2.3 | 2/2 | Complete | 2026-04-05 |
 | 25. Tech Debt Cleanup | 2/2 | Complete    | 2026-04-05 | - |
-| 26. Git Worktree Isolation | v2.4 | 0/? | Not started | - |
+| 26. Git Worktree Isolation | v2.4 | 0/2 | Not started | - |
 | 27. Repo Exploration Tasks | v2.4 | 0/? | Not started | - |
