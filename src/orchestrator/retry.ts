@@ -5,7 +5,6 @@ import path from 'node:path';
 import { type SessionConfig, SessionResult, RetryConfig, RetryResult, VerificationResult, JudgeResult } from '../types.js';
 import { ClaudeCodeSession } from './claude-code-session.js';
 import { captureBaselineSha, getWorkspaceDiff, MIN_DIFF_CHARS } from './judge.js';
-import { compositeVerifier } from './verifier.js';
 import { ErrorSummarizer } from './summarizer.js';
 
 const execFileAsync = promisify(execFile);
@@ -283,7 +282,7 @@ export class RetryOrchestrator {
       let verification: VerificationResult;
       try {
         verification = configOnly
-          ? await compositeVerifier(this.config.workspaceDir, { configOnly: true })
+          ? await this.retryConfig.verifier(this.config.workspaceDir, { configOnly: true })
           : await this.retryConfig.verifier(this.config.workspaceDir);
       } catch (err) {
         logger?.error({ attempt, err }, 'Verifier crashed');

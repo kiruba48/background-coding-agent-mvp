@@ -798,7 +798,7 @@ describe('RetryOrchestrator', () => {
     expect(verifier).toHaveBeenCalledWith('/tmp/workspace');
   });
 
-  it('config-5. config-only changes invoke compositeVerifier with configOnly: true', async () => {
+  it('config-5. config-only changes invoke retryConfig.verifier with configOnly: true', async () => {
     const { getWorkspaceDiff } = await import('./judge.js');
     const mockGetDiff = getWorkspaceDiff as ReturnType<typeof vi.fn>;
     mockGetDiff.mockResolvedValue('substantial config diff content here');
