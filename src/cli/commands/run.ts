@@ -23,17 +23,25 @@ export interface CLIRunOptions {
  * Map RetryResult.finalStatus to a Unix exit code.
  *
  * - success          -> 0
+ * - zero_diff        -> 0
+ * - vetoed           -> 2   (task rejected by LLM Judge)
+ * - turn_limit       -> 3   (agent exceeded max turns)
  * - timeout          -> 124  (standard timeout exit code)
  * - cancelled        -> 130  (SIGINT convention)
- * - all others       -> 1    (generic failure)
+ * - failed           -> 1    (generic failure)
+ * - max_retries_exhausted -> 1 (generic failure)
  */
 export function mapStatusToExitCode(status: RetryResult['finalStatus']): number {
   switch (status) {
-    case 'success':   return 0;
-    case 'zero_diff': return 0;
-    case 'timeout':   return 124;
-    case 'cancelled': return 130;
-    default:          return 1;
+    case 'success':               return 0;
+    case 'zero_diff':             return 0;
+    case 'vetoed':                return 2;
+    case 'turn_limit':            return 3;
+    case 'timeout':               return 124;
+    case 'cancelled':             return 130;
+    case 'failed':                return 1;
+    case 'max_retries_exhausted': return 1;
+    default:                      return 1;
   }
 }
 
