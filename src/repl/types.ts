@@ -21,6 +21,16 @@ export interface TaskHistoryEntry {
 /** Maximum number of history entries to retain per session. */
 export const MAX_HISTORY_ENTRIES = 10;
 
+/** Map agent finalStatus to history entry status. Shared by REPL and Slack adapters. */
+export function toHistoryStatus(finalStatus: RetryResult['finalStatus']): TaskHistoryEntry['status'] {
+  switch (finalStatus) {
+    case 'success':   return 'success';
+    case 'zero_diff': return 'zero_diff';
+    case 'cancelled': return 'cancelled';
+    default:          return 'failed';
+  }
+}
+
 /** Mutable state for a REPL session. Owned by the CLI adapter, passed to session core. */
 export interface ReplState {
   currentProject: string | null;   // resolved repo path from most recent task

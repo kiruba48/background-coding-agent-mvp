@@ -7,6 +7,7 @@ import { buildConfirmationBlocks } from '../slack/blocks.js';
 import { appendHistory } from '../repl/session.js';
 import type { ThreadSession, SlackContext } from '../slack/types.js';
 import type { SessionCallbacks, ScopeHint, TaskHistoryEntry } from '../repl/types.js';
+import { toHistoryStatus } from '../repl/types.js';
 import type { ResolvedIntent } from '../intent/types.js';
 import type { RetryResult } from '../types.js';
 
@@ -15,14 +16,21 @@ const SLACK_TURN_LIMIT = 30;
 const SLACK_TIMEOUT_MS = 300_000;
 const SLACK_MAX_RETRIES = 3;
 
-/** Sanitize error messages before posting to Slack (V2) */
+/** Sanitize error messages before posting to Slack — deny-by-default approach. */
 function sanitizeError(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err);
-  // Strip filesystem paths, env var values, and stack traces
-  return raw
-    .replace(/\/[\w./-]+/g, '[path]')
-    .replace(/\b(xoxb|xapp|ghp|gho|sk)-[A-Za-z0-9-]+/g, '[redacted]')
-    .slice(0, 200);
+  if (err instanceof Error) {
+    // Only expose the error class name and a generic truncated message
+    // with all paths, tokens, and env values stripped
+    const name = err.name || 'Error';
+    const msg = err.message
+      .replace(/[A-Za-z]:\\[\w\\./-]+/g, '[path]')        // Windows paths
+      .replace(/\/[\w.@~/-]+/g, '[path]')                  // Unix paths (including @ and ~)
+      .replace(/\b(xoxb|xapp|ghp|gho|sk|npm_|AKIA)[A-Za-z0-9_-]+/g, '[redacted]') // tokens/keys
+      .replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')      // bearer tokens
+      .slice(0, 150);
+    return `${name}: ${msg}`;
+  }
+  return 'Unknown error';
 }
 
 /**
@@ -139,7 +147,18 @@ export async function processSlackMention(
 
   // Step 4: Handle low-confidence with clarifications (auto-select)
   if (intent.confidence === 'low' && intent.clarifications && intent.clarifications.length > 0) {
-    await callbacks.clarify(intent.clarifications);
+    const selectedIntent = await callbacks.clarify(intent.clarifications);
+    if (selectedIntent) {
+      // Re-parse with the selected clarification for a refined intent
+      const enriched = `${text} — specifically: ${selectedIntent}`;
+      const reparsed = await parseIntent(enriched, {
+        registry,
+        history: session.state.history,
+      });
+      reparsed.confidence = 'high';
+      reparsed.createPr = true;
+      intent = reparsed;
+    }
   }
 
   // Step 5: Post Block Kit confirmation and wait for button click
@@ -173,48 +192,39 @@ export async function processSlackMention(
     skipDockerChecks: true,
   };
 
+  // Non-critical notification — don't let it block agent execution (P3)
+  try { await callbacks.onAgentStart?.(); } catch { /* Slack API failure is non-fatal */ }
+
   let historyStatus: TaskHistoryEntry['status'] = 'failed';
   let taskResult: RetryResult | undefined;
   try {
-    await callbacks.onAgentStart?.();
     const result = await runAgent(agentOptions, agentContext);
     taskResult = result;
 
-    if (result.finalStatus === 'success') {
-      // P1: Post PR URL if available
-      if (result.prResult?.url && !result.prResult.error) {
-        await ctx.client.chat.postMessage({
-          channel: ctx.channel,
-          thread_ts: ctx.threadTs,
-          text: `Task completed. PR: ${result.prResult.url}`,
-        });
-      } else {
-        await ctx.client.chat.postMessage({
-          channel: ctx.channel,
-          thread_ts: ctx.threadTs,
-          text: 'Task completed successfully.',
-        });
-      }
-      historyStatus = 'success';
-    } else if (result.finalStatus === 'cancelled') {
-      historyStatus = 'cancelled';
-    } else if (result.finalStatus === 'zero_diff') {
-      historyStatus = 'zero_diff';
-    } else {
-      await ctx.client.chat.postMessage({
-        channel: ctx.channel,
-        thread_ts: ctx.threadTs,
-        text: 'Task failed. Check agent logs for details.',
-      });
-      historyStatus = 'failed';
-    }
-  } catch (err) {
-    historyStatus = 'failed';
+    historyStatus = toHistoryStatus(result.finalStatus);
+
+    const statusMessages: Record<TaskHistoryEntry['status'], string> = {
+      success: result.prResult?.url && !result.prResult.error
+        ? `Task completed. PR: ${result.prResult.url}`
+        : 'Task completed successfully.',
+      cancelled: 'Task was cancelled.',
+      zero_diff: 'Task completed with no changes.',
+      failed: 'Task failed. Check agent logs for details.',
+    };
     await ctx.client.chat.postMessage({
       channel: ctx.channel,
       thread_ts: ctx.threadTs,
-      text: `Agent run failed: ${sanitizeError(err)}`,
+      text: statusMessages[historyStatus],
     });
+  } catch (err) {
+    historyStatus = 'failed';
+    try {
+      await ctx.client.chat.postMessage({
+        channel: ctx.channel,
+        thread_ts: ctx.threadTs,
+        text: `Agent run failed: ${sanitizeError(err)}`,
+      });
+    } catch { /* Don't mask the original error if Slack is also down */ }
   } finally {
     // Append to session history for multi-turn follow-up context
     appendHistory(session.state, {

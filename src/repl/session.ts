@@ -9,7 +9,7 @@ import path from 'node:path';
 import pc from 'picocolors';
 import type { ReplState, SessionCallbacks, SessionOutput, TaskHistoryEntry, ScopeHint } from './types.js';
 import type { PRResult, RetryResult } from '../types.js';
-import { MAX_HISTORY_ENTRIES } from './types.js';
+import { MAX_HISTORY_ENTRIES, toHistoryStatus } from './types.js';
 
 /** Maximum input length before LLM dispatch (characters) */
 const MAX_INPUT_LENGTH = 2000;
@@ -256,13 +256,7 @@ export async function processInput(
       state.lastRetryResult = result;
       state.lastIntent = confirmed;
     }
-    historyStatus = result.finalStatus === 'success'
-      ? 'success'
-      : result.finalStatus === 'zero_diff'
-      ? 'zero_diff'
-      : result.finalStatus === 'cancelled'
-      ? 'cancelled'
-      : 'failed';
+    historyStatus = toHistoryStatus(result.finalStatus);
     return { action: 'continue', result, intent: confirmed };
   } catch (err) {
     historyStatus = err instanceof Error && err.name === 'AbortError' ? 'cancelled' : 'failed';

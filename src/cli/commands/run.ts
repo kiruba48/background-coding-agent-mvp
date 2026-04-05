@@ -41,7 +41,10 @@ export function mapStatusToExitCode(status: RetryResult['finalStatus']): number 
     case 'cancelled':             return 130;
     case 'failed':                return 1;
     case 'max_retries_exhausted': return 1;
-    default:                      return 1;
+    default: {
+      const _exhaustive: never = status;
+      return 1;
+    }
   }
 }
 

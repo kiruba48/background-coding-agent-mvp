@@ -56,7 +56,7 @@ export interface JudgeResult {
  */
 export interface RetryConfig {
   maxRetries: number;  // default: 3
-  verifier?: (workspaceDir: string) => Promise<VerificationResult>;
+  verifier?: (workspaceDir: string, options?: { configOnly?: boolean }) => Promise<VerificationResult>;
   judge?: (workspaceDir: string, originalTask: string, baselineSha?: string) => Promise<JudgeResult>;
   maxJudgeVetoes?: number;  // default: 1, separate from maxRetries
   /**
