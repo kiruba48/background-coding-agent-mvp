@@ -168,5 +168,5 @@ Plans:
 | 23. Follow-Up Task Referencing | v2.3 | 1/1 | Complete | 2026-04-01 |
 | 24. Slack Bot Adapter | v2.3 | 2/2 | Complete | 2026-04-05 |
 | 25. Tech Debt Cleanup | 2/2 | Complete    | 2026-04-05 | - |
-| 26. Git Worktree Isolation | 2/2 | Complete   | 2026-04-05 | - |
+| 26. Git Worktree Isolation | 2/2 | Complete    | 2026-04-05 | - |
 | 27. Repo Exploration Tasks | v2.4 | 0/? | Not started | - |
