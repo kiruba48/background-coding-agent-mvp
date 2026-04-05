@@ -56,12 +56,12 @@ describe('mapStatusToExitCode', () => {
     expect(mapStatusToExitCode('max_retries_exhausted')).toBe(1);
   });
 
-  it('maps vetoed to 1', () => {
-    expect(mapStatusToExitCode('vetoed')).toBe(1);
+  it('maps vetoed to 2 (task rejected by LLM Judge)', () => {
+    expect(mapStatusToExitCode('vetoed')).toBe(2);
   });
 
-  it('maps turn_limit to 1', () => {
-    expect(mapStatusToExitCode('turn_limit')).toBe(1);
+  it('maps turn_limit to 3 (agent exceeded max turns)', () => {
+    expect(mapStatusToExitCode('turn_limit')).toBe(3);
   });
 
   it('maps zero_diff to 0 (agent completed cleanly with no changes)', () => {
@@ -137,5 +137,17 @@ describe('runCommand', () => {
       expect.objectContaining({ timeoutMs: 120_000 }),
       expect.anything()
     );
+  });
+
+  it('returns 2 when runAgent returns vetoed', async () => {
+    mockRunAgent.mockResolvedValue(makeResult('vetoed'));
+    const exitCode = await runCommand(baseOptions);
+    expect(exitCode).toBe(2);
+  });
+
+  it('returns 3 when runAgent returns turn_limit', async () => {
+    mockRunAgent.mockResolvedValue(makeResult('turn_limit'));
+    const exitCode = await runCommand(baseOptions);
+    expect(exitCode).toBe(3);
   });
 });
