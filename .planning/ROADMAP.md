@@ -89,7 +89,7 @@ Full details: [v2.3-ROADMAP.md](milestones/v2.3-ROADMAP.md)
 **Milestone Goal:** Enable concurrent agent runs via git worktree isolation, add read-only repo exploration tasks, and clean up accumulated tech debt.
 
 - [x] **Phase 25: Tech Debt Cleanup** — Fix exit codes, remove dead code, correct configOnly verifier bypass, populate Slack history (completed 2026-04-05)
-- [ ] **Phase 26: Git Worktree Isolation** — WorktreeManager with create/remove/prune, workspaceDir seam, readOnly Docker flag
+- [x] **Phase 26: Git Worktree Isolation** — WorktreeManager with create/remove/prune, workspaceDir seam, readOnly Docker flag (completed 2026-04-05)
 - [ ] **Phase 27: Repo Exploration Tasks** — Investigation task type, read-only Docker enforcement, report display in REPL and Slack
 
 ## Phase Details
@@ -168,5 +168,5 @@ Plans:
 | 23. Follow-Up Task Referencing | v2.3 | 1/1 | Complete | 2026-04-01 |
 | 24. Slack Bot Adapter | v2.3 | 2/2 | Complete | 2026-04-05 |
 | 25. Tech Debt Cleanup | 2/2 | Complete    | 2026-04-05 | - |
-| 26. Git Worktree Isolation | 1/2 | In Progress|  | - |
+| 26. Git Worktree Isolation | 2/2 | Complete   | 2026-04-05 | - |
 | 27. Repo Exploration Tasks | v2.4 | 0/? | Not started | - |

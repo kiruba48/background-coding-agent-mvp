@@ -10,10 +10,10 @@ Requirements for git worktree isolation, repo exploration tasks, and tech debt c
 ### Worktree Isolation
 
 - [x] **WKTREE-01**: Agent session creates a git worktree in a sibling directory with UUID-suffixed branch name before Docker container starts
-- [ ] **WKTREE-02**: Docker container bind-mounts the worktree directory (not main repo) as the workspace volume
+- [x] **WKTREE-02**: Docker container bind-mounts the worktree directory (not main repo) as the workspace volume
 - [x] **WKTREE-03**: Worktree is automatically removed in a finally block after task completion (success, failure, veto, zero-diff, cancelled)
 - [x] **WKTREE-04**: Startup orphan scan prunes stale worktrees from crashed sessions using PID sentinel files
-- [ ] **WKTREE-05**: Host-side git operations (commit, push) execute against the worktree path, not the main repo checkout
+- [x] **WKTREE-05**: Host-side git operations (commit, push) execute against the worktree path, not the main repo checkout
 
 ### Repo Exploration
 
@@ -71,10 +71,10 @@ Deferred to v2.5+.
 | DEBT-05 | Phase 25 | Complete |
 | DEBT-06 | Phase 25 | Complete |
 | WKTREE-01 | Phase 26 | Complete |
-| WKTREE-02 | Phase 26 | Pending |
+| WKTREE-02 | Phase 26 | Complete |
 | WKTREE-03 | Phase 26 | Complete |
 | WKTREE-04 | Phase 26 | Complete |
-| WKTREE-05 | Phase 26 | Pending |
+| WKTREE-05 | Phase 26 | Complete |
 | EXPLR-01 | Phase 27 | Pending |
 | EXPLR-02 | Phase 27 | Pending |
 | EXPLR-03 | Phase 27 | Pending |
