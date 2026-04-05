@@ -12,6 +12,8 @@ const {
   mockDiff,
   mockRevparse,
   mockRaw,
+  mockFetch,
+  mockReset,
   mockPullsCreate,
   mockPullsList,
   mockReposGet,
@@ -26,6 +28,8 @@ const {
   mockDiff: vi.fn(),
   mockRevparse: vi.fn(),
   mockRaw: vi.fn(),
+  mockFetch: vi.fn(),
+  mockReset: vi.fn(),
   mockPullsCreate: vi.fn(),
   mockPullsList: vi.fn(),
   mockReposGet: vi.fn(),
@@ -43,6 +47,8 @@ vi.mock('simple-git', () => ({
     diff: mockDiff,
     revparse: mockRevparse,
     raw: mockRaw,
+    fetch: mockFetch,
+    reset: mockReset,
   }),
 }));
 
@@ -132,12 +138,21 @@ function setupStandardMocks(overrides: {
 
   mockRemote.mockResolvedValue(remoteUrl);
 
-  // revparse: called for original branch, then in finally for current branch
-  mockRevparse
-    .mockResolvedValueOnce(originalBranch)
-    .mockResolvedValueOnce(finalBranch ?? originalBranch);
+  // revparse: dynamic handler based on args
+  // Calls: (1) '--abbrev-ref HEAD' for original branch, (2) 'HEAD' for agentHead,
+  // (3) 'origin/main' for remoteBase check, (4) 'origin/master' for remoteBase check,
+  // (5) '--abbrev-ref HEAD' in finally for current branch check
+  const finalBranchValue = finalBranch ?? originalBranch;
+  mockRevparse.mockImplementation(async (args: string[]) => {
+    if (args[0] === '--abbrev-ref') return finalBranchValue;
+    if (args[0] === 'HEAD') return 'abc123def456';
+    // origin/main, origin/master — reject (no remote refs in tests)
+    throw new Error('not a valid ref');
+  });
+  // First call returns originalBranch (may differ from finalBranch)
+  mockRevparse.mockResolvedValueOnce(originalBranch);
 
-  // merge-base: reject so it falls back to HEAD~1
+  // merge-base and any other raw calls: reject
   mockRaw.mockRejectedValue(new Error('not a valid ref'));
 
   // diff: called twice — once for stat, once for full diff
@@ -146,7 +161,10 @@ function setupStandardMocks(overrides: {
     .mockResolvedValueOnce(fullDiff);
 
   mockStatus.mockResolvedValue({ isClean: () => isClean });
+  mockFetch.mockResolvedValue(undefined);
+  mockReset.mockResolvedValue(undefined);
   mockCheckoutLocalBranch.mockResolvedValue(undefined);
+  mockCheckout.mockResolvedValue(undefined);
   mockPush.mockResolvedValue(undefined);
 
   mockReposGet.mockResolvedValue({ data: { default_branch: 'main' } });

@@ -421,15 +421,60 @@ export class GitHubPRCreator {
         await git.commit('chore: agent changes');
       }
 
-      // Checkout or create the branch — check error specifically
+      // Save HEAD — this is the tip with all agent commits for this task
+      const agentHead = (await git.revparse(['HEAD'])).trim();
+
+      // Fetch origin so we have the latest remote state
       try {
-        await git.checkoutLocalBranch(branchName);
-      } catch (e) {
-        const msg = (e as Error).message;
-        if (msg.includes('already exists')) {
+        await git.fetch('origin');
+      } catch {
+        // If fetch fails (no network), fall back to existing origin refs
+      }
+
+      // Determine remote default branch ref for branch isolation
+      let remoteBase: string | null = null;
+      for (const candidate of ['origin/main', 'origin/master']) {
+        try {
+          const sha = (await git.revparse([candidate])).trim();
+          if (sha) { remoteBase = candidate; break; }
+        } catch { /* candidate doesn't exist, try next */ }
+      }
+
+      // Create branch from remote base (not local HEAD) so each PR only
+      // contains its own commits — prevents commit bleed across sequential tasks
+      if (remoteBase) {
+        try {
+          await git.checkout(['-b', branchName, remoteBase]);
+        } catch (e) {
+          const msg = (e as Error).message;
+          if (msg.includes('already exists')) {
+            await git.checkout(branchName);
+          } else {
+            throw new Error(`Failed to create branch '${branchName}': ${sanitize(msg)}`);
+          }
+        }
+
+        // Cherry-pick this task's commits onto the clean branch
+        // diffBase..agentHead gives us exactly this task's commits
+        try {
+          await git.raw(['cherry-pick', `${diffBase}..${agentHead}`]);
+        } catch (cpErr) {
+          // Cherry-pick conflict — abort and fall back to pushing agentHead directly
+          try { await git.raw(['cherry-pick', '--abort']); } catch { /* already clean */ }
           await git.checkout(branchName);
-        } else {
-          throw new Error(`Failed to create branch '${branchName}': ${sanitize(msg)}`);
+          await git.reset(['--hard', agentHead]);
+        }
+      } else {
+        // No remote ref available — fall back to branching from HEAD (original behavior)
+        try {
+          await git.checkoutLocalBranch(branchName);
+        } catch (e) {
+          const msg = (e as Error).message;
+          if (msg.includes('already exists')) {
+            await git.checkout(branchName);
+          } else {
+            throw new Error(`Failed to create branch '${branchName}': ${sanitize(msg)}`);
+          }
         }
       }
 
@@ -508,6 +553,15 @@ export class GitHubPRCreator {
           const currentBranch = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
           if (currentBranch !== originalBranch) {
             await git.checkout(originalBranch);
+          }
+
+          // Reset local branch to origin so next task starts clean —
+          // prevents commit bleed across sequential tasks on the same repo
+          for (const candidate of ['origin/main', 'origin/master']) {
+            try {
+              await git.reset(['--hard', candidate]);
+              break;
+            } catch { /* candidate doesn't exist, try next */ }
           }
         } catch {
           // Best-effort restoration — if this fails, user is left on agent branch
