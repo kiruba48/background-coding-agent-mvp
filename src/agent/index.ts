@@ -15,6 +15,8 @@ import pino from 'pino';
 import { randomBytes } from 'node:crypto';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
+import { access } from 'node:fs/promises';
+import path from 'node:path';
 import { RetryOrchestrator } from '../orchestrator/retry.js';
 import { MetricsCollector } from '../orchestrator/metrics.js';
 import { compositeVerifier } from '../orchestrator/verifier.js';
@@ -145,6 +147,26 @@ export async function runAgent(
       const branchName = generateBranchName(branchInput);
       worktreeManager = new WorktreeManager(options.repo, worktreePath, branchName);
       await worktreeManager.create();
+
+      // Install npm dependencies in worktree so verification (npm run build/test) works.
+      // git worktree add creates a clean checkout without node_modules.
+      try {
+        await access(path.join(worktreePath, 'package.json'));
+        childLogger.info('Installing npm dependencies in worktree...');
+        await execFileAsync('npm', ['install', '--ignore-scripts'], {
+          cwd: worktreePath,
+          timeout: 120_000,
+          maxBuffer: 10 * 1024 * 1024,
+          killSignal: 'SIGKILL',
+        });
+        childLogger.info('Worktree npm install completed');
+      } catch (err: unknown) {
+        // ENOENT from access() means no package.json — skip silently.
+        // npm install failures are non-fatal: verification will catch build issues.
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+          childLogger.warn({ error: (err as Error).message }, 'Worktree npm install failed (non-fatal)');
+        }
+      }
 
       effectiveWorkspaceDir = worktreePath;
       effectiveBranchOverride = branchName;
