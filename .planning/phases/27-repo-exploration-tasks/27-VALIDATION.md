@@ -39,14 +39,11 @@ created: 2026-04-06
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
 | 27-01-01 | 01 | 1 | EXPLR-01 | unit | `npx vitest run src/intent/fast-path.test.ts` | ❌ W0 | ⬜ pending |
-| 27-01-02 | 01 | 1 | EXPLR-01 | unit | `npx vitest run src/intent/index.test.ts` | ✅ | ⬜ pending |
-| 27-02-01 | 02 | 1 | EXPLR-02 | unit | `npx vitest run src/prompts/exploration.test.ts` | ❌ W0 | ⬜ pending |
-| 27-02-02 | 02 | 1 | EXPLR-02 | unit | `npx vitest run src/prompts/index.test.ts` | ❌ W0 | ⬜ pending |
-| 27-03-01 | 03 | 2 | EXPLR-03 | unit | `npx vitest run src/agent/index.test.ts` | ✅ | ⬜ pending |
-| 27-03-02 | 03 | 2 | EXPLR-04 | unit | `npx vitest run src/orchestrator/claude-code-session.test.ts` | ✅ | ⬜ pending |
-| 27-03-03 | 03 | 2 | EXPLR-04 | unit | `npx vitest run src/cli/docker/index.test.ts` | ✅ | ⬜ pending |
-| 27-04-01 | 04 | 3 | EXPLR-05 | unit | `npx vitest run src/repl/session.test.ts` | ✅ | ⬜ pending |
-| 27-04-02 | 04 | 3 | EXPLR-05 | unit | `npx vitest run src/slack/adapter.test.ts` | ✅ | ⬜ pending |
+| 27-01-02 | 01 | 1 | EXPLR-02 | unit | `npx vitest run src/prompts/exploration.test.ts` | ❌ W0 | ⬜ pending |
+| 27-02-01 | 02 | 2 | EXPLR-03 | unit | `npx vitest run src/cli/docker/index.test.ts src/orchestrator/claude-code-session.test.ts` | ✅ | ⬜ pending |
+| 27-02-02 | 02 | 2 | EXPLR-04 | unit | `npx vitest run src/agent/index.test.ts src/cli/commands/run.test.ts` | ✅ | ⬜ pending |
+| 27-03-01 | 03 | 2 | EXPLR-05 | unit | `npx vitest run src/repl/session.test.ts` | ✅ | ⬜ pending |
+| 27-03-02 | 03 | 2 | EXPLR-05 | unit | `npx vitest run src/slack/adapter.test.ts` | ✅ | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
