@@ -263,8 +263,46 @@ describe('ErrorSummarizer', () => {
       expect(result).toContain('ERR! code ELIFECYCLE');
     });
 
-    it('returns fallback when no patterns match', () => {
+    it('extracts vite error lines', () => {
+      const input = [
+        'vite v7.3.1 building for production...',
+        '[vite]: Rollup failed to resolve import "missing-module"',
+        'error during build:',
+      ].join('\n');
+
+      const result = ErrorSummarizer.summarizeNpmBuildErrors(input);
+      expect(result).toContain('2 build error(s)');
+      expect(result).toContain('[vite]');
+    });
+
+    it('extracts esbuild error lines', () => {
+      const input = '✘ [ERROR] Could not resolve "missing-pkg"';
+
+      const result = ErrorSummarizer.summarizeNpmBuildErrors(input);
+      expect(result).toContain('1 build error(s)');
+      expect(result).toContain('[ERROR]');
+    });
+
+    it('extracts generic JS error lines (SyntaxError, etc.)', () => {
+      const input = [
+        'Build starting...',
+        'SyntaxError: Unexpected token }',
+        'at Module._compile (node:internal/modules/cjs/loader:1)',
+      ].join('\n');
+
+      const result = ErrorSummarizer.summarizeNpmBuildErrors(input);
+      expect(result).toContain('1 build error(s)');
+      expect(result).toContain('SyntaxError');
+    });
+
+    it('returns tail of output when no patterns match', () => {
       const result = ErrorSummarizer.summarizeNpmBuildErrors('Build output with no recognizable errors');
+      expect(result).toContain('npm build failed — tail of output:');
+      expect(result).toContain('Build output with no recognizable errors');
+    });
+
+    it('returns exact fallback when output is empty', () => {
+      const result = ErrorSummarizer.summarizeNpmBuildErrors('');
       expect(result).toBe('npm build failed (no specific error lines found)');
     });
 
@@ -282,7 +320,8 @@ describe('ErrorSummarizer', () => {
     it('does not match false positives like "0 errors"', () => {
       const input = '0 errors found\nBuild completed with 0 errors';
       const result = ErrorSummarizer.summarizeNpmBuildErrors(input);
-      expect(result).toBe('npm build failed (no specific error lines found)');
+      // Should not match any specific error pattern — falls through to tail
+      expect(result).toContain('npm build failed — tail of output:');
     });
   });
 

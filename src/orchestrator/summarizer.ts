@@ -213,13 +213,42 @@ export class ErrorSummarizer {
       return `${tsErrors.length} build error(s):\n${shown.join('\n')}${more}`;
     }
 
-    // Priority 3: npm ERR! lines (npm's own error prefix)
+    // Priority 3: Vite/Rollup/esbuild errors (e.g. "[vite]: Rollup failed", "error during build:")
+    const viteErrors = lines.filter(line =>
+      /\[vite\]/i.test(line) || /error during build/i.test(line) || /^✘ \[ERROR\]/.test(line)
+    );
+    if (viteErrors.length > 0) {
+      const shown = viteErrors.slice(0, 5);
+      const remaining = viteErrors.length - shown.length;
+      const more = remaining > 0 ? `\n(+ ${remaining} more errors)` : '';
+      return `${viteErrors.length} build error(s):\n${shown.join('\n')}${more}`;
+    }
+
+    // Priority 4: npm ERR! lines (npm's own error prefix)
     const npmErrLines = lines.filter(line => line.includes('ERR!'));
     if (npmErrLines.length > 0) {
       const shown = npmErrLines.slice(0, 5);
       const remaining = npmErrLines.length - shown.length;
       const more = remaining > 0 ? `\n(+ ${remaining} more errors)` : '';
       return `${shown.join('\n')}${more}`;
+    }
+
+    // Priority 5: Generic error lines (SyntaxError, ReferenceError, etc.)
+    const genericErrors = lines.filter(line =>
+      /\b(?:SyntaxError|ReferenceError|TypeError|Error):/i.test(line)
+    );
+    if (genericErrors.length > 0) {
+      const shown = genericErrors.slice(0, 5);
+      const remaining = genericErrors.length - shown.length;
+      const more = remaining > 0 ? `\n(+ ${remaining} more errors)` : '';
+      return `${genericErrors.length} build error(s):\n${shown.join('\n')}${more}`;
+    }
+
+    // Fallback: return last 10 non-empty lines for context
+    const nonEmpty = lines.filter(l => l.trim().length > 0);
+    if (nonEmpty.length > 0) {
+      const tail = nonEmpty.slice(-10);
+      return `npm build failed — tail of output:\n${tail.join('\n')}`;
     }
 
     return 'npm build failed (no specific error lines found)';

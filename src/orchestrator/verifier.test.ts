@@ -906,12 +906,13 @@ describe('ErrorSummarizer.summarizeNpmBuildErrors', () => {
     expect(result).toContain('(+ 3 more errors)');
   });
 
-  it('46. returns fallback when no recognizable error lines found', () => {
+  it('46. returns tail of output when no recognizable error lines found', () => {
     const raw = 'Successfully compiled\nDone in 2.3s';
 
     const result = ErrorSummarizer.summarizeNpmBuildErrors(raw);
 
-    expect(result).toBe('npm build failed (no specific error lines found)');
+    expect(result).toContain('npm build failed — tail of output:');
+    expect(result).toContain('Done in 2.3s');
   });
 
   it('47. detects ERR! lines (npm error prefix)', () => {
