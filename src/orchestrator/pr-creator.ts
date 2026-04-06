@@ -43,14 +43,23 @@ const MAX_DISPLAY_DESCRIPTION_LENGTH = 80;
  * - Prefix with `agent/`
  *
  * @example
- * generateBranchName('maven dependency update') // 'agent/maven-dependency-update-2026-03-02-a1b2c3'
+ * generateBranchName('maven dependency update') // 'agent/maven-dep-update-2026-03-02-a1b2c3'
  */
 export function generateBranchName(taskType: string): string {
-  const slug = taskType
+  const MAX_SLUG_CHARS = 20;
+
+  let slug = taskType
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')   // non-alphanumeric → hyphen
     .replace(/-+/g, '-')             // collapse multiple hyphens
     .replace(/^-+|-+$/g, '');        // trim leading/trailing hyphens
+
+  // Keep branch names short — truncate at last word boundary within limit
+  if (slug.length > MAX_SLUG_CHARS) {
+    const truncated = slug.slice(0, MAX_SLUG_CHARS);
+    const lastHyphen = truncated.lastIndexOf('-');
+    slug = lastHyphen > 0 ? truncated.slice(0, lastHyphen) : truncated;
+  }
 
   const date = new Date().toISOString().slice(0, 10);
   const suffix = randomBytes(3).toString('hex');

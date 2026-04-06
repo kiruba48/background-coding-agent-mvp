@@ -43,12 +43,34 @@ vi.mock('../orchestrator/metrics.js', () => {
   return { MetricsCollector: MockMetricsCollector };
 });
 
-// Mock GitHubPRCreator
+// Mock GitHubPRCreator and generateBranchName
 vi.mock('../orchestrator/pr-creator.js', () => ({
   GitHubPRCreator: vi.fn().mockImplementation(() => ({
     create: vi.fn().mockResolvedValue({ url: 'https://github.com/pr/1', created: true, branch: 'agent/branch' }),
   })),
+  generateBranchName: vi.fn().mockReturnValue('agent/mock-branch-abc123'),
 }));
+
+// Mock WorktreeManager — must use a class to support `new WorktreeManager(...)`
+const mockWorktreeCreate = vi.fn().mockResolvedValue(undefined);
+const mockWorktreeRemove = vi.fn().mockResolvedValue(undefined);
+vi.mock('./worktree-manager.js', () => {
+  class MockWorktreeManager {
+    path: string;
+    branch: string;
+    constructor(_repoDir: string, worktreePath: string, branchName: string) {
+      this.path = worktreePath;
+      this.branch = branchName;
+    }
+    create = mockWorktreeCreate;
+    remove = mockWorktreeRemove;
+    static buildWorktreePath(_repoDir: string, suffix: string): string {
+      return `/tmp/.bg-agent-workspace-${suffix}`;
+    }
+    static pruneOrphans = vi.fn().mockResolvedValue(undefined);
+  }
+  return { WorktreeManager: MockWorktreeManager };
+});
 
 // Mock child_process.execFile for host-side version resolution.
 // promisify(execFile) uses execFile[util.promisify.custom] in real Node;
@@ -125,7 +147,7 @@ describe('src/agent/index.ts', () => {
       maxRetries: 3,
       dep: 'com.example:lib',
       targetVersion: '1.0.0',
-    });
+    }, { skipWorktree: true });
 
     expect(result).toBeDefined();
     expect(typeof result.finalStatus).toBe('string');
@@ -189,7 +211,7 @@ describe('src/agent/index.ts', () => {
     await expect(
       runAgent(
         { taskType: 'test', repo: '/tmp/workspace', turnLimit: 5, timeoutMs: 60_000, maxRetries: 1 },
-        {} // no logger
+        { skipWorktree: true } // no logger, but skip worktree for focused test
       )
     ).resolves.toBeDefined();
   });
@@ -207,7 +229,7 @@ describe('src/agent/index.ts', () => {
         maxRetries: 3,
         dep: 'lodash',
         targetVersion: 'latest',
-      });
+      }, { skipWorktree: true });
 
       expect(mockBuildPrompt).toHaveBeenCalledWith(
         expect.objectContaining({ targetVersion: '4.18.3' }),
@@ -228,7 +250,7 @@ describe('src/agent/index.ts', () => {
         maxRetries: 3,
         dep: 'nonexistent-pkg',
         targetVersion: 'latest',
-      });
+      }, { skipWorktree: true });
 
       expect(mockBuildPrompt).toHaveBeenCalledWith(
         expect.objectContaining({ targetVersion: 'latest' }),
@@ -246,7 +268,7 @@ describe('src/agent/index.ts', () => {
         maxRetries: 3,
         dep: 'com.example:lib',
         targetVersion: 'latest',
-      });
+      }, { skipWorktree: true });
 
       // execFileAsync should not have been called (no npm show for maven)
       expect(mockExecFileAsync).not.toHaveBeenCalled();
@@ -263,11 +285,91 @@ describe('src/agent/index.ts', () => {
         maxRetries: 3,
         dep: 'lodash',
         targetVersion: '4.17.21',
-      });
+      }, { skipWorktree: true });
 
       expect(mockBuildPrompt).toHaveBeenCalledWith(
         expect.objectContaining({ targetVersion: '4.17.21' }),
       );
+    });
+  });
+
+  describe('worktree integration', () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mockExecFileAsync.mockResolvedValue({ stdout: '', stderr: '' });
+    });
+
+    it('creates worktree before orchestrator when skipWorktree is not set', async () => {
+      mockOrchestrator('success');
+      await runAgent(
+        { taskType: 'generic', repo: '/tmp/workspace', turnLimit: 5, timeoutMs: 60_000, maxRetries: 1, description: 'fix bug' },
+        {}  // no skipWorktree
+      );
+      expect(mockWorktreeCreate).toHaveBeenCalled();
+    });
+
+    it('skips worktree when skipWorktree is true', async () => {
+      mockOrchestrator('success');
+      await runAgent(
+        { taskType: 'generic', repo: '/tmp/workspace', turnLimit: 5, timeoutMs: 60_000, maxRetries: 1, description: 'fix bug' },
+        { skipWorktree: true }
+      );
+      expect(mockWorktreeCreate).not.toHaveBeenCalled();
+    });
+
+    it('removes worktree in finally block even when orchestrator throws', async () => {
+      const orchestratorInstance = {
+        run: vi.fn().mockRejectedValue(new Error('orchestrator exploded')),
+        stop: vi.fn(),
+      };
+      MockRetryOrchestrator.mockImplementationOnce(function () { return orchestratorInstance; });
+
+      await expect(runAgent(
+        { taskType: 'generic', repo: '/tmp/workspace', turnLimit: 5, timeoutMs: 60_000, maxRetries: 1, description: 'fix' },
+        {}
+      )).rejects.toThrow('orchestrator exploded');
+
+      expect(mockWorktreeRemove).toHaveBeenCalled();
+    });
+
+    it('keeps branch for post-hoc PR when createPr is false and task succeeds', async () => {
+      mockOrchestrator('success');
+      await runAgent(
+        { taskType: 'generic', repo: '/tmp/workspace', turnLimit: 5, timeoutMs: 60_000, maxRetries: 1, description: 'fix', createPr: false },
+        {}
+      );
+      expect(mockWorktreeRemove).toHaveBeenCalledWith(expect.objectContaining({ keepBranch: true }));
+    });
+
+    it('does not keep branch when createPr is true and task fails', async () => {
+      mockOrchestrator('failed');
+      await runAgent(
+        { taskType: 'generic', repo: '/tmp/workspace', turnLimit: 5, timeoutMs: 60_000, maxRetries: 1, description: 'fix', createPr: true },
+        {}
+      );
+      expect(mockWorktreeRemove).toHaveBeenCalledWith(expect.objectContaining({ keepBranch: false }));
+    });
+
+    it('passes worktree path as workspaceDir to RetryOrchestrator', async () => {
+      mockOrchestrator('success');
+      await runAgent(
+        { taskType: 'generic', repo: '/tmp/workspace', turnLimit: 5, timeoutMs: 60_000, maxRetries: 1, description: 'fix' },
+        {}
+      );
+      // RetryOrchestrator constructor receives workspaceDir as first arg's property
+      const constructorCall = MockRetryOrchestrator.mock.calls[0];
+      const sessionConfig = constructorCall[0];
+      // workspaceDir should be the worktree path (not /tmp/workspace)
+      expect(sessionConfig.workspaceDir).toContain('.bg-agent-');
+    });
+
+    it('returns worktreeBranch on the result', async () => {
+      mockOrchestrator('success');
+      const result = await runAgent(
+        { taskType: 'generic', repo: '/tmp/workspace', turnLimit: 5, timeoutMs: 60_000, maxRetries: 1, description: 'fix' },
+        {}
+      );
+      expect(result.worktreeBranch).toBe('agent/mock-branch-abc123');
     });
   });
 });

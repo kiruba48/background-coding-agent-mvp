@@ -79,6 +79,8 @@ export interface RetryResult {
   error?: string;
   /** PR creation result — populated when createPr is true and run succeeded */
   prResult?: PRResult;
+  /** Worktree branch name used for this run — set by runAgent() when worktree is active */
+  worktreeBranch?: string;
 }
 
 /**

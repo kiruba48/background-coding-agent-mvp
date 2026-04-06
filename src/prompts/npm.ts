@@ -5,7 +5,7 @@
  * describes the desired outcome, not step-by-step instructions. The agent
  * discovers the current state and plans its own approach.
  *
- * Note: NPM-05 (changelog link) is deferred — Docker has no network access.
+ * Note: NPM-05 (changelog link) is deferred.
  * Note: Lockfile regeneration is a host-side concern; do not instruct the agent.
  *
  * @param packageName - npm package name (e.g., lodash, @types/node)

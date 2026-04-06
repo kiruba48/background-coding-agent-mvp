@@ -7,6 +7,7 @@ import { createSpinner } from 'nanospinner';
 import pc from 'picocolors';
 import { assertDockerRunning, ensureNetworkExists, buildImageIfNeeded } from '../docker/index.js';
 import { ProjectRegistry } from '../../agent/registry.js';
+import { WorktreeManager } from '../../agent/worktree-manager.js';
 import { createSessionState, processInput } from '../../repl/session.js';
 import { displayIntent } from '../../intent/confirm-loop.js';
 import type { ReplState, SessionCallbacks } from '../../repl/types.js';
@@ -179,6 +180,21 @@ export async function replCommand(): Promise<void> {
   } catch (err) {
     spinner.error({ text: `Docker check failed: ${(err as Error).message}` });
     return;
+  }
+
+  // Opportunistic orphan scan — prune stale worktrees from crashed sessions.
+  // Use git rev-parse to find the repo root (process.cwd() may be a subdirectory).
+  try {
+    const { execFile: execFileCb } = await import('node:child_process');
+    const { promisify: pfy } = await import('node:util');
+    const execAsync = pfy(execFileCb);
+    const { stdout } = await execAsync('git', ['rev-parse', '--show-toplevel'], { cwd: process.cwd() });
+    const repoRoot = stdout.trim();
+    if (repoRoot) {
+      await WorktreeManager.pruneOrphans(repoRoot);
+    }
+  } catch {
+    // Non-fatal — orphan scan failure should not block REPL startup
   }
 
   // Project count for banner

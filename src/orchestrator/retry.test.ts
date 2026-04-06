@@ -460,7 +460,7 @@ describe('RetryOrchestrator', () => {
     expect(MockClaudeCodeSession.mock.calls).toHaveLength(2);
     expect(result.verificationResults).toHaveLength(2);
     expect(result.verificationResults[0].passed).toBe(false);
-    expect(result.verificationResults[0].errors[0].summary).toContain('dependency conflict');
+    expect(result.verificationResults[0].errors[0].summary).toContain('npm install failed');
   });
 
   it('17c. non-PreVerifyError in preVerify is always terminal', async () => {
