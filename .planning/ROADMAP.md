@@ -171,4 +171,4 @@ Plans:
 | 24. Slack Bot Adapter | v2.3 | 2/2 | Complete | 2026-04-05 |
 | 25. Tech Debt Cleanup | 2/2 | Complete    | 2026-04-05 | - |
 | 26. Git Worktree Isolation | 2/2 | Complete    | 2026-04-05 | - |
-| 27. Repo Exploration Tasks | v2.4 | 0/3 | Not started | - |
+| 27. Repo Exploration Tasks | 1/3 | In Progress|  | - |
