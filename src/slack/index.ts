@@ -3,6 +3,7 @@ import type { BlockAction } from '@slack/bolt';
 import type { WebClient } from '@slack/web-api';
 import { createSessionState } from '../repl/session.js';
 import { ProjectRegistry } from '../agent/registry.js';
+import { WorktreeManager } from '../agent/worktree-manager.js';
 import { processSlackMention } from './adapter.js';
 import { stripMention } from './blocks.js';
 import type { ThreadSession, SlackContext } from './types.js';
@@ -289,6 +290,22 @@ export async function startSlack(): Promise<void> {
 
   // P3: Periodic eviction of stale sessions
   setInterval(evictStaleSessions, SESSION_TTL_MS / 2);
+
+  // Opportunistic orphan scan — prune stale worktrees from crashed sessions.
+  // Scan all registered project repos, not just cwd — Slack handles multiple repos.
+  try {
+    const registry = new ProjectRegistry();
+    const repoPaths = Object.values(registry.list());
+    for (const repoPath of repoPaths) {
+      try {
+        await WorktreeManager.pruneOrphans(repoPath);
+      } catch {
+        // Per-repo failure — continue to next
+      }
+    }
+  } catch {
+    // Non-fatal — orphan scan failure should not block Slack startup
+  }
 
   await app.start();
   console.log('Slack bot connected via Socket Mode');
