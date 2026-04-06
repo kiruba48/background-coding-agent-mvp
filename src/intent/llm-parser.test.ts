@@ -19,7 +19,7 @@ vi.mock('@anthropic-ai/sdk', () => {
 });
 
 import { llmParse, LlmParseError, summarize } from './llm-parser.js';
-import { IntentSchema } from './types.js';
+import { IntentSchema, TASK_TYPES } from './types.js';
 
 const VALID_RESPONSE = {
   taskType: 'npm-dependency-update',
@@ -360,6 +360,32 @@ describe('llmParse', () => {
       const userMessage = callArgs.messages[0].content as string;
       expect(userMessage).not.toContain('top_level_dirs');
     });
+  });
+});
+
+describe('investigation task type', () => {
+  it('TASK_TYPES includes investigation as 4th element', () => {
+    expect(TASK_TYPES).toContain('investigation');
+    expect(TASK_TYPES[3]).toBe('investigation');
+  });
+
+  it('OUTPUT_SCHEMA taskType enum includes investigation (auto-propagated from TASK_TYPES spread)', () => {
+    // Verify that TASK_TYPES array includes 'investigation' — the OUTPUT_SCHEMA uses [...TASK_TYPES]
+    // so adding 'investigation' to TASK_TYPES auto-propagates to the schema enum
+    const taskTypesArray: readonly string[] = TASK_TYPES;
+    expect(taskTypesArray).toContain('investigation');
+  });
+
+  it('INTENT_SYSTEM_PROMPT contains investigation guidance', async () => {
+    // We verify this indirectly — the system prompt text is passed to the API
+    const mockResponse = {
+      ...VALID_RESPONSE,
+      taskType: 'npm-dependency-update',
+    };
+    mockCreate.mockResolvedValue(makeResponse(mockResponse));
+    await llmParse('explore the branching strategy', 'deps');
+    const callArgs = mockCreate.mock.calls[0][0];
+    expect(callArgs.system).toContain('investigation');
   });
 });
 

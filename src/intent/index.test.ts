@@ -10,6 +10,7 @@ vi.mock('./fast-path.js', async (importOriginal) => {
   return {
     ...actual,
     fastPathParse: vi.fn(),
+    explorationFastPath: vi.fn(),
     validateDepInManifest: vi.fn(),
     detectTaskType: vi.fn(),
   };
@@ -28,11 +29,12 @@ vi.mock('./llm-parser.js', async (importOriginal) => {
 });
 
 import { parseIntent } from './index.js';
-import { fastPathParse, validateDepInManifest, detectTaskType } from './fast-path.js';
+import { fastPathParse, explorationFastPath, validateDepInManifest, detectTaskType } from './fast-path.js';
 import { readManifestDeps } from './context-scanner.js';
 import { llmParse } from './llm-parser.js';
 
 const mockFastPathParse = fastPathParse as MockedFunction<typeof fastPathParse>;
+const mockExplorationFastPath = explorationFastPath as MockedFunction<typeof explorationFastPath>;
 const mockValidateDepInManifest = validateDepInManifest as MockedFunction<typeof validateDepInManifest>;
 const mockDetectTaskType = detectTaskType as MockedFunction<typeof detectTaskType>;
 const mockReadManifestDeps = readManifestDeps as MockedFunction<typeof readManifestDeps>;
@@ -60,7 +62,8 @@ describe('parseIntent coordinator', () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    // Default: fast-path returns null, LLM returns a result
+    // Default: exploration fast-path returns null, fast-path returns null, LLM returns a result
+    mockExplorationFastPath.mockReturnValue(null);
     mockFastPathParse.mockReturnValue(null);
     mockValidateDepInManifest.mockResolvedValue(false);
     mockDetectTaskType.mockResolvedValue(null);
@@ -472,6 +475,46 @@ describe('parseIntent coordinator', () => {
       expect(mockLlmParse).toHaveBeenCalledOnce();
       const llmCallArgs = mockLlmParse.mock.calls[0];
       expect(llmCallArgs[2]).toEqual([historyEntry]);
+    });
+  });
+
+  describe('exploration fast-path', () => {
+    it('routes "explore the branching strategy" to taskType investigation with git-strategy subtype', async () => {
+      mockExplorationFastPath.mockReturnValue({ subtype: 'git-strategy' });
+
+      const registry = makeRegistry();
+      const result = await parseIntent('explore the branching strategy', { repoPath: '/tmp/fake', registry });
+
+      expect(result.taskType).toBe('investigation');
+      expect(result.explorationSubtype).toBe('git-strategy');
+      expect(result.confidence).toBe('high');
+      expect(result.dep).toBeNull();
+      expect(result.version).toBeNull();
+      expect(mockLlmParse).not.toHaveBeenCalled();
+    });
+
+    it('routes "check the CI setup" to taskType investigation with ci-checks subtype', async () => {
+      mockExplorationFastPath.mockReturnValue({ subtype: 'ci-checks' });
+
+      const registry = makeRegistry();
+      const result = await parseIntent('check the CI setup', { repoPath: '/tmp/fake', registry });
+
+      expect(result.taskType).toBe('investigation');
+      expect(result.explorationSubtype).toBe('ci-checks');
+    });
+
+    it('falls through to normal fast-path when explorationFastPath returns null', async () => {
+      mockExplorationFastPath.mockReturnValue(null);
+      const fastResult = { dep: 'lodash', version: 'latest', project: null, createPr: false };
+      mockFastPathParse.mockReturnValue(fastResult);
+      mockValidateDepInManifest.mockResolvedValue(true);
+      mockDetectTaskType.mockResolvedValue('npm-dependency-update');
+
+      const registry = makeRegistry();
+      const result = await parseIntent('update lodash', { repoPath: '/tmp/fake', registry });
+
+      expect(result.taskType).toBe('npm-dependency-update');
+      expect(result.explorationSubtype).toBeUndefined();
     });
   });
 

@@ -1,11 +1,12 @@
 import { z } from 'zod';
 
 /** Shared enum values — used by both Zod schema and OUTPUT_SCHEMA for the LLM */
-export const TASK_TYPES = ['npm-dependency-update', 'maven-dependency-update', 'generic'] as const;
+export const TASK_TYPES = ['npm-dependency-update', 'maven-dependency-update', 'generic', 'investigation'] as const;
 export const TASK_CATEGORIES = ['code-change', 'config-edit', 'refactor'] as const;
 
 export type TaskType = (typeof TASK_TYPES)[number];
 export type TaskCategory = (typeof TASK_CATEGORIES)[number];
+export type ExplorationSubtype = 'git-strategy' | 'ci-checks' | 'project-structure' | 'general';
 
 export const IntentSchema = z.object({
   taskType: z.enum(TASK_TYPES),
@@ -49,4 +50,5 @@ export interface ResolvedIntent {
   clarifications?: ClarificationOption[];  // from LLM when confidence is low
   scopingQuestions: string[];              // LLM-generated scoping questions for generic tasks (empty array when none)
   inheritedFields?: Array<'taskType' | 'repo'>; // fields inherited from session history (follow-up)
+  explorationSubtype?: ExplorationSubtype; // set when taskType is 'investigation'
 }

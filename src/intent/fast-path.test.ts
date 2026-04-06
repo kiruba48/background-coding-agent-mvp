@@ -310,6 +310,60 @@ describe('verb guard', () => {
   });
 });
 
+describe('explorationFastPath', () => {
+  // Import explorationFastPath — added after existing exports in fast-path.ts
+  let explorationFastPath: (input: string) => { subtype: 'git-strategy' | 'ci-checks' | 'project-structure' | 'general' } | null;
+
+  beforeEach(async () => {
+    const mod = await import('./fast-path.js');
+    explorationFastPath = (mod as unknown as Record<string, typeof explorationFastPath>)['explorationFastPath'];
+  });
+
+  it('returns git-strategy for "explore the branching strategy"', () => {
+    expect(explorationFastPath('explore the branching strategy')).toEqual({ subtype: 'git-strategy' });
+  });
+
+  it('returns ci-checks for "investigate the CI pipeline"', () => {
+    expect(explorationFastPath('investigate the CI pipeline')).toEqual({ subtype: 'ci-checks' });
+  });
+
+  it('returns project-structure for "analyze the project structure"', () => {
+    expect(explorationFastPath('analyze the project structure')).toEqual({ subtype: 'project-structure' });
+  });
+
+  it('returns general for "tell me about this repo"', () => {
+    expect(explorationFastPath('tell me about this repo')).toEqual({ subtype: 'general' });
+  });
+
+  it('returns ci-checks for "check the CI setup"', () => {
+    expect(explorationFastPath('check the CI setup')).toEqual({ subtype: 'ci-checks' });
+  });
+
+  it('returns git-strategy for "what is the branching strategy"', () => {
+    expect(explorationFastPath('what is the branching strategy')).toEqual({ subtype: 'git-strategy' });
+  });
+
+  it('returns null for "update lodash" (action verb guard fires)', () => {
+    expect(explorationFastPath('update lodash')).toBeNull();
+  });
+
+  it('returns null for "fix the CI config and explore it" (action verb guard fires on "fix")', () => {
+    expect(explorationFastPath('fix the CI config and explore it')).toBeNull();
+  });
+
+  it('returns null for "replace axios with fetch" (action verb guard fires)', () => {
+    expect(explorationFastPath('replace axios with fetch')).toBeNull();
+  });
+
+  it('returns null for empty string', () => {
+    expect(explorationFastPath('')).toBeNull();
+  });
+
+  it('returns null for non-exploration phrase without exploration verb', () => {
+    expect(explorationFastPath('something completely different')).toBeNull();
+  });
+});
+
 describe('detectTaskType', () => {
   let tmpDir: string;
 

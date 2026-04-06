@@ -18,6 +18,7 @@ const INTENT_SYSTEM_PROMPT = `You are an intent classifier for a coding agent CL
 8. project: if the user mentions a target project/repo name (e.g. "in strategic-planner", "for my-app repo"), extract just the project name. null if not mentioned.
 
 Rules:
+- If the user wants to learn about the repo without making changes (explore, investigate, analyze, check CI, branching strategy, project structure), set taskType to 'investigation'. Investigation tasks are read-only — no code changes, no dependency updates. Set dep to null, version to null, taskCategory to null.
 - If the user mentions a dependency that exists in the manifest, set confidence to 'high'.
 - If the user's request doesn't match a dependency update pattern, set taskType to 'generic'. generic = any explicit code change instruction (replace, rename, edit config, add/remove code). NOT task discovery, analysis, or multi-repo ops.
 - For generic tasks, set dep to null. Set confidence to 'high' when the instruction is a single clear action (e.g., 'replace axios with fetch', 'rename getUserData to fetchUserProfile'). Set confidence to 'low' when the instruction is vague ('clean up the code'), spans multiple unrelated changes, or sounds like task discovery ('find all deprecated calls'). For low-confidence generic tasks, provide clarifications with narrowed-down interpretations.
