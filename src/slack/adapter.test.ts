@@ -501,7 +501,7 @@ describe('processSlackMention', () => {
     vi.mocked(runAgent).mockResolvedValueOnce({
       finalStatus: 'success',
       attempts: 1,
-      sessionResults: [{ status: 'success', finalResponse: 'Added error handling.', toolCallCount: 5, duration: 1000 }],
+      sessionResults: [{ sessionId: 'test-session', status: 'success', finalResponse: 'Added error handling.', toolCallCount: 5, duration: 1000 }],
       verificationResults: [],
     });
 
