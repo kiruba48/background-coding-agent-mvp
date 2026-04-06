@@ -121,12 +121,14 @@ export async function processInput(
       ?? 'task';
     console.log(pc.dim(`\n  Creating PR for: ${description} (${projectName})`));
     try {
-      const creator = new GitHubPRCreator(state.lastIntent!.repo);
+      const repo = state.lastIntent!.repo;
+      const branchToCleanup = state.lastWorktreeBranch;
+      const creator = new GitHubPRCreator(repo);
       const prResult: PRResult = await creator.create({
         taskType: state.lastIntent!.taskType,
         originalTask: description,
         retryResult: state.lastRetryResult,
-        branchOverride: state.lastWorktreeBranch,
+        branchOverride: branchToCleanup,
         description: state.lastIntent?.description,
         taskCategory: state.lastIntent?.taskCategory ?? undefined,
       });
@@ -134,6 +136,17 @@ export async function processInput(
       state.lastRetryResult = undefined;
       state.lastIntent = undefined;
       state.lastWorktreeBranch = undefined;
+      // Clean up the local worktree branch now that it has been pushed to remote
+      if (branchToCleanup && prResult.created && !prResult.error) {
+        try {
+          const { execFile } = await import('node:child_process');
+          const { promisify } = await import('node:util');
+          const execAsync = promisify(execFile);
+          await execAsync('git', ['branch', '-d', branchToCleanup], { cwd: repo });
+        } catch {
+          // Best-effort — branch may already be gone or not fully merged
+        }
+      }
       return { action: 'continue', prResult };
     } catch (err) {
       return { action: 'continue', prResult: { url: '', created: false, branch: '', error: (err as Error).message } };

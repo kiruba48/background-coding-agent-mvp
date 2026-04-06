@@ -332,6 +332,24 @@ describe('src/agent/index.ts', () => {
       expect(mockWorktreeRemove).toHaveBeenCalled();
     });
 
+    it('keeps branch for post-hoc PR when createPr is false and task succeeds', async () => {
+      mockOrchestrator('success');
+      await runAgent(
+        { taskType: 'generic', repo: '/tmp/workspace', turnLimit: 5, timeoutMs: 60_000, maxRetries: 1, description: 'fix', createPr: false },
+        {}
+      );
+      expect(mockWorktreeRemove).toHaveBeenCalledWith(expect.objectContaining({ keepBranch: true }));
+    });
+
+    it('does not keep branch when createPr is true and task fails', async () => {
+      mockOrchestrator('failed');
+      await runAgent(
+        { taskType: 'generic', repo: '/tmp/workspace', turnLimit: 5, timeoutMs: 60_000, maxRetries: 1, description: 'fix', createPr: true },
+        {}
+      );
+      expect(mockWorktreeRemove).toHaveBeenCalledWith(expect.objectContaining({ keepBranch: false }));
+    });
+
     it('passes worktree path as workspaceDir to RetryOrchestrator', async () => {
       mockOrchestrator('success');
       await runAgent(

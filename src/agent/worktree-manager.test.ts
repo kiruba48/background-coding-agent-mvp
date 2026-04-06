@@ -67,19 +67,25 @@ describe('WorktreeManager', () => {
     );
   });
 
-  // Test 4: create() writes JSON PID sentinel with process.pid and branch name
-  it('4. create() writes JSON PID sentinel with process.pid and branch name', async () => {
+  // Test 4: create() writes JSON PID sentinel with process.pid, branch name, and createdAt
+  it('4. create() writes JSON PID sentinel with process.pid, branch, and createdAt', async () => {
+    const before = Date.now();
     const wm = new WorktreeManager('/code/my-app', '/code/.bg-agent-my-app-a1b2c3', 'agent/task-2026-04-05-a1b2c3');
     await wm.create();
 
     expect(mockWriteFile).toHaveBeenCalledWith(
       '/code/.bg-agent-my-app-a1b2c3/.bg-agent-pid',
-      JSON.stringify({ pid: process.pid, branch: 'agent/task-2026-04-05-a1b2c3' })
+      expect.any(String),
     );
+    const written = JSON.parse(mockWriteFile.mock.calls[0][1] as string);
+    expect(written.pid).toBe(process.pid);
+    expect(written.branch).toBe('agent/task-2026-04-05-a1b2c3');
+    expect(written.createdAt).toBeGreaterThanOrEqual(before);
+    expect(written.createdAt).toBeLessThanOrEqual(Date.now());
   });
 
-  // Test 5: remove() calls git worktree remove --force then git branch -D
-  it('5. remove() calls git worktree remove --force then git branch -D', async () => {
+  // Test 5: remove() calls git worktree remove --force then git branch -d (safe delete)
+  it('5. remove() calls git worktree remove --force then git branch -d', async () => {
     const wm = new WorktreeManager('/code/my-app', '/code/.bg-agent-my-app-a1b2c3', 'agent/task-2026-04-05-a1b2c3');
     await wm.remove();
 
@@ -90,9 +96,26 @@ describe('WorktreeManager', () => {
     );
     expect(mockExecFileAsync).toHaveBeenCalledWith(
       'git',
-      ['branch', '-D', 'agent/task-2026-04-05-a1b2c3'],
+      ['branch', '-d', 'agent/task-2026-04-05-a1b2c3'],
       { cwd: '/code/my-app' }
     );
+  });
+
+  // Test 5b: remove({ keepBranch: true }) skips branch deletion
+  it('5b. remove({ keepBranch: true }) skips branch deletion', async () => {
+    const wm = new WorktreeManager('/code/my-app', '/code/.bg-agent-my-app-a1b2c3', 'agent/task-2026-04-05-a1b2c3');
+    await wm.remove({ keepBranch: true });
+
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      'git',
+      ['worktree', 'remove', '--force', '/code/.bg-agent-my-app-a1b2c3'],
+      { cwd: '/code/my-app' }
+    );
+    // Should NOT have called git branch -d
+    const branchCalls = mockExecFileAsync.mock.calls.filter(
+      (call: unknown[]) => Array.isArray(call[1]) && (call[1] as string[])[0] === 'branch'
+    );
+    expect(branchCalls).toHaveLength(0);
   });
 
   // Test 6: remove() does not throw when git worktree remove fails
@@ -103,8 +126,8 @@ describe('WorktreeManager', () => {
     await expect(wm.remove()).resolves.toBeUndefined();
   });
 
-  // Test 7: remove() does not throw when git branch -D fails
-  it('7. remove() does not throw when git branch -D fails', async () => {
+  // Test 7: remove() does not throw when git branch -d fails
+  it('7. remove() does not throw when git branch -d fails', async () => {
     mockExecFileAsync
       .mockResolvedValueOnce({ stdout: '', stderr: '' }) // worktree remove succeeds
       .mockRejectedValueOnce(new Error('branch not found'));  // branch -D fails
@@ -118,7 +141,7 @@ describe('WorktreeManager', () => {
     const alivePid = process.pid; // current process is alive
     mockReaddir.mockResolvedValue(['.bg-agent-my-app-aabbcc']);
     mockStat.mockResolvedValue({ isDirectory: () => true });
-    mockReadFile.mockResolvedValue(JSON.stringify({ pid: alivePid, branch: 'agent/branch-aabbcc' }));
+    mockReadFile.mockResolvedValue(JSON.stringify({ pid: alivePid, branch: 'agent/branch-aabbcc', createdAt: Date.now() }));
 
     const killSpy = vi.spyOn(process, 'kill').mockReturnValue(true); // alive — no throw
 
@@ -139,7 +162,7 @@ describe('WorktreeManager', () => {
     const deadPid = 99999;
     mockReaddir.mockResolvedValue(['.bg-agent-my-app-deadpid']);
     mockStat.mockResolvedValue({ isDirectory: () => true });
-    mockReadFile.mockResolvedValue(JSON.stringify({ pid: deadPid, branch: 'agent/branch-deadpid' }));
+    mockReadFile.mockResolvedValue(JSON.stringify({ pid: deadPid, branch: 'agent/branch-deadpid', createdAt: Date.now() }));
 
     const esrchError = Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => {
@@ -185,7 +208,7 @@ describe('WorktreeManager', () => {
     const deadPid = 99998;
     mockReaddir.mockResolvedValue(['.bg-agent-my-app-fail1', '.bg-agent-my-app-fail2']);
     mockStat.mockResolvedValue({ isDirectory: () => true });
-    mockReadFile.mockResolvedValue(JSON.stringify({ pid: deadPid, branch: 'agent/branch' }));
+    mockReadFile.mockResolvedValue(JSON.stringify({ pid: deadPid, branch: 'agent/branch', createdAt: Date.now() }));
 
     const esrchError = Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => {
@@ -223,8 +246,30 @@ describe('WorktreeManager', () => {
     expect(removedPaths).not.toContain('/code/.bg-agent-other-app-aabbcc');
   });
 
-  // Test 13: path and branch getters return constructor values
-  it('13. path and branch getters return constructor values', () => {
+  // Test 13: pruneOrphans() treats stale sentinels (>24h) as orphans despite live PID
+  it('13. pruneOrphans() treats stale sentinels (>24h) as orphans despite live PID', async () => {
+    const alivePid = process.pid;
+    const staleTime = Date.now() - (25 * 60 * 60 * 1000); // 25 hours ago
+    mockReaddir.mockResolvedValue(['.bg-agent-my-app-stale']);
+    mockStat.mockResolvedValue({ isDirectory: () => true });
+    mockReadFile.mockResolvedValue(JSON.stringify({ pid: alivePid, branch: 'agent/stale-branch', createdAt: staleTime }));
+
+    const killSpy = vi.spyOn(process, 'kill').mockReturnValue(true);
+
+    await WorktreeManager.pruneOrphans('/code/my-app');
+
+    // Should prune despite PID being alive — sentinel is stale
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      'git',
+      ['worktree', 'remove', '--force', '/code/.bg-agent-my-app-stale'],
+      { cwd: '/code/my-app' }
+    );
+
+    killSpy.mockRestore();
+  });
+
+  // Test 14: path and branch getters return constructor values
+  it('14. path and branch getters return constructor values', () => {
     const wm = new WorktreeManager(
       '/code/my-app',
       '/code/.bg-agent-my-app-a1b2c3',

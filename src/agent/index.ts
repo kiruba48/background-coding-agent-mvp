@@ -133,22 +133,22 @@ export async function runAgent(
   let effectiveWorkspaceDir = options.repo;
   let effectiveBranchOverride = options.branchOverride;
   let worktreeManager: WorktreeManager | null = null;
-
-  if (!context.skipWorktree) {
-    const suffix = randomBytes(3).toString('hex');
-    const worktreePath = WorktreeManager.buildWorktreePath(options.repo, suffix);
-    const branchInput = options.taskType === 'generic' && options.description
-      ? `${options.taskCategory ?? 'generic'} ${options.description.slice(0, 40)}`
-      : options.taskType;
-    const branchName = generateBranchName(branchInput);
-    worktreeManager = new WorktreeManager(options.repo, worktreePath, branchName);
-    await worktreeManager.create();
-
-    effectiveWorkspaceDir = worktreePath;
-    effectiveBranchOverride = branchName;
-  }
+  let shouldKeepBranch = false;
 
   try {
+    if (!context.skipWorktree) {
+      const suffix = randomBytes(3).toString('hex');
+      const worktreePath = WorktreeManager.buildWorktreePath(options.repo, suffix);
+      const branchInput = options.taskType === 'generic' && options.description
+        ? `${options.taskCategory ?? 'generic'} ${options.description.slice(0, 40)}`
+        : options.taskType;
+      const branchName = generateBranchName(branchInput);
+      worktreeManager = new WorktreeManager(options.repo, worktreePath, branchName);
+      await worktreeManager.create();
+
+      effectiveWorkspaceDir = worktreePath;
+      effectiveBranchOverride = branchName;
+    }
     // Create RetryOrchestrator — signal is threaded through SessionConfig
     const orchestrator = new RetryOrchestrator(
       {
@@ -278,12 +278,19 @@ export async function runAgent(
     // Expose worktree branch on result for REPL post-hoc PR support
     retryResult.worktreeBranch = effectiveBranchOverride;
 
+    // Keep branch alive for post-hoc PR when createPr was false and task succeeded.
+    // Branch lives in the main repo's refs — only the worktree directory is removed.
+    if (!options.createPr && retryResult.finalStatus === 'success') {
+      shouldKeepBranch = true;
+    }
+
     // Return result directly — no exit codes, no process termination
     return retryResult;
   } finally {
-    // Clean up worktree AFTER PR creation completes
+    // Clean up worktree AFTER PR creation completes.
+    // keepBranch preserves the branch for post-hoc PR in REPL mode.
     if (worktreeManager) {
-      await worktreeManager.remove();
+      await worktreeManager.remove({ keepBranch: shouldKeepBranch, logger: childLogger });
     }
   }
 }

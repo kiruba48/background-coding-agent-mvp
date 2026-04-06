@@ -182,9 +182,17 @@ export async function replCommand(): Promise<void> {
     return;
   }
 
-  // Opportunistic orphan scan — prune stale worktrees from crashed sessions
+  // Opportunistic orphan scan — prune stale worktrees from crashed sessions.
+  // Use git rev-parse to find the repo root (process.cwd() may be a subdirectory).
   try {
-    await WorktreeManager.pruneOrphans(process.cwd());
+    const { execFile: execFileCb } = await import('node:child_process');
+    const { promisify: pfy } = await import('node:util');
+    const execAsync = pfy(execFileCb);
+    const { stdout } = await execAsync('git', ['rev-parse', '--show-toplevel'], { cwd: process.cwd() });
+    const repoRoot = stdout.trim();
+    if (repoRoot) {
+      await WorktreeManager.pruneOrphans(repoRoot);
+    }
   } catch {
     // Non-fatal — orphan scan failure should not block REPL startup
   }

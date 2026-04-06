@@ -29,7 +29,19 @@ const WORKTREE_PREFIX = '.bg-agent-';
 interface PidSentinel {
   pid: number;
   branch: string;
+  createdAt: number;  // Date.now() — used for staleness check during orphan pruning
 }
+
+/** Options for the remove() method. */
+export interface RemoveOptions {
+  /** When true, skip `git branch -d` — branch is preserved for post-hoc PR. */
+  keepBranch?: boolean;
+  /** Logger for warning on best-effort failures. */
+  logger?: pino.Logger;
+}
+
+/** Sentinel files older than this are considered stale regardless of PID liveness (PID reuse guard). */
+const STALE_SENTINEL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 /**
  * Manages the lifecycle of a single git worktree used by an agent session.
@@ -90,35 +102,46 @@ export class WorktreeManager {
 
     await writeFile(
       path.join(this.worktreePath, SENTINEL_FILE),
-      JSON.stringify({ pid: process.pid, branch: this.branchName }),
+      JSON.stringify({ pid: process.pid, branch: this.branchName, createdAt: Date.now() }),
     );
   }
 
   /**
-   * Remove the worktree and delete the branch — best-effort on both.
+   * Remove the worktree and optionally delete the branch — best-effort on both.
    *
    * Both operations are wrapped individually so a failure on one does not
    * prevent the other from running. Neither error is rethrown.
+   *
+   * @param opts.keepBranch - When true, skip branch deletion (for post-hoc PR)
+   * @param opts.logger     - Optional logger for warning on best-effort failures
    */
-  async remove(): Promise<void> {
+  async remove(opts?: RemoveOptions): Promise<void> {
+    const { keepBranch = false, logger } = opts ?? {};
+
     try {
       await execFileAsync(
         'git',
         ['worktree', 'remove', '--force', this.worktreePath],
         { cwd: this.repoDir },
       );
-    } catch {
-      // Best-effort — worktree may already be removed or repo in bad state
+    } catch (err) {
+      logger?.warn({ error: (err as Error).message, worktreePath: this.worktreePath },
+        'Best-effort worktree removal failed');
     }
 
-    try {
-      await execFileAsync(
-        'git',
-        ['branch', '-D', this.branchName],
-        { cwd: this.repoDir },
-      );
-    } catch {
-      // Best-effort — branch may have already been deleted (e.g., by PR merge)
+    if (!keepBranch) {
+      try {
+        // Use -d (safe delete) — refuses to delete unmerged branches.
+        // Orphan pruning uses -D for confirmed-dead worktrees.
+        await execFileAsync(
+          'git',
+          ['branch', '-d', this.branchName],
+          { cwd: this.repoDir },
+        );
+      } catch (err) {
+        logger?.warn({ error: (err as Error).message, branch: this.branchName },
+          'Best-effort branch deletion failed');
+      }
     }
   }
 
@@ -174,7 +197,9 @@ export class WorktreeManager {
             typeof parsed === 'object' &&
             'pid' in parsed &&
             typeof (parsed as PidSentinel).pid === 'number' &&
-            !isNaN((parsed as PidSentinel).pid)
+            !isNaN((parsed as PidSentinel).pid) &&
+            'branch' in parsed &&
+            typeof (parsed as PidSentinel).branch === 'string'
           ) {
             sentinel = parsed as PidSentinel;
           }
@@ -182,21 +207,29 @@ export class WorktreeManager {
           // Missing or unparseable sentinel — treat as orphan
         }
 
-        // Determine liveness
+        // Determine liveness — guard against PID reuse with staleness check
         let isOrphan = sentinel === null;
         if (sentinel !== null) {
-          try {
-            process.kill(sentinel.pid, 0);
-            // No error thrown — process is alive, skip
-            isOrphan = false;
-          } catch (err: unknown) {
-            const code = (err as NodeJS.ErrnoException).code;
-            if (code === 'ESRCH') {
-              // Process does not exist — orphan
-              isOrphan = true;
-            } else {
-              // EPERM or other — process exists, treat as alive
+          const age = Date.now() - (sentinel.createdAt ?? 0);
+          if (age > STALE_SENTINEL_MS) {
+            // Sentinel older than 24h — stale regardless of PID (PID reuse guard)
+            isOrphan = true;
+            logger?.warn({ worktreePath, age: Math.round(age / 3600_000) + 'h' },
+              'Stale sentinel — treating as orphan despite live PID');
+          } else {
+            try {
+              process.kill(sentinel.pid, 0);
+              // No error thrown — process is alive, skip
               isOrphan = false;
+            } catch (err: unknown) {
+              const code = (err as NodeJS.ErrnoException).code;
+              if (code === 'ESRCH') {
+                // Process does not exist — orphan
+                isOrphan = true;
+              } else {
+                // EPERM or other — process exists, treat as alive
+                isOrphan = false;
+              }
             }
           }
         }
