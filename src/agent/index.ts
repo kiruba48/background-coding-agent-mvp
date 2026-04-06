@@ -97,7 +97,7 @@ export async function runAgent(
   }
 
   // Host-side npm install: regenerate lockfile after agent edits package.json.
-  // Agent SDK session has no network access; npm install must run on host.
+  // Runs on the host so the worktree lockfile stays consistent with the host environment.
   const preVerify = options.taskType === 'npm-dependency-update'
     ? async (workspaceDir: string): Promise<void> => {
         childLogger.info('Running host-side npm install to regenerate lockfile...');
@@ -170,8 +170,8 @@ export async function runAgent(
     // Create metrics collector
     const metrics = new MetricsCollector();
 
-    // Resolve "latest" to a concrete version on the host (which has network access).
-    // The Docker agent has no network — without this it wastes 10+ turns trying npm show/curl.
+    // Resolve "latest" to a concrete version on the host before building the prompt.
+    // Avoids the agent wasting turns trying npm show/curl inside Docker.
     let resolvedVersion = options.targetVersion;
     if (options.taskType === 'npm-dependency-update' && options.dep && resolvedVersion === 'latest') {
       childLogger.info({ dep: options.dep }, 'Resolving "latest" version on host...');
