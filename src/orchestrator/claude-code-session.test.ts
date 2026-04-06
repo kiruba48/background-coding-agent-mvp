@@ -481,6 +481,115 @@ describe('ClaudeCodeSession', () => {
     expect(result.hookSpecificOutput?.permissionDecision).not.toBe('deny');
   });
 
+  // Test 35: readOnly session blocks destructive Bash commands (V1: EXPLR-04)
+  it('35. PreToolUse hook blocks "git commit" in read-only session', async () => {
+    mockQuery.mockReturnValue(makeQueryGen([makeSuccessResult()]));
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace', readOnly: true });
+    await session.run('task');
+    const callArg = mockQuery.mock.calls[0][0];
+    const hookFn = callArg.options.hooks.PreToolUse[0].hooks[0];
+    const input = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      tool_input: { command: 'git commit -m "test"' },
+      tool_use_id: 'ro-bash-1',
+      session_id: 's', transcript_path: 't', cwd: '/tmp/workspace',
+    };
+    const result = await hookFn(input, 'ro-bash-1', { signal: new AbortController().signal });
+    expect(result.hookSpecificOutput?.permissionDecision).toBe('deny');
+    expect(result.systemMessage).toContain('blocked: read-only session');
+  });
+
+  // Test 36: readOnly session blocks "git push"
+  it('36. PreToolUse hook blocks "git push" in read-only session', async () => {
+    mockQuery.mockReturnValue(makeQueryGen([makeSuccessResult()]));
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace', readOnly: true });
+    await session.run('task');
+    const callArg = mockQuery.mock.calls[0][0];
+    const hookFn = callArg.options.hooks.PreToolUse[0].hooks[0];
+    const input = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      tool_input: { command: 'git push origin main' },
+      tool_use_id: 'ro-bash-2',
+      session_id: 's', transcript_path: 't', cwd: '/tmp/workspace',
+    };
+    const result = await hookFn(input, 'ro-bash-2', { signal: new AbortController().signal });
+    expect(result.hookSpecificOutput?.permissionDecision).toBe('deny');
+  });
+
+  // Test 37: readOnly session blocks "npm publish"
+  it('37. PreToolUse hook blocks "npm publish" in read-only session', async () => {
+    mockQuery.mockReturnValue(makeQueryGen([makeSuccessResult()]));
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace', readOnly: true });
+    await session.run('task');
+    const callArg = mockQuery.mock.calls[0][0];
+    const hookFn = callArg.options.hooks.PreToolUse[0].hooks[0];
+    const input = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      tool_input: { command: 'npm publish --access public' },
+      tool_use_id: 'ro-bash-3',
+      session_id: 's', transcript_path: 't', cwd: '/tmp/workspace',
+    };
+    const result = await hookFn(input, 'ro-bash-3', { signal: new AbortController().signal });
+    expect(result.hookSpecificOutput?.permissionDecision).toBe('deny');
+  });
+
+  // Test 38: readOnly session allows safe Bash commands like "ls", "cat", "git log"
+  it('38. PreToolUse hook allows "git log" in read-only session', async () => {
+    mockQuery.mockReturnValue(makeQueryGen([makeSuccessResult()]));
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace', readOnly: true });
+    await session.run('task');
+    const callArg = mockQuery.mock.calls[0][0];
+    const hookFn = callArg.options.hooks.PreToolUse[0].hooks[0];
+    const input = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      tool_input: { command: 'git log --oneline -20' },
+      tool_use_id: 'ro-bash-4',
+      session_id: 's', transcript_path: 't', cwd: '/tmp/workspace',
+    };
+    const result = await hookFn(input, 'ro-bash-4', { signal: new AbortController().signal });
+    expect(result.hookSpecificOutput?.permissionDecision).not.toBe('deny');
+  });
+
+  // Test 39: readOnly session blocks "rm -rf"
+  it('39. PreToolUse hook blocks "rm -rf" in read-only session', async () => {
+    mockQuery.mockReturnValue(makeQueryGen([makeSuccessResult()]));
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace', readOnly: true });
+    await session.run('task');
+    const callArg = mockQuery.mock.calls[0][0];
+    const hookFn = callArg.options.hooks.PreToolUse[0].hooks[0];
+    const input = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      tool_input: { command: 'rm -rf /tmp/something' },
+      tool_use_id: 'ro-bash-5',
+      session_id: 's', transcript_path: 't', cwd: '/tmp/workspace',
+    };
+    const result = await hookFn(input, 'ro-bash-5', { signal: new AbortController().signal });
+    expect(result.hookSpecificOutput?.permissionDecision).toBe('deny');
+  });
+
+  // Test 40: non-readOnly session does NOT block destructive Bash
+  it('40. PreToolUse hook allows "git commit" in non-readOnly session', async () => {
+    mockQuery.mockReturnValue(makeQueryGen([makeSuccessResult()]));
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace', readOnly: false });
+    await session.run('task');
+    const callArg = mockQuery.mock.calls[0][0];
+    const hookFn = callArg.options.hooks.PreToolUse[0].hooks[0];
+    const input = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      tool_input: { command: 'git commit -m "test"' },
+      tool_use_id: 'ro-bash-6',
+      session_id: 's', transcript_path: 't', cwd: '/tmp/workspace',
+    };
+    const result = await hookFn(input, 'ro-bash-6', { signal: new AbortController().signal });
+    expect(result.hookSpecificOutput?.permissionDecision).not.toBe('deny');
+  });
+
   // Test 34: non-readOnly session still allows Write inside repo (existing behavior)
   it('34. PreToolUse hook allows Write inside repo for non-readOnly session', async () => {
     mockQuery.mockReturnValue(makeQueryGen([makeSuccessResult()]));

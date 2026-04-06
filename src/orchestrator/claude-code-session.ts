@@ -19,6 +19,11 @@ const execFileAsync = promisify(execFile);
 
 // Patterns for sensitive files that must never be written by the agent.
 // Patterns use (?:^|\/) to match at any directory depth (V-2).
+// Destructive Bash commands blocked in read-only sessions (V1: EXPLR-04 defense-in-depth).
+// Docker :ro mount is the primary enforcement; this catches state-modifying commands
+// that operate outside the mounted filesystem (git, npm publish, curl POST, etc.).
+const DESTRUCTIVE_BASH_RE = /\b(?:git\s+(?:commit|push|merge|rebase|reset|checkout\s+-b|cherry-pick|tag)|npm\s+(?:publish|version)|rm\s+-|chmod|chown|curl\s+.*-(?:X\s+(?:POST|PUT|DELETE|PATCH)|d\s)|wget\s+.*--post)/i;
+
 const SENSITIVE_PATTERNS = [
   /(?:^|\/)\.env$/,
   /(?:^|\/)\.env\./,
@@ -46,17 +51,35 @@ function buildPreToolUseHook(workspaceDir: string, logger: pino.Logger, readOnly
   return async (input, toolUseId) => {
     const preInput = input as PreToolUseHookInput;
 
-    // Read-only session: block all Write/Edit tools immediately
-    if (readOnly && (preInput.tool_name === 'Write' || preInput.tool_name === 'Edit')) {
-      logger.warn({ type: 'audit', tool: preInput.tool_name, toolUseId }, 'tool_blocked_readonly');
-      return {
-        systemMessage: 'blocked: read-only session — this investigation task cannot modify files',
-        hookSpecificOutput: {
-          hookEventName: 'PreToolUse',
-          permissionDecision: 'deny' as const,
-          permissionDecisionReason: 'Read-only session: Write/Edit tools are disabled',
-        },
-      };
+    // Read-only session: block Write/Edit tools and destructive Bash commands
+    if (readOnly) {
+      if (preInput.tool_name === 'Write' || preInput.tool_name === 'Edit') {
+        logger.warn({ type: 'audit', tool: preInput.tool_name, toolUseId }, 'tool_blocked_readonly');
+        return {
+          systemMessage: 'blocked: read-only session — this investigation task cannot modify files',
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse',
+            permissionDecision: 'deny' as const,
+            permissionDecisionReason: 'Read-only session: Write/Edit tools are disabled',
+          },
+        };
+      }
+
+      // Block destructive Bash commands that bypass :ro mount (EXPLR-04 defense-in-depth)
+      if (preInput.tool_name === 'Bash') {
+        const cmd = ((preInput.tool_input as Record<string, unknown>)?.command ?? '') as string;
+        if (DESTRUCTIVE_BASH_RE.test(cmd)) {
+          logger.warn({ type: 'audit', tool: 'Bash', command: cmd.slice(0, 100), toolUseId }, 'tool_blocked_readonly_bash');
+          return {
+            systemMessage: 'blocked: read-only session — destructive commands are not allowed in investigation tasks',
+            hookSpecificOutput: {
+              hookEventName: 'PreToolUse',
+              permissionDecision: 'deny' as const,
+              permissionDecisionReason: 'Read-only session: destructive Bash command blocked',
+            },
+          };
+        }
+      }
     }
 
     const toolInput = preInput.tool_input as Record<string, unknown>;

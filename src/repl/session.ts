@@ -10,7 +10,7 @@ import path from 'node:path';
 import pc from 'picocolors';
 import type { ReplState, SessionCallbacks, SessionOutput, TaskHistoryEntry, ScopeHint } from './types.js';
 import type { PRResult, RetryResult } from '../types.js';
-import { MAX_HISTORY_ENTRIES, toHistoryStatus } from './types.js';
+import { MAX_HISTORY_ENTRIES, MAX_HISTORY_DESCRIPTION_LENGTH, toHistoryStatus } from './types.js';
 
 /** Maximum input length before LLM dispatch (characters) */
 const MAX_INPUT_LENGTH = 2000;
@@ -278,8 +278,10 @@ export async function processInput(
       if (report) {
         console.log('\n' + report + '\n');
 
-        // Save report to .reports/ if user asked to save (host-side write, agent never writes files)
-        if (/\bsave\b/i.test(trimmed)) {
+        // Save report to .reports/ if user explicitly asked to save the report.
+        // Only match "save" at the start or after "and" to avoid false positives like
+        // "explore how to save data" or "investigate the save mechanism" (P3).
+        if (/(?:^|\band\b)\s*save\b/i.test(trimmed)) {
           const reportsDir = path.join(confirmed.repo, '.reports');
           fs.mkdirSync(reportsDir, { recursive: true });
           const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -313,7 +315,7 @@ export async function processInput(
       repo: confirmed.repo,
       status: historyStatus,
       description: confirmed.taskType === 'generic' || confirmed.taskType === 'investigation'
-        ? (confirmed.description ?? trimmed.slice(0, 200))
+        ? (confirmed.description ?? trimmed.slice(0, MAX_HISTORY_DESCRIPTION_LENGTH))
         : confirmed.dep
           ? `update ${confirmed.dep} to ${confirmed.version ?? 'latest'}`
           : undefined,

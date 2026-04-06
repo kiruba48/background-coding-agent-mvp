@@ -4,6 +4,8 @@ import { buildGenericPrompt } from './generic.js';
 import { buildExplorationPrompt } from './exploration.js';
 export { buildMavenPrompt, buildNpmPrompt, buildGenericPrompt, buildExplorationPrompt };
 
+import type { ExplorationSubtype } from '../intent/types.js';
+
 export interface PromptOptions {
   taskType: string;
   dep?: string;
@@ -11,7 +13,7 @@ export interface PromptOptions {
   description?: string;  // raw NL task description for generic tasks
   repoPath?: string;     // optional repo path for manifest dependency injection
   scopeHints?: string[]; // scoping dialogue answers for generic tasks
-  explorationSubtype?: string; // subtype for investigation tasks
+  explorationSubtype?: ExplorationSubtype; // subtype for investigation tasks
 }
 
 /**

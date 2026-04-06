@@ -1,11 +1,11 @@
-export type ExplorationSubtype = 'git-strategy' | 'ci-checks' | 'project-structure' | 'general';
+import type { ExplorationSubtype } from '../intent/types.js';
 
 interface SubtypeConfig {
   name: string;
   focusSection: string;
 }
 
-const SUBTYPES: Record<string, SubtypeConfig> = {
+const SUBTYPES: Record<ExplorationSubtype, SubtypeConfig> = {
   'git-strategy': {
     name: 'Git Strategy',
     focusSection: `FOCUS: Git branching strategy
@@ -54,7 +54,7 @@ Report sections: Project Overview, Technology Stack, Structure, Getting Started`
  * @param subtype - Exploration subtype determining the FOCUS section content
  * @returns Prompt string for the read-only investigation agent
  */
-export function buildExplorationPrompt(description: string, subtype: string = 'general'): string {
+export function buildExplorationPrompt(description: string, subtype: ExplorationSubtype = 'general'): string {
   const config = SUBTYPES[subtype] ?? SUBTYPES['general'];
   return [
     `You are a read-only repository investigator. Your task: ${description}`,

@@ -28,20 +28,21 @@ describe('buildExplorationPrompt', () => {
     expect(prompt).toContain('FOCUS: General repository overview');
   });
 
-  it('unknown subtype falls back to "general"', () => {
-    const prompt = buildExplorationPrompt('explore CI', 'unknown-type');
+  it('unknown subtype falls back to "general" at runtime', () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const prompt = buildExplorationPrompt('explore CI', 'unknown-type' as any);
     expect(prompt).toContain('FOCUS: General repository overview');
   });
 
   it('all prompts contain "Do NOT create, edit, or delete any files"', () => {
-    for (const subtype of ['git-strategy', 'ci-checks', 'project-structure', 'general']) {
+    for (const subtype of ['git-strategy', 'ci-checks', 'project-structure', 'general'] as const) {
       const prompt = buildExplorationPrompt('explore', subtype);
       expect(prompt).toContain('Do NOT create, edit, or delete any files');
     }
   });
 
   it('all prompts contain "OUTPUT: Produce a structured markdown report"', () => {
-    for (const subtype of ['git-strategy', 'ci-checks', 'project-structure', 'general']) {
+    for (const subtype of ['git-strategy', 'ci-checks', 'project-structure', 'general'] as const) {
       const prompt = buildExplorationPrompt('explore', subtype);
       expect(prompt).toContain('OUTPUT: Produce a structured markdown report');
     }

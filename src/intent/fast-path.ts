@@ -32,12 +32,15 @@ const PR_SUFFIX = /\s+(?:and\s+)?(?:create|raise|open|make)\s+(?:a\s+)?(?:pr|pul
 // Fires before PR suffix strip so "replace axios with fetch and create PR" is also blocked.
 export const REFACTORING_VERB_GUARD = /^(?:replace|rename|move|extract|migrate|rewrite)\s/i;
 
+// Exploration-relevant nouns that must appear for question-prefix patterns (P1 narrowing).
+// Without this, "what is the correct version of node" would misclassify as investigation.
+const EXPLORATION_NOUNS = /\b(?:branch(?:ing)?|git|ci|cd|pipeline|workflow|structure|layout|architecture|directory|folder|organization|repo|project|codebase)\b/i;
+
 export const EXPLORATION_PATTERNS = [
   /^(?:explore|investigate|analyze|analyse|examine|inspect)\b/i,
   /\b(?:branching\s+strategy|git\s+strategy|branch\s+strategy)\b/i,
   /\b(?:check|look\s+at|show\s+me)\s+(?:the\s+)?(?:ci|cd|pipeline|workflows?)\b/i,
   /\b(?:project\s+structure|repo\s+structure|codebase\s+structure|directory\s+structure)\b/i,
-  /^(?:what(?:'s|\s+is)\s+the|tell\s+me\s+about)\s+/i,
 ];
 
 export const ACTION_VERB_GUARD = /\b(?:update|upgrade|bump|fix|add|remove|delete|create|refactor|rename|move|replace|implement|migrate)\b/i;
@@ -51,8 +54,16 @@ export function explorationFastPath(input: string): ExplorationFastPathResult | 
   if (!trimmed) return null;
   if (ACTION_VERB_GUARD.test(trimmed)) return null;
 
-  const hasExplorationVerb = EXPLORATION_PATTERNS.some(p => p.test(trimmed));
-  if (!hasExplorationVerb) return null;
+  const hasExplorationPattern = EXPLORATION_PATTERNS.some(p => p.test(trimmed));
+
+  // Question-prefix patterns ("what is the...", "tell me about...") require an
+  // exploration-relevant noun to avoid misclassifying general questions (P1).
+  const hasQuestionPrefix = /^(?:what(?:'s|\s+is)\s+the|tell\s+me\s+about)\s+/i.test(trimmed);
+  if (hasQuestionPrefix && EXPLORATION_NOUNS.test(trimmed)) {
+    // Falls through to subtype classification below
+  } else if (!hasExplorationPattern) {
+    return null;
+  }
 
   if (/\b(?:branch|git\s+strategy|branching)\b/i.test(trimmed)) return { subtype: 'git-strategy' };
   if (/\b(?:ci|cd|pipeline|workflow|github.?action)\b/i.test(trimmed)) return { subtype: 'ci-checks' };

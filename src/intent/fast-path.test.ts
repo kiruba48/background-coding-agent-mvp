@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { fastPathParse, validateDepInManifest, detectTaskType } from './fast-path.js';
+import { fastPathParse, validateDepInManifest, detectTaskType, explorationFastPath } from './fast-path.js';
 
 describe('fastPathParse', () => {
   it('"update recharts" returns { dep: "recharts", version: "latest", project: null }', () => {
@@ -311,14 +311,6 @@ describe('verb guard', () => {
 });
 
 describe('explorationFastPath', () => {
-  // Import explorationFastPath — added after existing exports in fast-path.ts
-  let explorationFastPath: (input: string) => { subtype: 'git-strategy' | 'ci-checks' | 'project-structure' | 'general' } | null;
-
-  beforeEach(async () => {
-    const mod = await import('./fast-path.js');
-    explorationFastPath = (mod as unknown as Record<string, typeof explorationFastPath>)['explorationFastPath'];
-  });
-
   it('returns git-strategy for "explore the branching strategy"', () => {
     expect(explorationFastPath('explore the branching strategy')).toEqual({ subtype: 'git-strategy' });
   });
@@ -361,6 +353,31 @@ describe('explorationFastPath', () => {
 
   it('returns null for non-exploration phrase without exploration verb', () => {
     expect(explorationFastPath('something completely different')).toBeNull();
+  });
+
+  // P1 regression tests: question-prefix patterns require exploration-relevant nouns
+  it('returns null for "what is the correct version of node" (no exploration noun)', () => {
+    expect(explorationFastPath('what is the correct version of node')).toBeNull();
+  });
+
+  it('returns null for "tell me about the error in auth.ts" (no exploration noun)', () => {
+    expect(explorationFastPath('tell me about the error in auth.ts')).toBeNull();
+  });
+
+  it('returns null for "what\'s the best approach to implement caching" (no exploration noun)', () => {
+    expect(explorationFastPath("what's the best approach to implement caching")).toBeNull();
+  });
+
+  it('returns git-strategy for "what is the git branching strategy" (question + exploration noun)', () => {
+    expect(explorationFastPath('what is the git branching strategy')).toEqual({ subtype: 'git-strategy' });
+  });
+
+  it('returns general for "tell me about the project structure" (question + exploration noun)', () => {
+    expect(explorationFastPath('tell me about the project structure')).toEqual({ subtype: 'project-structure' });
+  });
+
+  it('returns general for "tell me about this repo" (question + exploration noun)', () => {
+    expect(explorationFastPath('tell me about this repo')).toEqual({ subtype: 'general' });
   });
 });
 

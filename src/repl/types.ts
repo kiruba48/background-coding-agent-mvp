@@ -21,6 +21,9 @@ export interface TaskHistoryEntry {
 /** Maximum number of history entries to retain per session. */
 export const MAX_HISTORY_ENTRIES = 10;
 
+/** Maximum length for task description in history entries. */
+export const MAX_HISTORY_DESCRIPTION_LENGTH = 200;
+
 /** Map agent finalStatus to history entry status. Shared by REPL and Slack adapters. */
 export function toHistoryStatus(finalStatus: RetryResult['finalStatus']): TaskHistoryEntry['status'] {
   switch (finalStatus) {
