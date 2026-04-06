@@ -2,16 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ResolvedIntent } from '../intent/types.js';
 import type { RetryResult } from '../types.js';
 
-// Mock node:fs so we can track mkdirSync and writeFileSync calls in investigation tests
-vi.mock('node:fs', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:fs')>();
-  return {
-    ...actual,
-    mkdirSync: vi.fn(),
-    writeFileSync: vi.fn(),
-  };
-});
-
 // Mock parseIntent
 vi.mock('../intent/index.js', () => ({
   parseIntent: vi.fn(),
@@ -1417,11 +1407,8 @@ describe('src/repl/session.ts', () => {
     });
 
     it('INV-06. writes report to .reports/<timestamp>-<subtype>.md when input contains "save"', async () => {
-      const fs = await import('node:fs');
-      const mkdirMock = vi.mocked(fs.mkdirSync);
-      const writeMock = vi.mocked(fs.writeFileSync);
-      mkdirMock.mockClear();
-      writeMock.mockClear();
+      // Use a real temp directory as the repo so the actual fs writes happen there
+      const { readdir } = await import('node:fs/promises');
 
       const intent = makeIntent({
         taskType: 'investigation',
@@ -1430,6 +1417,7 @@ describe('src/repl/session.ts', () => {
         explorationSubtype: 'ci-checks',
         description: 'explore CI and save',
         scopingQuestions: [],
+        repo: tmpDir,
       });
       const retryResult = makeRetryResult({
         finalStatus: 'success',
@@ -1443,18 +1431,20 @@ describe('src/repl/session.ts', () => {
 
       await processInput('explore CI and save', state, callbacks, registry);
 
-      expect(mkdirMock).toHaveBeenCalledWith(expect.stringContaining('.reports'), { recursive: true });
-      expect(writeMock).toHaveBeenCalledWith(
-        expect.stringMatching(/ci-checks\.md$/),
-        '# CI Report',
-        'utf-8',
-      );
+      // .reports/ dir should have been created inside tmpDir
+      const reportsDir = path.join(tmpDir, '.reports');
+      const files = await readdir(reportsDir);
+      expect(files).toHaveLength(1);
+      expect(files[0]).toMatch(/ci-checks\.md$/);
+
+      // File content should be the report
+      const { readFileSync } = await import('node:fs');
+      const content = readFileSync(path.join(reportsDir, files[0]), 'utf-8');
+      expect(content).toBe('# CI Report');
     });
 
     it('INV-07. does NOT write file when input does NOT contain "save"', async () => {
-      const fs = await import('node:fs');
-      const writeMock = vi.mocked(fs.writeFileSync);
-      writeMock.mockClear();
+      const { existsSync } = await import('node:fs');
 
       const intent = makeIntent({
         taskType: 'investigation',
@@ -1463,6 +1453,7 @@ describe('src/repl/session.ts', () => {
         explorationSubtype: 'ci-checks',
         description: 'explore CI',
         scopingQuestions: [],
+        repo: tmpDir,
       });
       const retryResult = makeRetryResult({
         finalStatus: 'success',
@@ -1476,7 +1467,8 @@ describe('src/repl/session.ts', () => {
 
       await processInput('explore CI', state, callbacks, registry);
 
-      expect(writeMock).not.toHaveBeenCalled();
+      // .reports/ dir should NOT exist
+      expect(existsSync(path.join(tmpDir, '.reports'))).toBe(false);
     });
   });
 });

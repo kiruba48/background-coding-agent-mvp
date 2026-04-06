@@ -5,6 +5,7 @@ import { autoRegisterCwd } from '../cli/auto-register.js';
 import { ProjectRegistry } from '../agent/registry.js';
 import { createLogger } from '../cli/utils/logger.js';
 import { GitHubPRCreator } from '../orchestrator/pr-creator.js';
+import fs from 'node:fs';
 import path from 'node:path';
 import pc from 'picocolors';
 import type { ReplState, SessionCallbacks, SessionOutput, TaskHistoryEntry, ScopeHint } from './types.js';
@@ -183,6 +184,11 @@ export async function processInput(
     callbacks.onParseEnd?.();
   }
 
+  // Set description for investigation tasks when fast-path didn't set it
+  if (intent.taskType === 'investigation' && !intent.description) {
+    intent.description = trimmed.slice(0, MAX_INPUT_LENGTH);
+  }
+
   // Step 2: Handle low-confidence with clarifications
   if (intent.confidence === 'low' && intent.clarifications && intent.clarifications.length > 0) {
     const selectedIntent = await callbacks.clarify(intent.clarifications);
@@ -250,6 +256,7 @@ export async function processInput(
     timeoutMs: REPL_TIMEOUT_MS,
     maxRetries: REPL_MAX_RETRIES,
     scopeHints: scopeHints.length > 0 ? scopeHints.map(h => `${h.question}: ${h.answer}`) : undefined,
+    explorationSubtype: confirmed.explorationSubtype,
   };
 
   const agentContext: AgentContext = {
@@ -264,10 +271,30 @@ export async function processInput(
   try {
     const result = await runAgent(agentOptions, agentContext);
     taskResult = result;
-    // Store for post-hoc PR and follow-up referencing (FLLW-02) — success path only.
-    // Non-success results must NOT overwrite a previous successful result,
-    // so the user can still `pr` after a subsequent failed task.
-    if (result.finalStatus === 'success') {
+
+    // Investigation tasks: display report inline and skip post-hoc PR storage
+    if (confirmed.taskType === 'investigation') {
+      const report = result.sessionResults.at(-1)?.finalResponse;
+      if (report) {
+        console.log('\n' + report + '\n');
+
+        // Save report to .reports/ if user asked to save (host-side write, agent never writes files)
+        if (/\bsave\b/i.test(trimmed)) {
+          const reportsDir = path.join(confirmed.repo, '.reports');
+          fs.mkdirSync(reportsDir, { recursive: true });
+          const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+          const subtype = confirmed.explorationSubtype ?? 'general';
+          const filename = `${timestamp}-${subtype}.md`;
+          fs.writeFileSync(path.join(reportsDir, filename), report, 'utf-8');
+          console.log(pc.green(`  Report saved to .reports/${filename}\n`));
+        }
+      } else {
+        console.log(pc.yellow('\n  Exploration produced no report.\n'));
+      }
+    } else if (result.finalStatus === 'success') {
+      // Store for post-hoc PR and follow-up referencing (FLLW-02) — success path only, non-investigation.
+      // Non-success results must NOT overwrite a previous successful result,
+      // so the user can still `pr` after a subsequent failed task.
       state.lastRetryResult = result;
       state.lastIntent = confirmed;
       state.lastWorktreeBranch = result.worktreeBranch;
@@ -285,8 +312,8 @@ export async function processInput(
       version: confirmed.version ?? null,
       repo: confirmed.repo,
       status: historyStatus,
-      description: confirmed.taskType === 'generic'
-        ? confirmed.description
+      description: confirmed.taskType === 'generic' || confirmed.taskType === 'investigation'
+        ? (confirmed.description ?? trimmed.slice(0, 200))
         : confirmed.dep
           ? `update ${confirmed.dep} to ${confirmed.version ?? 'latest'}`
           : undefined,
