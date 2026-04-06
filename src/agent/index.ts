@@ -48,6 +48,7 @@ export interface AgentOptions {
   description?: string;     // raw NL task description for generic tasks
   taskCategory?: TaskCategory;    // category label for generic tasks (e.g. 'code-change')
   scopeHints?: string[];          // scoping dialogue answers for generic tasks
+  explorationSubtype?: string;    // subtype for investigation tasks (e.g. 'git-strategy')
 }
 
 /**
@@ -129,6 +130,34 @@ export async function runAgent(
     await assertDockerRunning();
     await ensureNetworkExists();
     await buildImageIfNeeded();
+  }
+
+  // Investigation tasks: bypass worktree, mount :ro, run bare session, skip verifier/judge/PR
+  if (options.taskType === 'investigation') {
+    const prompt = await buildPrompt({
+      taskType: options.taskType,
+      description: options.description,
+      explorationSubtype: options.explorationSubtype,
+    });
+
+    const { ClaudeCodeSession } = await import('../orchestrator/claude-code-session.js');
+    const session = new ClaudeCodeSession({
+      workspaceDir: options.repo,
+      turnLimit: options.turnLimit,
+      timeoutMs: options.timeoutMs,
+      logger: childLogger,
+      signal: context.signal,
+      readOnly: true,
+    });
+
+    const sessionResult = await session.run(prompt, childLogger, context.signal);
+
+    return {
+      finalStatus: sessionResult.status as RetryResult['finalStatus'],
+      attempts: 1,
+      sessionResults: [sessionResult],
+      verificationResults: [],
+    };
   }
 
   // Worktree lifecycle — create isolated worktree unless skipped (tests)
