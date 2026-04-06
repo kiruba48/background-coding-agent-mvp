@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.4
 milestone_name: Git Worktree & Repo Exploration
 status: completed
-stopped_at: Completed 27-01-PLAN.md
-last_updated: "2026-04-06T18:14:24.099Z"
+stopped_at: Completed 27-02-PLAN.md
+last_updated: "2026-04-06T18:20:53.831Z"
 last_activity: "2026-04-05 — Completed 26-02: worktree pipeline integration"
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 7
-  completed_plans: 5
+  completed_plans: 6
   percent: 25
 ---
 
@@ -60,6 +60,8 @@ Progress: [██░░░░░░░░] 25% (1/3 phases complete, 4/4 plans i
 - [Phase 26-02]: WorktreeManager test mock requires class constructor, not arrow function — Vitest requirement for `new`-able mocks
 - [Phase 27]: ACTION_VERB_GUARD blocks exploration misclassification: action verbs (update/fix/replace etc.) return null from explorationFastPath, preventing dep-update inputs from being routed to investigation type
 - [Phase 27]: buildExplorationPrompt is synchronous (no I/O): unlike buildGenericPrompt which reads manifests, exploration prompts need no filesystem access — subtype registry is in-memory
+- [Phase 27]: Investigation bypass placed between Docker lifecycle and worktree lifecycle in runAgent — Docker setup runs, worktree/orchestrator/verifier/judge/PR are all skipped
+- [Phase 27]: SessionResult.status is a subset of RetryResult.finalStatus — direct cast is valid without a mapping table for investigation results
 
 ### Pending Todos
 
@@ -71,7 +73,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-06T18:14:24.096Z
-Stopped at: Completed 27-01-PLAN.md
+Last session: 2026-04-06T18:20:53.829Z
+Stopped at: Completed 27-02-PLAN.md
 Resume file: None
 Next action: `/gsd:plan-phase 27`
