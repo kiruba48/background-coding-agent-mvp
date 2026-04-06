@@ -421,6 +421,84 @@ describe('ClaudeCodeSession', () => {
     expect(postMatcher).toContain('mcp__verifier__verify');
   });
 
+  // -------------------------------------------------------------------------
+  // Read-only session hook tests (Task 1: readOnly flag)
+  // -------------------------------------------------------------------------
+
+  // Test 31: readOnly session blocks Write tool with 'blocked: read-only session'
+  it('31. PreToolUse hook blocks Write tool in read-only session', async () => {
+    mockQuery.mockReturnValue(makeQueryGen([makeSuccessResult()]));
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace', readOnly: true });
+    await session.run('task');
+    const callArg = mockQuery.mock.calls[0][0];
+    const hookFn = callArg.options.hooks.PreToolUse[0].hooks[0];
+    const input = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Write',
+      tool_input: { file_path: '/workspace/src/index.ts' },
+      tool_use_id: 'ro-1',
+      session_id: 's', transcript_path: 't', cwd: '/tmp/workspace',
+    };
+    const result = await hookFn(input, 'ro-1', { signal: new AbortController().signal });
+    expect(result.hookSpecificOutput?.permissionDecision).toBe('deny');
+    expect(result.systemMessage).toContain('blocked: read-only session');
+  });
+
+  // Test 32: readOnly session blocks Edit tool
+  it('32. PreToolUse hook blocks Edit tool in read-only session', async () => {
+    mockQuery.mockReturnValue(makeQueryGen([makeSuccessResult()]));
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace', readOnly: true });
+    await session.run('task');
+    const callArg = mockQuery.mock.calls[0][0];
+    const hookFn = callArg.options.hooks.PreToolUse[0].hooks[0];
+    const input = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Edit',
+      tool_input: { file_path: '/workspace/src/index.ts' },
+      tool_use_id: 'ro-2',
+      session_id: 's', transcript_path: 't', cwd: '/tmp/workspace',
+    };
+    const result = await hookFn(input, 'ro-2', { signal: new AbortController().signal });
+    expect(result.hookSpecificOutput?.permissionDecision).toBe('deny');
+    expect(result.systemMessage).toContain('blocked: read-only session');
+  });
+
+  // Test 33: readOnly session allows Bash tool (OS-level :ro handles enforcement)
+  it('33. PreToolUse hook allows Bash tool in read-only session', async () => {
+    mockQuery.mockReturnValue(makeQueryGen([makeSuccessResult()]));
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace', readOnly: true });
+    await session.run('task');
+    const callArg = mockQuery.mock.calls[0][0];
+    const hookFn = callArg.options.hooks.PreToolUse[0].hooks[0];
+    const input = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      tool_input: { command: 'ls /workspace' },
+      tool_use_id: 'ro-3',
+      session_id: 's', transcript_path: 't', cwd: '/tmp/workspace',
+    };
+    const result = await hookFn(input, 'ro-3', { signal: new AbortController().signal });
+    expect(result.hookSpecificOutput?.permissionDecision).not.toBe('deny');
+  });
+
+  // Test 34: non-readOnly session still allows Write inside repo (existing behavior)
+  it('34. PreToolUse hook allows Write inside repo for non-readOnly session', async () => {
+    mockQuery.mockReturnValue(makeQueryGen([makeSuccessResult()]));
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace', readOnly: false });
+    await session.run('task');
+    const callArg = mockQuery.mock.calls[0][0];
+    const hookFn = callArg.options.hooks.PreToolUse[0].hooks[0];
+    const input = {
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Write',
+      tool_input: { file_path: '/workspace/src/index.ts' },
+      tool_use_id: 'ro-4',
+      session_id: 's', transcript_path: 't', cwd: '/tmp/workspace',
+    };
+    const result = await hookFn(input, 'ro-4', { signal: new AbortController().signal });
+    expect(result.hookSpecificOutput?.permissionDecision).not.toBe('deny');
+  });
+
   // Helper: create a mock ChildProcess-like object for spawn
   function makeMockChildProcess() {
     const listeners: Record<string, ((...args: any[]) => void)[]> = {};

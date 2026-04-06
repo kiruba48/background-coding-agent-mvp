@@ -207,4 +207,22 @@ describe('buildDockerRunArgs', () => {
     expect(args).toContain('custom-net');
     expect(args).toContain('custom-agent:v1');
   });
+
+  it('mounts workspace as :ro when readOnly is true', () => {
+    const args = buildDockerRunArgs({ ...opts, readOnly: true }, '/usr/local/bin/claude', []);
+    expect(args).toContain('/home/user/myrepo:/workspace:ro');
+    expect(args).not.toContain('/home/user/myrepo:/workspace:rw');
+  });
+
+  it('mounts workspace as :rw when readOnly is false', () => {
+    const args = buildDockerRunArgs({ ...opts, readOnly: false }, '/usr/local/bin/claude', []);
+    expect(args).toContain('/home/user/myrepo:/workspace:rw');
+    expect(args).not.toContain('/home/user/myrepo:/workspace:ro');
+  });
+
+  it('mounts workspace as :rw by default (backward compat when readOnly is omitted)', () => {
+    const args = buildDockerRunArgs(opts, '/usr/local/bin/claude', []);
+    expect(args).toContain('/home/user/myrepo:/workspace:rw');
+    expect(args).not.toContain('/home/user/myrepo:/workspace:ro');
+  });
 });

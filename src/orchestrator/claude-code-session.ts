@@ -32,7 +32,7 @@ const SENSITIVE_PATTERNS = [
  * Build a PreToolUse hook that blocks writes outside the workspace
  * and to sensitive file patterns (SDK-08).
  */
-function buildPreToolUseHook(workspaceDir: string, logger: pino.Logger): HookCallback {
+function buildPreToolUseHook(workspaceDir: string, logger: pino.Logger, readOnly?: boolean): HookCallback {
   // Resolve symlinks on the repo root so symlink-based escapes are caught (V-1).
   // Fall back to path.resolve if the directory doesn't exist yet (e.g. in tests).
   const rawRepo = nodePath.resolve(workspaceDir);
@@ -45,6 +45,20 @@ function buildPreToolUseHook(workspaceDir: string, logger: pino.Logger): HookCal
 
   return async (input, toolUseId) => {
     const preInput = input as PreToolUseHookInput;
+
+    // Read-only session: block all Write/Edit tools immediately
+    if (readOnly && (preInput.tool_name === 'Write' || preInput.tool_name === 'Edit')) {
+      logger.warn({ type: 'audit', tool: preInput.tool_name, toolUseId }, 'tool_blocked_readonly');
+      return {
+        systemMessage: 'blocked: read-only session — this investigation task cannot modify files',
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny' as const,
+          permissionDecisionReason: 'Read-only session: Write/Edit tools are disabled',
+        },
+      };
+    }
+
     const toolInput = preInput.tool_input as Record<string, unknown>;
     const rawPath = (toolInput?.file_path ?? toolInput?.path) as string | undefined;
 
@@ -297,7 +311,7 @@ export class ClaudeCodeSession {
 
     // Inside Docker, the workspace is mounted at /workspace
     const containerWorkspaceDir = '/workspace';
-    const preHook = buildPreToolUseHook(containerWorkspaceDir, log);
+    const preHook = buildPreToolUseHook(containerWorkspaceDir, log, this.config.readOnly);
     const postHook = buildPostToolUseHook(log, toolCallCounter);
 
     const verifierServer = createVerifierMcpServer(workspaceDir);
@@ -321,6 +335,7 @@ export class ClaudeCodeSession {
             workspaceDir,
             apiKey,
             sessionId,
+            readOnly: this.config.readOnly,
             // networkName and imageTag use defaults from docker module
           },
           'claude',  // use container's globally installed CLI, not host path
