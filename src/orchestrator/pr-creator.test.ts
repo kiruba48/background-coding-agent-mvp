@@ -180,8 +180,8 @@ function setupStandardMocks(overrides: {
 
 describe('generateBranchName', () => {
   it('converts task type to slugified branch name with date and hex suffix', () => {
-    const result = generateBranchName('maven dependency update');
-    expect(result).toMatch(/^agent\/maven-dependency-update-\d{4}-\d{2}-\d{2}-[a-f0-9]{6}$/);
+    const result = generateBranchName('fix auth bug');
+    expect(result).toMatch(/^agent\/fix-auth-bug-\d{4}-\d{2}-\d{2}-[a-f0-9]{6}$/);
   });
 
   it('lowercases and collapses spaces/special chars into hyphens', () => {
@@ -195,8 +195,8 @@ describe('generateBranchName', () => {
   });
 
   it('strips leading and trailing hyphens from slug', () => {
-    const result = generateBranchName('!leading and trailing!');
-    expect(result).toMatch(/^agent\/leading-and-trailing-\d{4}-\d{2}-\d{2}-[a-f0-9]{6}$/);
+    const result = generateBranchName('!leading!');
+    expect(result).toMatch(/^agent\/leading-\d{4}-\d{2}-\d{2}-[a-f0-9]{6}$/);
   });
 
   it('uses agent/ prefix', () => {
@@ -214,6 +214,13 @@ describe('generateBranchName', () => {
     const a = generateBranchName('same task');
     const b = generateBranchName('same task');
     expect(a).not.toBe(b);
+  });
+
+  it('truncates long descriptions at word boundary within 20 chars', () => {
+    const result = generateBranchName('refactor in strategic planner repo n classifier');
+    // slug would be "refactor-in-strategic-planner-repo-n-classifier" (48 chars)
+    // truncated to 20 → "refactor-in-strategi" → last hyphen at 12 → "refactor-in"
+    expect(result).toMatch(/^agent\/refactor-in-\d{4}-\d{2}-\d{2}-[a-f0-9]{6}$/);
   });
 });
 
