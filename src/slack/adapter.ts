@@ -137,8 +137,16 @@ export async function processSlackMention(
     throw err;
   }
 
-  // Step 2: Force auto-PR — Slack tasks always create PRs
-  intent.createPr = true;
+  // Step 2: Force auto-PR — Slack tasks always create PRs (except investigation)
+  if (intent.taskType !== 'investigation') {
+    intent.createPr = true;
+  }
+
+  // Set description for investigation tasks (fast-path doesn't set it)
+  if (intent.taskType === 'investigation' && !intent.description) {
+    intent.description = text.slice(0, 500);
+  }
+
   session.intent = intent;
   session.status = 'confirming';
 
@@ -180,10 +188,11 @@ export async function processSlackMention(
     targetVersion: confirmed.version ?? undefined,
     description: confirmed.description,
     taskCategory: confirmed.taskCategory ?? undefined,
-    createPr: true,
+    createPr: confirmed.taskType === 'investigation' ? false : true,
     turnLimit: SLACK_TURN_LIMIT,
     timeoutMs: SLACK_TIMEOUT_MS,
     maxRetries: SLACK_MAX_RETRIES,
+    explorationSubtype: confirmed.explorationSubtype,
   };
 
   const agentContext: AgentContext = {
@@ -203,19 +212,29 @@ export async function processSlackMention(
 
     historyStatus = toHistoryStatus(result.finalStatus);
 
-    const statusMessages: Record<TaskHistoryEntry['status'], string> = {
-      success: result.prResult?.url && !result.prResult.error
-        ? `Task completed. PR: ${result.prResult.url}`
-        : 'Task completed successfully.',
-      cancelled: 'Task was cancelled.',
-      zero_diff: 'Task completed with no changes.',
-      failed: 'Task failed. Check agent logs for details.',
-    };
-    await ctx.client.chat.postMessage({
-      channel: ctx.channel,
-      thread_ts: ctx.threadTs,
-      text: statusMessages[historyStatus],
-    });
+    // Investigation tasks: post report as thread message
+    if (confirmed.taskType === 'investigation') {
+      const report = result.sessionResults.at(-1)?.finalResponse;
+      await ctx.client.chat.postMessage({
+        channel: ctx.channel,
+        thread_ts: ctx.threadTs,
+        text: report || 'Exploration produced no report.',
+      });
+    } else {
+      const statusMessages: Record<TaskHistoryEntry['status'], string> = {
+        success: result.prResult?.url && !result.prResult.error
+          ? `Task completed. PR: ${result.prResult.url}`
+          : 'Task completed successfully.',
+        cancelled: 'Task was cancelled.',
+        zero_diff: 'Task completed with no changes.',
+        failed: 'Task failed. Check agent logs for details.',
+      };
+      await ctx.client.chat.postMessage({
+        channel: ctx.channel,
+        thread_ts: ctx.threadTs,
+        text: statusMessages[historyStatus],
+      });
+    }
   } catch (err) {
     historyStatus = 'failed';
     try {
@@ -233,8 +252,8 @@ export async function processSlackMention(
       version: confirmed.version ?? null,
       repo: confirmed.repo,
       status: historyStatus,
-      description: confirmed.taskType === 'generic'
-        ? confirmed.description
+      description: confirmed.taskType === 'generic' || confirmed.taskType === 'investigation'
+        ? (confirmed.description ?? text.slice(0, 200))
         : confirmed.dep
           ? `update ${confirmed.dep} to ${confirmed.version ?? 'latest'}`
           : undefined,
