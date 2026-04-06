@@ -376,7 +376,12 @@ export class RetryOrchestrator {
 
       // Verification failed — log and loop for next attempt (which will include error context)
       logger?.warn(
-        { attempt, maxRetries, errorCount: verification.errors.length },
+        {
+          attempt,
+          maxRetries,
+          errorCount: verification.errors.length,
+          errorSummaries: verification.errors.map(e => e.summary),
+        },
         'Verification failed, retrying with error context'
       );
     }

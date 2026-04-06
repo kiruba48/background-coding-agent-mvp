@@ -69,7 +69,14 @@ function formatMessage(obj: Record<string, unknown>): string | null {
       const attempt = obj.attempt as number;
       const max = obj.maxRetries as number;
       const errors = obj.errorCount as number;
-      return pc.yellow(`✖ Verification failed (${errors} errors) — retrying ${attempt}/${max}`);
+      const summaries = obj.errorSummaries as string[] | undefined;
+      let line = pc.yellow(`✖ Verification failed (${errors} error${errors !== 1 ? 's' : ''}) — retrying ${attempt}/${max}`);
+      if (summaries?.length) {
+        for (const s of summaries) {
+          line += '\n' + pc.yellow(`  → ${s}`);
+        }
+      }
+      return line;
     }
 
     case 'Session failed, not retrying': {
