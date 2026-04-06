@@ -139,6 +139,27 @@ function formatMessage(obj: Record<string, unknown>): string | null {
       return pc.red(`✖ Session error`);
     }
 
+    case 'Pre-verify hook failed (terminal)': {
+      const pvErr = obj.err as Record<string, unknown> | undefined;
+      const pvMsg = pvErr?.message as string | undefined;
+      let pvLine = pc.red(`✖ Pre-verify hook failed`);
+      if (pvMsg) {
+        pvLine += '\n' + pc.red(`  → ${pvMsg.slice(0, 200)}`);
+      }
+      return pvLine;
+    }
+
+    case 'Pre-verify failed with retryable error, feeding to retry loop': {
+      const pvError = obj.error as string | undefined;
+      let pvLine = pc.yellow(`⚠ Pre-verify failed (retryable) — feeding error to agent`);
+      if (pvError) {
+        // Show first line of the error for quick context
+        const firstLine = pvError.split('\n').find(l => l.trim()) ?? pvError.slice(0, 150);
+        pvLine += '\n' + pc.yellow(`  → ${firstLine.slice(0, 150)}`);
+      }
+      return pvLine;
+    }
+
     case 'Pre-verify hook failed':
       return pc.red(`✖ Pre-verify hook failed`);
 

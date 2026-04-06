@@ -252,13 +252,16 @@ export class RetryOrchestrator {
         } catch (err) {
           const isRetryable = err instanceof PreVerifyError && err.retryable;
           if (isRetryable) {
-            logger?.warn({ attempt }, 'Pre-verify failed with retryable error, feeding to retry loop');
+            // Extract a concise error snippet for the agent's retry context
+            const errMsg = err instanceof Error ? err.message : String(err);
+            const snippet = errMsg.slice(0, 300);
+            logger?.warn({ attempt, error: snippet }, 'Pre-verify failed with retryable error, feeding to retry loop');
             const preVerifyVerification: VerificationResult = {
               passed: false,
               errors: [{
                 type: 'build',
-                summary: `npm install dependency conflict — agent must fix package.json to resolve`,
-                rawOutput: err.message,
+                summary: `npm install failed — agent must fix package.json:\n${snippet}`,
+                rawOutput: errMsg,
               }],
               durationMs: 0,
             };
