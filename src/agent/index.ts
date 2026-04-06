@@ -153,7 +153,7 @@ export async function runAgent(
       try {
         await access(path.join(worktreePath, 'package.json'));
         childLogger.info('Installing npm dependencies in worktree...');
-        await execFileAsync('npm', ['install', '--ignore-scripts'], {
+        await execFileAsync('npm', ['install', '--ignore-scripts', '--legacy-peer-deps'], {
           cwd: worktreePath,
           timeout: 120_000,
           maxBuffer: 10 * 1024 * 1024,
