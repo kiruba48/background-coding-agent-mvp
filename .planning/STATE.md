@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.4
 milestone_name: Git Worktree & Repo Exploration
 status: completed
-stopped_at: Completed 27-02-PLAN.md
-last_updated: "2026-04-06T18:20:53.831Z"
+stopped_at: Completed 27-03-PLAN.md
+last_updated: "2026-04-06T18:22:30.749Z"
 last_activity: "2026-04-05 — Completed 26-02: worktree pipeline integration"
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 7
-  completed_plans: 6
+  completed_plans: 7
   percent: 25
 ---
 
@@ -62,6 +62,8 @@ Progress: [██░░░░░░░░] 25% (1/3 phases complete, 4/4 plans i
 - [Phase 27]: buildExplorationPrompt is synchronous (no I/O): unlike buildGenericPrompt which reads manifests, exploration prompts need no filesystem access — subtype registry is in-memory
 - [Phase 27]: Investigation bypass placed between Docker lifecycle and worktree lifecycle in runAgent — Docker setup runs, worktree/orchestrator/verifier/judge/PR are all skipped
 - [Phase 27]: SessionResult.status is a subset of RetryResult.finalStatus — direct cast is valid without a mapping table for investigation results
+- [Phase 27]: host-side .reports/ write: agent never writes files — REPL writes when /\bsave\b/i matches user input
+- [Phase 27]: investigation report display: finalResponse printed inline to stdout in REPL, posted as thread message in Slack — no PR link or status summary
 
 ### Pending Todos
 
@@ -73,7 +75,7 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-06T18:20:53.829Z
-Stopped at: Completed 27-02-PLAN.md
+Last session: 2026-04-06T18:22:30.746Z
+Stopped at: Completed 27-03-PLAN.md
 Resume file: None
 Next action: `/gsd:plan-phase 27`
