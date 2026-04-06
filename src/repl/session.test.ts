@@ -2,6 +2,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ResolvedIntent } from '../intent/types.js';
 import type { RetryResult } from '../types.js';
 
+// Mock node:fs so we can track mkdirSync and writeFileSync calls in investigation tests
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    mkdirSync: vi.fn(),
+    writeFileSync: vi.fn(),
+  };
+});
+
 // Mock parseIntent
 vi.mock('../intent/index.js', () => ({
   parseIntent: vi.fn(),
@@ -1267,5 +1277,206 @@ describe('src/repl/session.ts', () => {
     const [, , scopeHints] = confirmMock.mock.calls[0];
     // Confirm receives structured ScopeHint objects for display
     expect(scopeHints).toEqual([{ question: 'Which area?', answer: 'auth module' }]);
+  });
+
+  describe('investigation task type', () => {
+    let consoleSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('INV-01. prints finalResponse report to stdout for investigation intent', async () => {
+      const intent = makeIntent({
+        taskType: 'investigation',
+        dep: null,
+        version: null,
+        explorationSubtype: 'ci-checks',
+        description: 'explore CI pipeline',
+        scopingQuestions: [],
+      });
+      const retryResult = makeRetryResult({
+        finalStatus: 'success',
+        sessionResults: [{ sessionId: 's1', status: 'success', toolCallCount: 3, duration: 1000, finalResponse: '# CI Report\nAll checks pass.' }],
+      });
+      mockParseIntent.mockResolvedValue(intent);
+      mockRunAgent.mockResolvedValue(retryResult);
+
+      const state = createSessionState();
+      const callbacks = makeCallbacks({ confirm: vi.fn().mockResolvedValue(intent) });
+
+      await processInput('explore CI pipeline', state, callbacks, registry);
+
+      const output = consoleSpy.mock.calls.map(c => c.join(' ')).join('\n');
+      expect(output).toContain('# CI Report');
+      expect(output).toContain('All checks pass.');
+    });
+
+    it('INV-02. does NOT set state.lastRetryResult for investigation tasks', async () => {
+      const intent = makeIntent({
+        taskType: 'investigation',
+        dep: null,
+        version: null,
+        explorationSubtype: 'ci-checks',
+        description: 'explore CI',
+        scopingQuestions: [],
+      });
+      const retryResult = makeRetryResult({
+        finalStatus: 'success',
+        sessionResults: [{ sessionId: 's1', status: 'success', toolCallCount: 3, duration: 1000, finalResponse: '# Report' }],
+      });
+      mockParseIntent.mockResolvedValue(intent);
+      mockRunAgent.mockResolvedValue(retryResult);
+
+      const state = createSessionState();
+      const callbacks = makeCallbacks({ confirm: vi.fn().mockResolvedValue(intent) });
+
+      await processInput('explore CI', state, callbacks, registry);
+
+      expect(state.lastRetryResult).toBeUndefined();
+      expect(state.lastIntent).toBeUndefined();
+    });
+
+    it('INV-03. passes explorationSubtype to agentOptions', async () => {
+      const intent = makeIntent({
+        taskType: 'investigation',
+        dep: null,
+        version: null,
+        explorationSubtype: 'ci-checks',
+        description: 'explore CI',
+        scopingQuestions: [],
+      });
+      const retryResult = makeRetryResult({
+        finalStatus: 'success',
+        sessionResults: [{ sessionId: 's1', status: 'success', toolCallCount: 3, duration: 1000, finalResponse: '# Report' }],
+      });
+      mockParseIntent.mockResolvedValue(intent);
+      mockRunAgent.mockResolvedValue(retryResult);
+
+      const state = createSessionState();
+      const callbacks = makeCallbacks({ confirm: vi.fn().mockResolvedValue(intent) });
+
+      await processInput('explore CI', state, callbacks, registry);
+
+      const [agentOptions] = mockRunAgent.mock.calls[0];
+      expect(agentOptions.explorationSubtype).toBe('ci-checks');
+    });
+
+    it('INV-04. history entry has description from input text for investigation tasks', async () => {
+      const intent = makeIntent({
+        taskType: 'investigation',
+        dep: null,
+        version: null,
+        explorationSubtype: 'ci-checks',
+        description: undefined,
+        scopingQuestions: [],
+      });
+      const retryResult = makeRetryResult({
+        finalStatus: 'success',
+        sessionResults: [{ sessionId: 's1', status: 'success', toolCallCount: 3, duration: 1000, finalResponse: '# Report' }],
+      });
+      mockParseIntent.mockResolvedValue(intent);
+      mockRunAgent.mockResolvedValue(retryResult);
+
+      const state = createSessionState();
+      const callbacks = makeCallbacks({ confirm: vi.fn().mockResolvedValue(intent) });
+
+      await processInput('explore the CI pipeline', state, callbacks, registry);
+
+      expect(state.history[0].description).toBe('explore the CI pipeline');
+    });
+
+    it('INV-05. prints yellow warning when exploration produces no report (empty finalResponse)', async () => {
+      const consoleWarnSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const intent = makeIntent({
+        taskType: 'investigation',
+        dep: null,
+        version: null,
+        explorationSubtype: 'ci-checks',
+        description: 'explore CI',
+        scopingQuestions: [],
+      });
+      const retryResult = makeRetryResult({
+        finalStatus: 'success',
+        sessionResults: [{ sessionId: 's1', status: 'success', toolCallCount: 3, duration: 1000, finalResponse: '' }],
+      });
+      mockParseIntent.mockResolvedValue(intent);
+      mockRunAgent.mockResolvedValue(retryResult);
+
+      const state = createSessionState();
+      const callbacks = makeCallbacks({ confirm: vi.fn().mockResolvedValue(intent) });
+
+      await processInput('explore CI', state, callbacks, registry);
+
+      const output = consoleWarnSpy.mock.calls.map(c => c.join(' ')).join('\n');
+      expect(output).toContain('Exploration produced no report');
+    });
+
+    it('INV-06. writes report to .reports/<timestamp>-<subtype>.md when input contains "save"', async () => {
+      const fs = await import('node:fs');
+      const mkdirMock = vi.mocked(fs.mkdirSync);
+      const writeMock = vi.mocked(fs.writeFileSync);
+      mkdirMock.mockClear();
+      writeMock.mockClear();
+
+      const intent = makeIntent({
+        taskType: 'investigation',
+        dep: null,
+        version: null,
+        explorationSubtype: 'ci-checks',
+        description: 'explore CI and save',
+        scopingQuestions: [],
+      });
+      const retryResult = makeRetryResult({
+        finalStatus: 'success',
+        sessionResults: [{ sessionId: 's1', status: 'success', toolCallCount: 3, duration: 1000, finalResponse: '# CI Report' }],
+      });
+      mockParseIntent.mockResolvedValue(intent);
+      mockRunAgent.mockResolvedValue(retryResult);
+
+      const state = createSessionState();
+      const callbacks = makeCallbacks({ confirm: vi.fn().mockResolvedValue(intent) });
+
+      await processInput('explore CI and save', state, callbacks, registry);
+
+      expect(mkdirMock).toHaveBeenCalledWith(expect.stringContaining('.reports'), { recursive: true });
+      expect(writeMock).toHaveBeenCalledWith(
+        expect.stringMatching(/ci-checks\.md$/),
+        '# CI Report',
+        'utf-8',
+      );
+    });
+
+    it('INV-07. does NOT write file when input does NOT contain "save"', async () => {
+      const fs = await import('node:fs');
+      const writeMock = vi.mocked(fs.writeFileSync);
+      writeMock.mockClear();
+
+      const intent = makeIntent({
+        taskType: 'investigation',
+        dep: null,
+        version: null,
+        explorationSubtype: 'ci-checks',
+        description: 'explore CI',
+        scopingQuestions: [],
+      });
+      const retryResult = makeRetryResult({
+        finalStatus: 'success',
+        sessionResults: [{ sessionId: 's1', status: 'success', toolCallCount: 3, duration: 1000, finalResponse: '# CI Report' }],
+      });
+      mockParseIntent.mockResolvedValue(intent);
+      mockRunAgent.mockResolvedValue(retryResult);
+
+      const state = createSessionState();
+      const callbacks = makeCallbacks({ confirm: vi.fn().mockResolvedValue(intent) });
+
+      await processInput('explore CI', state, callbacks, registry);
+
+      expect(writeMock).not.toHaveBeenCalled();
+    });
   });
 });
