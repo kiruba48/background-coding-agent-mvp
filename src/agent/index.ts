@@ -150,15 +150,31 @@ export async function runAgent(
 
       // Install npm dependencies in worktree so verification (npm run build/test) works.
       // git worktree add creates a clean checkout without node_modules.
+      // Strategy: try plain install first; fall back to --legacy-peer-deps if ERESOLVE.
+      // --legacy-peer-deps can skip transitive deps, so we only use it as a last resort.
       try {
         await access(path.join(worktreePath, 'package.json'));
         childLogger.info('Installing npm dependencies in worktree...');
-        await execFileAsync('npm', ['install', '--ignore-scripts', '--legacy-peer-deps'], {
+        const npmInstallOpts = {
           cwd: worktreePath,
           timeout: 120_000,
           maxBuffer: 10 * 1024 * 1024,
-          killSignal: 'SIGKILL',
-        });
+          killSignal: 'SIGKILL' as const,
+        };
+        try {
+          await execFileAsync('npm', ['install', '--ignore-scripts'], npmInstallOpts);
+        } catch (firstErr: unknown) {
+          const output = [
+            (firstErr as { stderr?: string }).stderr ?? '',
+            (firstErr as { stdout?: string }).stdout ?? '',
+          ].join('\n');
+          if (output.includes('ERESOLVE') || output.includes('peer dep') || output.includes('Could not resolve')) {
+            childLogger.info('Peer dependency conflict — retrying with --legacy-peer-deps');
+            await execFileAsync('npm', ['install', '--ignore-scripts', '--legacy-peer-deps'], npmInstallOpts);
+          } else {
+            throw firstErr;
+          }
+        }
         childLogger.info('Worktree npm install completed');
       } catch (err: unknown) {
         // ENOENT from access() means no package.json — skip silently.
