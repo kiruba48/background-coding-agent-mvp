@@ -1,13 +1,13 @@
 import path from 'node:path';
 import pc from 'picocolors';
-import { fastPathParse, validateDepInManifest, detectTaskType, FOLLOW_UP_PREFIX, FOLLOW_UP_TOO_SUFFIX } from './fast-path.js';
+import { fastPathParse, explorationFastPath, validateDepInManifest, detectTaskType, FOLLOW_UP_PREFIX, FOLLOW_UP_TOO_SUFFIX } from './fast-path.js';
 import { readManifestDeps } from './context-scanner.js';
 import { llmParse, MAX_INPUT_LENGTH } from './llm-parser.js';
 import { ProjectRegistry } from '../agent/registry.js';
 import type { ResolvedIntent } from './types.js';
 import type { TaskHistoryEntry } from '../repl/types.js';
 
-export type { ResolvedIntent, IntentResult, FastPathResult, ClarificationOption } from './types.js';
+export type { ResolvedIntent, IntentResult, FastPathResult, ClarificationOption, ExplorationSubtype } from './types.js';
 export type { TaskHistoryEntry } from '../repl/types.js';
 export { fastPathParse } from './fast-path.js';
 export { readManifestDeps } from './context-scanner.js';
@@ -40,6 +40,21 @@ export async function parseIntent(
 ): Promise<ResolvedIntent> {
   const registry = options.registry ?? new ProjectRegistry();
   const history = options.history;
+
+  // Exploration fast-path — check before dependency patterns
+  const explorationResult = explorationFastPath(input);
+  if (explorationResult) {
+    const repoPath = options.repoPath ? path.resolve(options.repoPath) : path.resolve(process.cwd());
+    return {
+      taskType: 'investigation',
+      repo: repoPath,
+      dep: null,
+      version: null,
+      confidence: 'high',
+      explorationSubtype: explorationResult.subtype,
+      scopingQuestions: [],
+    };
+  }
 
   // Step 1: Resolve repo path
   // Try fast-path first to extract project name, but repo resolution happens here

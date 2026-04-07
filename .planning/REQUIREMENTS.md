@@ -17,11 +17,11 @@ Requirements for git worktree isolation, repo exploration tasks, and tech debt c
 
 ### Repo Exploration
 
-- [ ] **EXPLR-01**: Intent parser recognizes exploration intents (explore, investigate, analyze, "check the CI", "what is the branching strategy") and routes to `investigation` task type
-- [ ] **EXPLR-02**: Structured exploration prompts with 3 subtypes: git-strategy, ci-checks, project-structure
-- [ ] **EXPLR-03**: Exploration tasks skip composite verifier, LLM Judge, and PR creation — return report via finalResponse
-- [ ] **EXPLR-04**: PreToolUse hook blocks Write/Edit/destructive-Bash tools when session is read-only
-- [ ] **EXPLR-05**: Exploration report displayed inline in REPL and posted as thread message in Slack
+- [x] **EXPLR-01**: Intent parser recognizes exploration intents (explore, investigate, analyze, "check the CI", "what is the branching strategy") and routes to `investigation` task type
+- [x] **EXPLR-02**: Structured exploration prompts with 3 subtypes: git-strategy, ci-checks, project-structure
+- [x] **EXPLR-03**: Exploration tasks skip composite verifier, LLM Judge, and PR creation — return report via finalResponse
+- [x] **EXPLR-04**: PreToolUse hook blocks Write/Edit/destructive-Bash tools when session is read-only
+- [x] **EXPLR-05**: Exploration report displayed inline in REPL and posted as thread message in Slack
 
 ### Tech Debt
 
@@ -75,11 +75,11 @@ Deferred to v2.5+.
 | WKTREE-03 | Phase 26 | Complete |
 | WKTREE-04 | Phase 26 | Complete |
 | WKTREE-05 | Phase 26 | Complete |
-| EXPLR-01 | Phase 27 | Pending |
-| EXPLR-02 | Phase 27 | Pending |
-| EXPLR-03 | Phase 27 | Pending |
-| EXPLR-04 | Phase 27 | Pending |
-| EXPLR-05 | Phase 27 | Pending |
+| EXPLR-01 | Phase 27 | Complete |
+| EXPLR-02 | Phase 27 | Complete |
+| EXPLR-03 | Phase 27 | Complete |
+| EXPLR-04 | Phase 27 | Complete |
+| EXPLR-05 | Phase 27 | Complete |
 
 **Coverage:**
 - v2.4 requirements: 16 total

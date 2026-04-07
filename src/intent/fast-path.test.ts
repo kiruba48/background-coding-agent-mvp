@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { fastPathParse, validateDepInManifest, detectTaskType } from './fast-path.js';
+import { fastPathParse, validateDepInManifest, detectTaskType, explorationFastPath } from './fast-path.js';
 
 describe('fastPathParse', () => {
   it('"update recharts" returns { dep: "recharts", version: "latest", project: null }', () => {
@@ -307,6 +307,77 @@ describe('verb guard', () => {
     const result = fastPathParse('update axios');
     expect(result).not.toBeNull();
     expect(result?.dep).toBe('axios');
+  });
+});
+
+describe('explorationFastPath', () => {
+  it('returns git-strategy for "explore the branching strategy"', () => {
+    expect(explorationFastPath('explore the branching strategy')).toEqual({ subtype: 'git-strategy' });
+  });
+
+  it('returns ci-checks for "investigate the CI pipeline"', () => {
+    expect(explorationFastPath('investigate the CI pipeline')).toEqual({ subtype: 'ci-checks' });
+  });
+
+  it('returns project-structure for "analyze the project structure"', () => {
+    expect(explorationFastPath('analyze the project structure')).toEqual({ subtype: 'project-structure' });
+  });
+
+  it('returns general for "tell me about this repo"', () => {
+    expect(explorationFastPath('tell me about this repo')).toEqual({ subtype: 'general' });
+  });
+
+  it('returns ci-checks for "check the CI setup"', () => {
+    expect(explorationFastPath('check the CI setup')).toEqual({ subtype: 'ci-checks' });
+  });
+
+  it('returns git-strategy for "what is the branching strategy"', () => {
+    expect(explorationFastPath('what is the branching strategy')).toEqual({ subtype: 'git-strategy' });
+  });
+
+  it('returns null for "update lodash" (action verb guard fires)', () => {
+    expect(explorationFastPath('update lodash')).toBeNull();
+  });
+
+  it('returns null for "fix the CI config and explore it" (action verb guard fires on "fix")', () => {
+    expect(explorationFastPath('fix the CI config and explore it')).toBeNull();
+  });
+
+  it('returns null for "replace axios with fetch" (action verb guard fires)', () => {
+    expect(explorationFastPath('replace axios with fetch')).toBeNull();
+  });
+
+  it('returns null for empty string', () => {
+    expect(explorationFastPath('')).toBeNull();
+  });
+
+  it('returns null for non-exploration phrase without exploration verb', () => {
+    expect(explorationFastPath('something completely different')).toBeNull();
+  });
+
+  // P1 regression tests: question-prefix patterns require exploration-relevant nouns
+  it('returns null for "what is the correct version of node" (no exploration noun)', () => {
+    expect(explorationFastPath('what is the correct version of node')).toBeNull();
+  });
+
+  it('returns null for "tell me about the error in auth.ts" (no exploration noun)', () => {
+    expect(explorationFastPath('tell me about the error in auth.ts')).toBeNull();
+  });
+
+  it('returns null for "what\'s the best approach to implement caching" (no exploration noun)', () => {
+    expect(explorationFastPath("what's the best approach to implement caching")).toBeNull();
+  });
+
+  it('returns git-strategy for "what is the git branching strategy" (question + exploration noun)', () => {
+    expect(explorationFastPath('what is the git branching strategy')).toEqual({ subtype: 'git-strategy' });
+  });
+
+  it('returns general for "tell me about the project structure" (question + exploration noun)', () => {
+    expect(explorationFastPath('tell me about the project structure')).toEqual({ subtype: 'project-structure' });
+  });
+
+  it('returns general for "tell me about this repo" (question + exploration noun)', () => {
+    expect(explorationFastPath('tell me about this repo')).toEqual({ subtype: 'general' });
   });
 });
 

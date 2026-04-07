@@ -7,9 +7,12 @@ import { buildConfirmationBlocks } from '../slack/blocks.js';
 import { appendHistory } from '../repl/session.js';
 import type { ThreadSession, SlackContext } from '../slack/types.js';
 import type { SessionCallbacks, ScopeHint, TaskHistoryEntry } from '../repl/types.js';
-import { toHistoryStatus } from '../repl/types.js';
+import { toHistoryStatus, MAX_HISTORY_DESCRIPTION_LENGTH } from '../repl/types.js';
 import type { ResolvedIntent } from '../intent/types.js';
 import type { RetryResult } from '../types.js';
+
+/** Maximum input length for investigation description (characters) */
+const MAX_INPUT_LENGTH = 500;
 
 /** Default agent options for Slack sessions */
 const SLACK_TURN_LIMIT = 30;
@@ -137,8 +140,16 @@ export async function processSlackMention(
     throw err;
   }
 
-  // Step 2: Force auto-PR — Slack tasks always create PRs
-  intent.createPr = true;
+  // Step 2: Force auto-PR — Slack tasks always create PRs (except investigation)
+  if (intent.taskType !== 'investigation') {
+    intent.createPr = true;
+  }
+
+  // Set description for investigation tasks (fast-path doesn't set it)
+  if (intent.taskType === 'investigation' && !intent.description) {
+    intent.description = text.slice(0, MAX_INPUT_LENGTH);
+  }
+
   session.intent = intent;
   session.status = 'confirming';
 
@@ -180,10 +191,11 @@ export async function processSlackMention(
     targetVersion: confirmed.version ?? undefined,
     description: confirmed.description,
     taskCategory: confirmed.taskCategory ?? undefined,
-    createPr: true,
+    createPr: confirmed.taskType === 'investigation' ? false : true,
     turnLimit: SLACK_TURN_LIMIT,
     timeoutMs: SLACK_TIMEOUT_MS,
     maxRetries: SLACK_MAX_RETRIES,
+    explorationSubtype: confirmed.explorationSubtype,
   };
 
   const agentContext: AgentContext = {
@@ -203,19 +215,34 @@ export async function processSlackMention(
 
     historyStatus = toHistoryStatus(result.finalStatus);
 
-    const statusMessages: Record<TaskHistoryEntry['status'], string> = {
-      success: result.prResult?.url && !result.prResult.error
-        ? `Task completed. PR: ${result.prResult.url}`
-        : 'Task completed successfully.',
-      cancelled: 'Task was cancelled.',
-      zero_diff: 'Task completed with no changes.',
-      failed: 'Task failed. Check agent logs for details.',
-    };
-    await ctx.client.chat.postMessage({
-      channel: ctx.channel,
-      thread_ts: ctx.threadTs,
-      text: statusMessages[historyStatus],
-    });
+    // Investigation tasks: post report as thread message (truncate to Slack's 40K limit)
+    if (confirmed.taskType === 'investigation') {
+      const report = result.sessionResults.at(-1)?.finalResponse;
+      const SLACK_TEXT_LIMIT = 39_000; // Leave margin below Slack's 40K char limit
+      let text = report || 'Exploration produced no report.';
+      if (text.length > SLACK_TEXT_LIMIT) {
+        text = text.slice(0, SLACK_TEXT_LIMIT) + '\n\n_(report truncated — full report exceeded Slack message limit)_';
+      }
+      await ctx.client.chat.postMessage({
+        channel: ctx.channel,
+        thread_ts: ctx.threadTs,
+        text,
+      });
+    } else {
+      const statusMessages: Record<TaskHistoryEntry['status'], string> = {
+        success: result.prResult?.url && !result.prResult.error
+          ? `Task completed. PR: ${result.prResult.url}`
+          : 'Task completed successfully.',
+        cancelled: 'Task was cancelled.',
+        zero_diff: 'Task completed with no changes.',
+        failed: 'Task failed. Check agent logs for details.',
+      };
+      await ctx.client.chat.postMessage({
+        channel: ctx.channel,
+        thread_ts: ctx.threadTs,
+        text: statusMessages[historyStatus],
+      });
+    }
   } catch (err) {
     historyStatus = 'failed';
     try {
@@ -233,8 +260,8 @@ export async function processSlackMention(
       version: confirmed.version ?? null,
       repo: confirmed.repo,
       status: historyStatus,
-      description: confirmed.taskType === 'generic'
-        ? confirmed.description
+      description: confirmed.taskType === 'generic' || confirmed.taskType === 'investigation'
+        ? (confirmed.description ?? text.slice(0, MAX_HISTORY_DESCRIPTION_LENGTH))
         : confirmed.dep
           ? `update ${confirmed.dep} to ${confirmed.version ?? 'latest'}`
           : undefined,

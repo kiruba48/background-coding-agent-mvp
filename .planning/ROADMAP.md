@@ -90,7 +90,7 @@ Full details: [v2.3-ROADMAP.md](milestones/v2.3-ROADMAP.md)
 
 - [x] **Phase 25: Tech Debt Cleanup** — Fix exit codes, remove dead code, correct configOnly verifier bypass, populate Slack history (completed 2026-04-05)
 - [x] **Phase 26: Git Worktree Isolation** — WorktreeManager with create/remove/prune, workspaceDir seam, readOnly Docker flag (completed 2026-04-05)
-- [ ] **Phase 27: Repo Exploration Tasks** — Investigation task type, read-only Docker enforcement, report display in REPL and Slack
+- [x] **Phase 27: Repo Exploration Tasks** — Investigation task type, read-only Docker enforcement, report display in REPL and Slack (completed 2026-04-06)
 
 ## Phase Details
 
@@ -134,10 +134,12 @@ Plans:
   2. The agent returns a readable report (not a diff, not a PR link) directly in the REPL output; the same report appears as a thread message in Slack
   3. An exploration session where the agent attempts to write or edit a file is blocked at the PreToolUse hook — the file is not created and the session continues
   4. Completing an exploration task does not trigger the composite verifier, the LLM Judge, or PR creation
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 27-01: TBD
+- [ ] 27-01-PLAN.md — Intent parsing: investigation type, exploration fast-path, LLM parser extension, exploration prompt builder
+- [ ] 27-02-PLAN.md — Pipeline: Docker :ro mount, PreToolUse read-only hook, runAgent investigation bypass
+- [ ] 27-03-PLAN.md — Display: REPL report inline output, Slack report thread posting, createPr guard
 
 ## Progress
 
@@ -169,4 +171,4 @@ Plans:
 | 24. Slack Bot Adapter | v2.3 | 2/2 | Complete | 2026-04-05 |
 | 25. Tech Debt Cleanup | 2/2 | Complete    | 2026-04-05 | - |
 | 26. Git Worktree Isolation | 2/2 | Complete    | 2026-04-05 | - |
-| 27. Repo Exploration Tasks | v2.4 | 0/? | Not started | - |
+| 27. Repo Exploration Tasks | 3/3 | Complete    | 2026-04-06 | - |

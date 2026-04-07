@@ -49,6 +49,7 @@ export interface DockerRunOptions {
   sessionId: string;
   networkName?: string;
   imageTag?: string;
+  readOnly?: boolean;
 }
 
 export function buildDockerRunArgs(
@@ -76,7 +77,7 @@ export function buildDockerRunArgs(
     '--tmpfs', '/home/agent:uid=1001,gid=1001',
     '--sysctl', 'net.ipv6.conf.all.disable_ipv6=1',
     '-e', 'ANTHROPIC_API_KEY',  // inherit from parent env, not in ps args
-    '-v', `${opts.workspaceDir}:/workspace:rw`,
+    '-v', `${opts.workspaceDir}:/workspace:${opts.readOnly ? 'ro' : 'rw'}`,
     '--workdir', '/workspace',
     imageTag,
     sdkCommand,

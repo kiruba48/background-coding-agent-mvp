@@ -7,6 +7,7 @@ export interface SessionConfig {
   timeoutMs?: number;    // default: 300000 (5 minutes)
   logger?: pino.Logger;
   signal?: AbortSignal;  // external cancellation signal
+  readOnly?: boolean;    // mount workspace :ro, block Write/Edit via hook
 }
 
 /**

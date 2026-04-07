@@ -51,6 +51,15 @@ vi.mock('../orchestrator/pr-creator.js', () => ({
   generateBranchName: vi.fn().mockReturnValue('agent/mock-branch-abc123'),
 }));
 
+// Mock ClaudeCodeSession for investigation task tests
+const mockSessionRun = vi.fn();
+vi.mock('../orchestrator/claude-code-session.js', () => {
+  const MockClaudeCodeSession = vi.fn(function (this: any, _config: any) {
+    this.run = mockSessionRun;
+  });
+  return { ClaudeCodeSession: MockClaudeCodeSession };
+});
+
 // Mock WorktreeManager — must use a class to support `new WorktreeManager(...)`
 const mockWorktreeCreate = vi.fn().mockResolvedValue(undefined);
 const mockWorktreeRemove = vi.fn().mockResolvedValue(undefined);
@@ -88,6 +97,7 @@ import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { RetryOrchestrator } from '../orchestrator/retry.js';
 import { buildPrompt } from '../prompts/index.js';
+import { ClaudeCodeSession } from '../orchestrator/claude-code-session.js';
 import { runAgent } from './index.js';
 
 // Access the promisified mock (the one actually called by execFileAsync in production)
@@ -370,6 +380,112 @@ describe('src/agent/index.ts', () => {
         {}
       );
       expect(result.worktreeBranch).toBe('agent/mock-branch-abc123');
+    });
+  });
+
+  describe('investigation task type', () => {
+    const makeSessionResult = (status: string, finalResponse = 'Report: found git strategy') => ({
+      sessionId: 'sess-abc',
+      status,
+      toolCallCount: 2,
+      duration: 1000,
+      finalResponse,
+    });
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      mockExecFileAsync.mockResolvedValue({ stdout: '', stderr: '' });
+      mockSessionRun.mockResolvedValue(makeSessionResult('success'));
+    });
+
+    it('returns finalStatus success when session succeeds', async () => {
+      const result = await runAgent(
+        { taskType: 'investigation', repo: '/tmp/workspace', turnLimit: 5, timeoutMs: 60_000, maxRetries: 1, description: 'analyze git strategy' },
+        { skipDockerChecks: true }
+      );
+      expect(result.finalStatus).toBe('success');
+    });
+
+    it('returns sessionResults with one entry', async () => {
+      const result = await runAgent(
+        { taskType: 'investigation', repo: '/tmp/workspace', turnLimit: 5, timeoutMs: 60_000, maxRetries: 1 },
+        { skipDockerChecks: true }
+      );
+      expect(result.sessionResults).toHaveLength(1);
+      expect(result.sessionResults[0].finalResponse).toBe('Report: found git strategy');
+    });
+
+    it('returns empty verificationResults (no verifier)', async () => {
+      const result = await runAgent(
+        { taskType: 'investigation', repo: '/tmp/workspace', turnLimit: 5, timeoutMs: 60_000, maxRetries: 1 },
+        { skipDockerChecks: true }
+      );
+      expect(result.verificationResults).toHaveLength(0);
+    });
+
+    it('does NOT instantiate RetryOrchestrator', async () => {
+      await runAgent(
+        { taskType: 'investigation', repo: '/tmp/workspace', turnLimit: 5, timeoutMs: 60_000, maxRetries: 1 },
+        { skipDockerChecks: true }
+      );
+      expect(MockRetryOrchestrator).not.toHaveBeenCalled();
+    });
+
+    it('does NOT create a WorktreeManager', async () => {
+      await runAgent(
+        { taskType: 'investigation', repo: '/tmp/workspace', turnLimit: 5, timeoutMs: 60_000, maxRetries: 1 },
+        { skipDockerChecks: true }
+      );
+      expect(mockWorktreeCreate).not.toHaveBeenCalled();
+    });
+
+    it('creates ClaudeCodeSession with readOnly:true', async () => {
+      await runAgent(
+        { taskType: 'investigation', repo: '/tmp/workspace', turnLimit: 5, timeoutMs: 60_000, maxRetries: 1 },
+        { skipDockerChecks: true }
+      );
+      const MockCtor = ClaudeCodeSession as unknown as ReturnType<typeof vi.fn>;
+      expect(MockCtor).toHaveBeenCalledWith(
+        expect.objectContaining({ readOnly: true })
+      );
+    });
+
+    it('passes explorationSubtype to buildPrompt', async () => {
+      await runAgent(
+        { taskType: 'investigation', repo: '/tmp/workspace', turnLimit: 5, timeoutMs: 60_000, maxRetries: 1, explorationSubtype: 'git-strategy' },
+        { skipDockerChecks: true }
+      );
+      expect(mockBuildPrompt).toHaveBeenCalledWith(
+        expect.objectContaining({ explorationSubtype: 'git-strategy' })
+      );
+    });
+
+    it('returns finalStatus cancelled when session returns cancelled', async () => {
+      mockSessionRun.mockResolvedValue(makeSessionResult('cancelled', ''));
+      const result = await runAgent(
+        { taskType: 'investigation', repo: '/tmp/workspace', turnLimit: 5, timeoutMs: 60_000, maxRetries: 1 },
+        { skipDockerChecks: true }
+      );
+      expect(result.finalStatus).toBe('cancelled');
+    });
+
+    it('returns finalStatus failed when session returns failed', async () => {
+      mockSessionRun.mockResolvedValue(makeSessionResult('failed', ''));
+      const result = await runAgent(
+        { taskType: 'investigation', repo: '/tmp/workspace', turnLimit: 5, timeoutMs: 60_000, maxRetries: 1 },
+        { skipDockerChecks: true }
+      );
+      expect(result.finalStatus).toBe('failed');
+    });
+
+    it('returns finalStatus cancelled when signal is pre-aborted', async () => {
+      const controller = new AbortController();
+      controller.abort();
+      const result = await runAgent(
+        { taskType: 'investigation', repo: '/tmp/workspace', turnLimit: 5, timeoutMs: 60_000, maxRetries: 1 },
+        { signal: controller.signal }
+      );
+      expect(result.finalStatus).toBe('cancelled');
     });
   });
 });

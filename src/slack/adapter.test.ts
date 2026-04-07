@@ -586,4 +586,166 @@ describe('processSlackMention', () => {
     expect(session.state.history.length).toBe(1);
     expect(session.state.history[0].status).toBe('cancelled');
   });
+
+  describe('investigation task type', () => {
+    const mockInvestigationIntent: ResolvedIntent = {
+      taskType: 'investigation',
+      repo: '/projects/my-app',
+      dep: null,
+      version: null,
+      confidence: 'high',
+      explorationSubtype: 'ci-checks',
+      description: 'explore CI pipeline',
+      scopingQuestions: [],
+    };
+
+    it('INV-S01. investigation intent does NOT get createPr set to true', async () => {
+      vi.mocked(parseIntent).mockResolvedValueOnce({ ...mockInvestigationIntent });
+      vi.mocked(runAgent).mockResolvedValueOnce({
+        finalStatus: 'success',
+        attempts: 1,
+        sessionResults: [{ sessionId: 's1', status: 'success', finalResponse: '# CI Report', toolCallCount: 3, duration: 1000 }],
+        verificationResults: [],
+      });
+
+      const client = createMockClient();
+      const session = createMockSession();
+      const ctx = { client, channel: 'C123', threadTs: '1234567890.123' };
+      const registry = new ProjectRegistry({ cwd: '/tmp/test-registry' });
+
+      const processPromise = processSlackMention('explore CI pipeline', ctx, session, registry);
+      await new Promise<void>(resolve => setTimeout(resolve, 10));
+      session.pendingConfirm?.resolve(mockInvestigationIntent);
+      await processPromise;
+
+      // agentOptions must have createPr: false (not true)
+      const runAgentCall = vi.mocked(runAgent).mock.calls[0];
+      expect(runAgentCall[0].createPr).toBe(false);
+    });
+
+    it('INV-S02. investigation result posts finalResponse as thread message', async () => {
+      vi.mocked(parseIntent).mockResolvedValueOnce({ ...mockInvestigationIntent });
+      vi.mocked(runAgent).mockResolvedValueOnce({
+        finalStatus: 'success',
+        attempts: 1,
+        sessionResults: [{ sessionId: 's1', status: 'success', finalResponse: '# CI Report\nAll checks pass.', toolCallCount: 3, duration: 1000 }],
+        verificationResults: [],
+      });
+
+      const client = createMockClient();
+      const session = createMockSession();
+      const ctx = { client, channel: 'C123', threadTs: '1234567890.123' };
+      const registry = new ProjectRegistry({ cwd: '/tmp/test-registry' });
+
+      const processPromise = processSlackMention('explore CI pipeline', ctx, session, registry);
+      await new Promise<void>(resolve => setTimeout(resolve, 10));
+      session.pendingConfirm?.resolve(mockInvestigationIntent);
+      await processPromise;
+
+      // Should post the report as thread message
+      expect(mockPostMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          channel: 'C123',
+          thread_ts: '1234567890.123',
+          text: '# CI Report\nAll checks pass.',
+        }),
+      );
+    });
+
+    it('INV-S03. investigation with empty finalResponse posts "Exploration produced no report."', async () => {
+      vi.mocked(parseIntent).mockResolvedValueOnce({ ...mockInvestigationIntent });
+      vi.mocked(runAgent).mockResolvedValueOnce({
+        finalStatus: 'success',
+        attempts: 1,
+        sessionResults: [{ sessionId: 's1', status: 'success', finalResponse: '', toolCallCount: 3, duration: 1000 }],
+        verificationResults: [],
+      });
+
+      const client = createMockClient();
+      const session = createMockSession();
+      const ctx = { client, channel: 'C123', threadTs: '1234567890.123' };
+      const registry = new ProjectRegistry({ cwd: '/tmp/test-registry' });
+
+      const processPromise = processSlackMention('explore CI pipeline', ctx, session, registry);
+      await new Promise<void>(resolve => setTimeout(resolve, 10));
+      session.pendingConfirm?.resolve(mockInvestigationIntent);
+      await processPromise;
+
+      expect(mockPostMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: 'Exploration produced no report.',
+        }),
+      );
+    });
+
+    it('INV-S04. non-investigation intent still gets createPr = true (regression check)', async () => {
+      vi.mocked(parseIntent).mockResolvedValueOnce({ ...mockIntent, createPr: false });
+      vi.mocked(runAgent).mockResolvedValueOnce({
+        finalStatus: 'success',
+        attempts: 1,
+        sessionResults: [],
+        verificationResults: [],
+      });
+
+      const client = createMockClient();
+      const session = createMockSession();
+      const ctx = { client, channel: 'C123', threadTs: '1234567890.123' };
+      const registry = new ProjectRegistry({ cwd: '/tmp/test-registry' });
+
+      const processPromise = processSlackMention('add error handling', ctx, session, registry);
+      await new Promise<void>(resolve => setTimeout(resolve, 10));
+      session.pendingConfirm?.resolve({ ...mockIntent, createPr: true });
+      await processPromise;
+
+      const runAgentCall = vi.mocked(runAgent).mock.calls[0];
+      expect(runAgentCall[0].createPr).toBe(true);
+    });
+
+    it('INV-S05. agentOptions for investigation has explorationSubtype set', async () => {
+      vi.mocked(parseIntent).mockResolvedValueOnce({ ...mockInvestigationIntent });
+      vi.mocked(runAgent).mockResolvedValueOnce({
+        finalStatus: 'success',
+        attempts: 1,
+        sessionResults: [{ sessionId: 's1', status: 'success', finalResponse: '# Report', toolCallCount: 3, duration: 1000 }],
+        verificationResults: [],
+      });
+
+      const client = createMockClient();
+      const session = createMockSession();
+      const ctx = { client, channel: 'C123', threadTs: '1234567890.123' };
+      const registry = new ProjectRegistry({ cwd: '/tmp/test-registry' });
+
+      const processPromise = processSlackMention('explore CI pipeline', ctx, session, registry);
+      await new Promise<void>(resolve => setTimeout(resolve, 10));
+      session.pendingConfirm?.resolve(mockInvestigationIntent);
+      await processPromise;
+
+      const runAgentCall = vi.mocked(runAgent).mock.calls[0];
+      expect(runAgentCall[0].explorationSubtype).toBe('ci-checks');
+    });
+
+    it('INV-S06. investigation history entry has description from input text', async () => {
+      const intentWithoutDesc = { ...mockInvestigationIntent, description: undefined };
+      vi.mocked(parseIntent).mockResolvedValueOnce(intentWithoutDesc);
+      vi.mocked(runAgent).mockResolvedValueOnce({
+        finalStatus: 'success',
+        attempts: 1,
+        sessionResults: [{ sessionId: 's1', status: 'success', finalResponse: '# Report', toolCallCount: 3, duration: 1000 }],
+        verificationResults: [],
+      });
+
+      const client = createMockClient();
+      const session = createMockSession();
+      const ctx = { client, channel: 'C123', threadTs: '1234567890.123' };
+      const registry = new ProjectRegistry({ cwd: '/tmp/test-registry' });
+
+      const processPromise = processSlackMention('explore CI pipeline', ctx, session, registry);
+      await new Promise<void>(resolve => setTimeout(resolve, 10));
+      session.pendingConfirm?.resolve({ ...intentWithoutDesc });
+      await processPromise;
+
+      expect(session.state.history[0].description).toBeTruthy();
+      expect(session.state.history[0].description).toContain('explore');
+    });
+  });
 });

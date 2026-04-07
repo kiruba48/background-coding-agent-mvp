@@ -1,7 +1,10 @@
 import { buildMavenPrompt } from './maven.js';
 import { buildNpmPrompt } from './npm.js';
 import { buildGenericPrompt } from './generic.js';
-export { buildMavenPrompt, buildNpmPrompt, buildGenericPrompt };
+import { buildExplorationPrompt } from './exploration.js';
+export { buildMavenPrompt, buildNpmPrompt, buildGenericPrompt, buildExplorationPrompt };
+
+import type { ExplorationSubtype } from '../intent/types.js';
 
 export interface PromptOptions {
   taskType: string;
@@ -10,6 +13,7 @@ export interface PromptOptions {
   description?: string;  // raw NL task description for generic tasks
   repoPath?: string;     // optional repo path for manifest dependency injection
   scopeHints?: string[]; // scoping dialogue answers for generic tasks
+  explorationSubtype?: ExplorationSubtype; // subtype for investigation tasks
 }
 
 /**
@@ -38,6 +42,12 @@ export async function buildPrompt(options: PromptOptions): Promise<string> {
         throw new Error('description is required for generic tasks');
       }
       return buildGenericPrompt(options.description, options.repoPath, options.scopeHints);
+    }
+    case 'investigation': {
+      if (!options.description) {
+        throw new Error('description is required for investigation tasks');
+      }
+      return buildExplorationPrompt(options.description, options.explorationSubtype);
     }
     default:
       return `You are a coding agent. Your task: ${options.description ?? options.taskType}. Work in the current directory.`;

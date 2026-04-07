@@ -26,7 +26,7 @@ import { buildPrompt } from '../prompts/index.js';
 import { assertDockerRunning, ensureNetworkExists, buildImageIfNeeded } from '../cli/docker/index.js';
 import { WorktreeManager } from './worktree-manager.js';
 import type { RetryResult } from '../types.js';
-import type { TaskCategory } from '../intent/types.js';
+import type { TaskCategory, ExplorationSubtype } from '../intent/types.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -48,6 +48,7 @@ export interface AgentOptions {
   description?: string;     // raw NL task description for generic tasks
   taskCategory?: TaskCategory;    // category label for generic tasks (e.g. 'code-change')
   scopeHints?: string[];          // scoping dialogue answers for generic tasks
+  explorationSubtype?: ExplorationSubtype;    // subtype for investigation tasks (e.g. 'git-strategy')
 }
 
 /**
@@ -129,6 +130,55 @@ export async function runAgent(
     await assertDockerRunning();
     await ensureNetworkExists();
     await buildImageIfNeeded();
+  }
+
+  // Investigation tasks: bypass worktree, mount :ro, run bare session, skip verifier/judge/PR
+  if (options.taskType === 'investigation') {
+    try {
+      const prompt = await buildPrompt({
+        taskType: options.taskType,
+        description: options.description,
+        explorationSubtype: options.explorationSubtype,
+      });
+
+      const { ClaudeCodeSession } = await import('../orchestrator/claude-code-session.js');
+      const session = new ClaudeCodeSession({
+        workspaceDir: options.repo,
+        turnLimit: options.turnLimit,
+        timeoutMs: options.timeoutMs,
+        logger: childLogger,
+        signal: context.signal,
+        readOnly: true,
+      });
+
+      const sessionResult = await session.run(prompt, childLogger, context.signal);
+
+      // Map SessionResult.status to RetryResult.finalStatus explicitly (V2: no unsound cast)
+      const statusMap: Record<string, RetryResult['finalStatus']> = {
+        success: 'success',
+        failed: 'failed',
+        timeout: 'timeout',
+        turn_limit: 'turn_limit',
+        cancelled: 'cancelled',
+      };
+
+      return {
+        finalStatus: statusMap[sessionResult.status] ?? 'failed',
+        attempts: 1,
+        sessionResults: [sessionResult],
+        verificationResults: [],
+      };
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      childLogger.error({ err }, 'Investigation task failed');
+      return {
+        finalStatus: 'failed',
+        attempts: 1,
+        sessionResults: [],
+        verificationResults: [],
+        error: errMsg,
+      };
+    }
   }
 
   // Worktree lifecycle — create isolated worktree unless skipped (tests)
