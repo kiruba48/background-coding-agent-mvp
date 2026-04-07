@@ -265,6 +265,63 @@
 
 ---
 
+## Milestone: v2.4 — Git Worktree & Repo Exploration
+
+**Shipped:** 2026-04-07
+**Phases:** 3 | **Plans:** 7 | **Timeline:** 3 days
+
+### What Was Built
+- `WorktreeManager` class with create/remove/buildWorktreePath/pruneOrphans using Node built-ins (no `simple-git`)
+- PID-sentinel-based orphan detection (`{pid, branch}` JSON in `.bg-agent-pid`) with `process.kill(pid, 0)` liveness check
+- runAgent() try/finally worktree lifecycle — cleanup on success, failure, veto, zero-diff, cancelled, and throw
+- REPL startup `pruneOrphans` scan + post-hoc PR branch support via `lastWorktreeBranch` in ReplState
+- Docker `:ro` workspace mount + PreToolUse hook blocking Write/Edit for investigation tasks
+- `investigation` task type in intent pipeline — fast-path patterns, action verb guard, LLM parser extension
+- `buildExplorationPrompt` with 4-subtype registry (git-strategy, ci-checks, project-structure, general)
+- runAgent investigation bypass between Docker and worktree lifecycles — skips orchestrator/verifier/judge/PR
+- REPL inline report display + `.reports/<ts>-<subtype>.md` host-side save on "save" keyword
+- Slack thread message posting for investigation reports + `createPr` guard
+- Tech debt cleared: distinct exit codes (2 vetoed, 3 turn_limit), `SessionTimeoutError` removed, cancelled history fix, configOnly verifier injection, Slack dead code removed, Slack multi-turn history populated
+
+### What Worked
+- Phase ordering: tech debt cleanup first (Phase 25) so Phase 26's diff was unambiguously feature-only
+- TDD (RED → GREEN per task) enforced across all 7 plans — test suite grew by 102 tests
+- Injected verifier pattern in retry.ts removed hot-path coupling to compositeVerifier and made configOnly testable
+- Defence-in-depth for read-only: OS-level (`:ro` mount) + SDK-level (PreToolUse hook) — neither layer bypassable
+- Action verb guard in explorationFastPath prevented "update X" from being misclassified as exploration
+- try/finally worktree cleanup covered every exit path from day one — no cleanup leaks observed
+- Host-side `.reports/` write keeps exploration truly read-only even without `:ro` mount (for REPL path)
+- Cross-phase integration was clean: 16/16 requirements satisfied, 5/5 integration checks, 6/6 E2E flows on first audit run
+
+### What Was Inefficient
+- SUMMARY.md `requirements-completed` frontmatter still sparse despite prior milestone lessons (plans 25-01, 26-02, 27-01, 27-02 had zero REQs listed)
+- Nyquist validation partial across all 3 phases (25 missing VALIDATION.md; 26/27 have `nyquist_compliant: false`)
+- REPL renders redundant status box after investigation report (cosmetic; easy fix deferred)
+- CLI `run` command forgot to forward `explorationSubtype` — REPL/Slack parity gap caught only in audit
+- Temp file cleanup: 8 stray docs at repo root (C4-ARCHITECTURE.md, phase-*-code-review.md, etc.) untracked during execution
+
+### Patterns Established
+- Sibling worktree path convention: `.bg-agent-<repoBasename>-<suffix>` (git rejects worktrees inside repo)
+- PID sentinel: store both `pid` and `branch` so branch cleanup works even if worktree dir was deleted mid-run
+- EPERM-as-alive: conservative — we'd rather skip cleanup than delete a live agent's worktree
+- Investigation bypass sits between Docker lifecycle and worktree lifecycle — Docker needs `:ro` mount, worktree is irrelevant
+- Effective-variable pattern: `effectiveWorkspaceDir` / `effectiveBranchOverride` seam threads worktree state into downstream consumers without wrapper types
+
+### Key Lessons
+1. Tech debt cleanup as a dedicated phase before feature work pays off — Phase 26's diff became trivially reviewable
+2. Defence in depth for security-critical flags (read-only) means both OS-level and SDK-level enforcement, with either layer sufficient
+3. Worktree isolation must cover every exit path; a single missing `finally` branch leaves orphans
+4. Audit findings of type `tech_debt` (not `gaps_found`) can ship — the distinction between "broken" and "ugly" matters
+5. SUMMARY frontmatter hygiene still drifts despite being a v1.0 lesson — consider tooling to enforce at commit time
+6. Exploration-as-read-only-task is a clean orthogonal axis — same pipeline with bypass + `:ro` works without new architecture
+
+### Cost Observations
+- Model mix: balanced profile (sonnet for execution, haiku for intent + judge)
+- Plan execution: 7 plans in 3 days (~0.43 days/plan — back to v2.2 pace after v2.3's Slack complexity slowdown)
+- Notable: Phase 27 was faster than expected because Phase 25's dead code removal + Phase 26's worktree infra left a clean surface
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -277,6 +334,7 @@
 | v2.1 | 4 days | 4 | 10 | Conversational interface (REPL + intent parser) |
 | v2.2 | 3 days | 3 | 6 | Generic task support, verification routing |
 | v2.3 | 11 days | 4 | 7 | Scoping dialogue, post-hoc PR, Slack bot |
+| v2.4 | 3 days | 3 | 7 | Git worktree isolation, read-only exploration tasks, tech debt cleanup |
 
 ### Cumulative Quality
 
@@ -288,6 +346,7 @@
 | v2.1 | 513 | Vitest | 13,780 |
 | v2.2 | 575 | Vitest | 15,941 |
 | v2.3 | 696 | Vitest | 18,121 |
+| v2.4 | 798 | Vitest | 20,328 |
 
 ### Top Lessons (Verified Across Milestones)
 

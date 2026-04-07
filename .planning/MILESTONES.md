@@ -1,5 +1,30 @@
 # Milestones
 
+## v2.4 Git Worktree & Repo Exploration (Shipped: 2026-04-07)
+
+**Phases completed:** 3 phases (25-27), 7 plans
+**Timeline:** 3 days (2026-04-05 → 2026-04-07)
+**LOC:** 20,328 TypeScript (+7,654 net lines) | **Tests:** 798 unit tests (+102 from v2.3)
+**Git range:** 1a901e7 → 9686337
+
+**Key accomplishments:**
+- Tech debt cleanup — distinct exit codes for `vetoed` (2) and `turn_limit` (3), `SessionTimeoutError` deleted, cancelled tasks recorded as `cancelled` in session history, configOnly verifier routed through injected `retryConfig.verifier`
+- Slack module cleanup — dead code removed (`buildIntentBlocks`, `buildStatusMessage`), multi-turn thread sessions now populate `session.state.history` via shared `appendHistory` export
+- Git worktree isolation — `WorktreeManager` class (create/remove/buildWorktreePath/pruneOrphans) with PID-sentinel-based orphan detection using Node.js built-ins; sibling worktree path convention `.bg-agent-<repoBasename>-<suffix>`
+- runAgent worktree lifecycle — try/finally cleanup on all exit paths (success, failure, veto, zero-diff, cancelled), REPL startup `pruneOrphans` scan, post-hoc PR branch support via `lastWorktreeBranch` in ReplState
+- Investigation task type — intent parser `investigation` type with fast-path patterns and action verb guard, exploration prompt builder with 4 subtypes (git-strategy, ci-checks, project-structure, general), Docker `:ro` workspace mount, PreToolUse hook blocking Write/Edit, runAgent bypass of RetryOrchestrator/verifier/judge/PR
+- Investigation display — REPL prints report inline, `.reports/<ts>-<subtype>.md` written host-side when input contains "save", Slack posts report as thread message, `createPr` guard prevents PR for investigation tasks
+
+**Known gaps (accepted as tech debt):**
+- Cosmetic UX: REPL renders redundant status box after investigation report (`renderResultBlock` should guard on `intent.taskType !== 'investigation'`)
+- CLI `run` command lacks `--task-type investigation` support and does not forward `explorationSubtype` (REPL/Slack unaffected)
+- SUMMARY.md `requirements-completed` frontmatter sparse for 25-01, 26-02, 27-01, 27-02 (hygiene; VERIFICATION.md tables authoritative)
+- Nyquist validation partial across phases 25-27 (Phase 25 missing VALIDATION.md; 26/27 have drafts with `nyquist_compliant: false`)
+
+**Archives:** [v2.4-ROADMAP.md](milestones/v2.4-ROADMAP.md) | [v2.4-REQUIREMENTS.md](milestones/v2.4-REQUIREMENTS.md) | [v2.4-MILESTONE-AUDIT.md](milestones/v2.4-MILESTONE-AUDIT.md)
+
+---
+
 ## v2.3 Conversational Scoping & REPL Enhancements (Shipped: 2026-04-05)
 
 **Phases completed:** 4 phases (21-24), 7 plans

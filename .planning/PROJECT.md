@@ -48,17 +48,22 @@ The full verification loop must work: agent changes code, deterministic verifier
 - ✓ Follow-up task referencing — enriched session history enables "now add tests for that" — v2.3
 - ✓ Slack bot adapter — full pipeline via @slack/bolt Socket Mode with Block Kit confirm — v2.3
 - ✓ SessionCallbacks extensibility — channel-agnostic adapters (CLI, Slack, future MCP) — v2.3
+- ✓ Git worktree isolation — each session in its own sibling worktree with PID-sentinel orphan detection — v2.4
+- ✓ Docker mounts worktree (not main checkout) for concurrent execution without branch conflicts — v2.4
+- ✓ Post-hoc PR uses stored `lastWorktreeBranch` — worktree branch is authoritative — v2.4
+- ✓ Repo exploration tasks — `investigation` task type with 4 subtypes (git-strategy, ci-checks, project-structure, general) — v2.4
+- ✓ Read-only Docker enforcement — `:ro` workspace mount + PreToolUse hook blocking Write/Edit — v2.4
+- ✓ Investigation reports displayed inline in REPL and posted as Slack thread messages — v2.4
+- ✓ Distinct exit codes for `vetoed` (2) and `turn_limit` (3); `SessionTimeoutError` dead code removed — v2.4
+- ✓ Cancelled tasks recorded as `cancelled` in session history (not `failed`) — v2.4
+- ✓ configOnly verifier routed through injected `retryConfig.verifier` — v2.4
+- ✓ Slack dead code removed (`buildIntentBlocks`, `buildStatusMessage`); Slack multi-turn history populated — v2.4
 
 ### Active
 
-#### Current Milestone: v2.4 Git Worktree & Repo Exploration
+#### Next Milestone: TBD
 
-**Goal:** Enable concurrent agent runs via git worktree isolation, add read-only repo exploration tasks, and clean up accumulated tech debt.
-
-**Target features:**
-- Git worktree isolation — each agent session gets its own worktree in a sibling directory for concurrent execution without branch conflicts
-- Repo exploration tasks — read-only investigative mode (git strategy, CI checks, project structure) returning reports instead of code changes, running in Docker
-- Tech debt cleanup — dead code removal, exit code fixes, and other accumulated debt items
+Planning pending — use `/gsd:new-milestone` to start questioning → research → requirements → roadmap.
 
 #### Deferred (future milestone)
 
@@ -87,6 +92,10 @@ The full verification loop must work: agent changes code, deterministic verifier
 - Persistent cross-session Slack history — stale context causes misparses; sessions reset on restart
 - Slack auto-execute without confirmation — removes human-in-the-loop trust model
 
+## Shipped: v2.4 Git Worktree & Repo Exploration (2026-04-07)
+
+Git worktree isolation so concurrent agent sessions never conflict — `WorktreeManager` with PID-sentinel orphan detection, runAgent try/finally lifecycle, Docker mounts the worktree (not the main checkout), REPL startup `pruneOrphans`, and post-hoc PR branch support via `lastWorktreeBranch`. Read-only repo exploration task type (`investigation`) with fast-path intent classification, 4-subtype exploration prompts, Docker `:ro` mount, PreToolUse Write/Edit block, and report display in REPL + Slack. Accumulated tech debt cleared: distinct exit codes, dead-code removal (`SessionTimeoutError`, `buildIntentBlocks`, `buildStatusMessage`), correct `cancelled` history recording, configOnly verifier routed through dependency injection, and Slack multi-turn history population.
+
 ## Shipped: v2.3 Conversational Scoping & REPL Enhancements (2026-04-05)
 
 REPL post-hoc PR creation (`pr` command), conversational scoping dialogue (up to 3 optional questions for generic tasks), follow-up task referencing via enriched session history, and Slack bot adapter (`@slack/bolt` Socket Mode with Block Kit confirm/cancel, async agent execution, PR link posting). SessionCallbacks interface extended with `askQuestion`, `onMessage`, `onPrCreated` for channel-agnostic adapters.
@@ -111,14 +120,15 @@ Replaced the custom agent loop with the Claude Agent SDK. Deleted 1,989 lines of
 **Shipped v2.1** (Conversational Mode) with 4 phases in 4 days. 13,780 LOC TypeScript, 513 tests.
 **Shipped v2.2** (Deterministic Task Support) with 3 phases in 3 days. 15,941 LOC TypeScript, 575 tests.
 **Shipped v2.3** (Conversational Scoping & REPL Enhancements) with 4 phases in 11 days. 18,121 LOC TypeScript, 696 tests.
+**Shipped v2.4** (Git Worktree & Repo Exploration) with 3 phases in 3 days. 20,328 LOC TypeScript, 798 tests.
 
-**Tech stack:** Node.js 20, TypeScript (NodeNext), Docker (Alpine, multi-stage), Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`), Anthropic SDK (LLM Judge + intent parser), Commander.js, Pino, Vitest, ESLint v10, Zod, conf@15, @slack/bolt@^4.6.0.
+**Tech stack:** Node.js 20, TypeScript (NodeNext), Docker (Alpine, multi-stage), Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`), Anthropic SDK (LLM Judge + intent parser), Commander.js, Pino, Vitest, ESLint v10, Zod, conf@15, @slack/bolt@^4.6.0. Git worktrees via `execFile` + Node built-ins (no `simple-git` dependency).
 
-**Architecture:** CLI → {REPL | one-shot | Slack bot} → Intent Parser (fast-path regex + LLM with verb guard) → Scoping Dialogue (generic tasks) → Confirm → runAgent() → RetryOrchestrator → zero-diff check → config-only routing → ClaudeCodeSession (`query()`) → Docker container (iptables, non-root UID 1001). Built-in tools (Read, Write, Edit, Bash, Glob, Grep). PreToolUse hook for security, PostToolUse hook for audit. MCP verifier server for mid-session self-check. Composite verifier (build+test+lint for code, lint-only for config) as outer gate. LLM Judge (Claude Haiku 4.5, GA structured output, refactoring-aware) evaluates scope post-verification. Post-hoc PR creation via REPL `pr` command.
+**Architecture:** CLI → {REPL | one-shot | Slack bot} → Intent Parser (fast-path regex + LLM with verb guard + action verb guard for exploration) → Scoping Dialogue (generic tasks) → Confirm → runAgent() → Docker lifecycle → **Investigation bypass** (read-only ClaudeCodeSession) OR **Worktree lifecycle** (WorktreeManager.create → RetryOrchestrator → zero-diff check → config-only routing → ClaudeCodeSession (`query()`) → verifier → judge → PR → WorktreeManager.remove in finally). Docker container (iptables, non-root UID 1001, `:rw` for regular tasks / `:ro` for investigation). Built-in tools (Read, Write, Edit, Bash, Glob, Grep). PreToolUse hook for security + read-only enforcement, PostToolUse hook for audit. MCP verifier server for mid-session self-check. Composite verifier (build+test+lint for code, lint-only for config) as outer gate. LLM Judge (Claude Haiku 4.5, GA structured output, refactoring-aware) evaluates scope post-verification. Post-hoc PR creation via REPL `pr` command using stored `lastWorktreeBranch`.
 
-**Test suite:** 696 unit tests (Vitest), 100% passing. Integration tests require Docker + API key.
+**Test suite:** 798 unit tests (Vitest), 100% passing. Integration tests require Docker + API key.
 
-**Known tech debt:** CLI-05 partial (cost tracking), exit code switch missing explicit vetoed/turn_limit cases, SessionTimeoutError dead code, cancelled tasks recorded as 'failed' in session history, retry.ts configOnly path bypasses retryConfig.verifier, Nyquist validation partial for phases 18-24, Slack dead code (buildIntentBlocks, buildStatusMessage), Slack multi-turn history not populated.
+**Known tech debt:** CLI-05 partial (cost tracking); REPL renders redundant status box after investigation report (cosmetic); CLI `run` command lacks `--task-type investigation` and `explorationSubtype` forwarding; SUMMARY.md frontmatter sparse for some plans (hygiene); Nyquist validation partial across phases 18-27.
 
 ## Constraints
 
@@ -159,6 +169,16 @@ Replaced the custom agent loop with the Claude Agent SDK. Deleted 1,989 lines of
 | Per-user ReplState in Slack | `Map<userId, ReplState>` per incoming message prevents cross-user corruption | ✓ Good — independent sessions verified |
 | Deferred-promise pattern for Slack confirm | pendingConfirm resolver stored on ThreadSession, resolved by action handler | ✓ Good — clean async bridge between Bolt events and session pipeline |
 | Fire-and-forget agent in Slack | processSlackMention fires void async IIFE, decoupled from Bolt 3s ack timing | ✓ Good — no timeout issues |
+| Sibling git worktrees via `execFile` + Node built-ins | No `simple-git` dependency; `.bg-agent-<repoBasename>-<suffix>` path convention; git rejects worktrees inside repo | ✓ Good — zero new deps, clean lifecycle |
+| PID sentinel JSON stores both pid + branch | Enables branch cleanup even when worktree dir already removed; `process.kill(pid, 0)` with EPERM-as-alive is conservative | ✓ Good — orphan scan reliable across crashes |
+| WorktreeManager single-use (one per session) | No shared state, no instance pooling; `pruneOrphans` is static | ✓ Good — simple lifecycle, no leaks |
+| try/finally worktree cleanup in runAgent | Removes worktree on every exit path (success, failure, veto, zero-diff, cancelled, throw) | ✓ Good — no worktree accumulation |
+| Investigation bypass between Docker and worktree lifecycles | Docker runs (needs `:ro` mount), worktree/orchestrator/verifier/judge/PR all skipped — clean separation | ✓ Good — exploration path trivially fast |
+| Read-only enforcement at two layers | Docker `:ro` mount (OS-level) + PreToolUse hook denying Write/Edit (SDK-level) — defence in depth | ✓ Good — neither layer can be bypassed |
+| Action verb guard in explorationFastPath | Prevents "update X" / "fix Y" from misclassifying as exploration; guard fires before pattern matching | ✓ Good — no false-positive investigations |
+| Host-side `.reports/` write | Agent never writes files (even in non-read-only mode); REPL writes on `/\bsave\b/i` match in user input | ✓ Good — keeps exploration truly read-only |
+| Injected verifier in retry.ts (configOnly path) | `retryConfig.verifier` always used — no direct `compositeVerifier` import; testable, mockable | ✓ Good — removes hot-path coupling |
+| Exported `appendHistory` from session.ts | REPL and Slack adapters share the same bounded-history append logic | ✓ Good — no duplication across adapters |
 
 ---
-*Last updated: 2026-04-05 after v2.4 milestone started*
+*Last updated: 2026-04-07 after v2.4 milestone shipped*
