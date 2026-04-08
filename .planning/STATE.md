@@ -1,13 +1,13 @@
 ---
 gsd_state_version: 1.0
-milestone: null
-milestone_name: null
-status: milestone_complete
-stopped_at: v2.4 shipped 2026-04-07
-last_updated: "2026-04-07"
-last_activity: "2026-04-07 — Shipped v2.4 Git Worktree & Repo Exploration"
+milestone: v3.0
+milestone_name: Program Automator
+status: defining_requirements
+stopped_at: null
+last_updated: "2026-04-08"
+last_activity: "2026-04-08 — Milestone v3.0 Program Automator started"
 progress:
-  total_phases: 0
+  total_phases: 7
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -18,14 +18,17 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-07 after v2.4 milestone shipped)
+See: .planning/PROJECT.md (updated 2026-04-08 after v3.0 milestone start)
 
 **Core value:** The full verification loop must work: agent changes code, deterministic verifiers catch failures, LLM Judge catches scope creep, and only verified changes proceed.
-**Current focus:** Planning next milestone — run `/gsd:new-milestone`
+**Current focus:** v3.0 Program Automator — defining requirements
 
 ## Current Position
 
-No active milestone. v2.4 shipped 2026-04-07.
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-04-08 — Milestone v3.0 started
 
 ## Performance Metrics
 
@@ -52,7 +55,7 @@ None open.
 
 ## Session Continuity
 
-Last session: 2026-04-07
-Stopped at: v2.4 shipped
+Last session: 2026-04-08
+Stopped at: v3.0 milestone start — defining requirements
 Resume file: None
-Next action: `/gsd:new-milestone`
+Next action: Research → REQUIREMENTS.md → roadmapper

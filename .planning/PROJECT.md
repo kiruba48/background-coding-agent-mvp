@@ -61,9 +61,26 @@ The full verification loop must work: agent changes code, deterministic verifier
 
 ### Active
 
-#### Next Milestone: TBD
+## Current Milestone: v3.0 Program Automator
 
-Planning pending — use `/gsd:new-milestone` to start questioning → research → requirements → roadmap.
+**Goal:** Evolve the agent from a single-session chore automator into a program automator that can drive arbitrary **sweeping refactors** — any task shaped as "find all occurrences of X, transform to Y, verify Z" — across an entire repository. New task types must be addable as declarative recipes, not as new code phases.
+
+**The shift in one sentence:** Stop treating a session as the unit of work. Make a **RefactorRun** the unit of work, and let sessions become replaceable workers against a persistent ledger, driven by a declarative recipe.
+
+**Target features:**
+- Sweeping-refactor task type with read-only discovery pass
+- RefactorRun orchestrator (multi-session, persistent ledger, long-lived worktree)
+- Differential verification against a baseline snapshot (not absolute green)
+- Read-only `/context/` bundle mount + recipe-driven judge scope
+- Declarative recipe format + generic recipe runner (4 slots: discovery / transform / verify / context)
+- Task-agnostic capability toolbox (`config_edit`, `ast_query/rewrite`, `import_rewrite`, `rewrite_run`, `test_baseline/compare`, `doc_retrieve`)
+- Conversational recipe authoring (four-question interview emits recipe drafts)
+
+**Out of v3.0 scope:**
+- Full language-to-language rewrites (Java → Kotlin) — defer to v4
+- Multi-repo fleet orchestration — one repo per run
+- Live-environment verification (prod-shaped DBs, live services)
+- Creative/subjective tasks (visual polish)
 
 #### Deferred (future milestone)
 
@@ -181,4 +198,4 @@ Replaced the custom agent loop with the Claude Agent SDK. Deleted 1,989 lines of
 | Exported `appendHistory` from session.ts | REPL and Slack adapters share the same bounded-history append logic | ✓ Good — no duplication across adapters |
 
 ---
-*Last updated: 2026-04-07 after v2.4 milestone shipped*
+*Last updated: 2026-04-08 after v3.0 milestone start*
