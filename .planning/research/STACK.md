@@ -1,170 +1,258 @@
 # Stack Research
 
-**Domain:** Git worktree isolation and repo exploration tasks — background-coding-agent v2.4
-**Researched:** 2026-04-05
-**Confidence:** HIGH — live codebase inspection, npm registry, and direct runtime verification
+**Domain:** v3.0 Program Automator — sweeping-refactor capability additions to background-coding-agent
+**Researched:** 2026-04-08
+**Confidence:** HIGH for YAML/JSON schema/BM25/ledger choices (official docs + npm verified), MEDIUM for tree-sitter WASM approach (workaround path, not first-party Alpine support), MEDIUM for rewrite-tool bridging (CLI invocation pattern confirmed, offline pre-seeding not officially documented)
 
 ---
 
 ## Scope
 
-This file covers ONLY what changes for the v2.4 milestone. The validated existing stack is NOT re-researched:
+This file covers ONLY what changes for v3.0. The validated existing stack is not re-researched:
 
 - Node.js 20, TypeScript (NodeNext / ESM `"type": "module"`)
-- `@anthropic-ai/claude-agent-sdk@^0.2.77`, `@anthropic-ai/sdk@^0.80.0`
-- `simple-git@^3.32.3`, Commander.js, Pino, Vitest, ESLint v10, Zod 4, conf@15
+- `@anthropic-ai/claude-agent-sdk`, `@anthropic-ai/sdk`
+- `simple-git@^3.32.3`, Commander.js, Pino, Vitest, ESLint v10, Zod@^4.x, conf@15
 - `@slack/bolt@^4.6.0`, `octokit@^5.0.5`, `write-file-atomic@^7.0.0`
 - Docker (Alpine, multi-stage), `git`, `bash`, `ripgrep` already in image
+- In-process MCP verifier server
+
+**Note on Zod:** v2.4 STACK.md references `Zod 4` — confirmed Zod v4.x (latest 4.3.6 as of research date) is already in use. v3.0 recipe schema validation should use the existing Zod instance, not add AJV unless JSON Schema external file validation is specifically required.
 
 ---
 
-## New Dependencies: None
+## Capability-to-Library Mapping
 
-**No new npm packages are required for v2.4.**
+Before the table, here is the decision for each v3.0 capability:
 
-Both features — git worktree management and repo exploration tasks — are implemented entirely with:
-
-1. **`simple-git` already in the project (v3.32.3)** — its `.raw()` method accepts arbitrary git subcommands, including all worktree operations. Live-verified:
-   ```
-   git.raw(['worktree', 'list', '--porcelain'])  // returns worktree entries
-   git.raw(['worktree', 'add', '-b', branch, path])  // creates worktree
-   git.raw(['worktree', 'remove', '--force', path])   // removes worktree
-   git.raw(['worktree', 'prune'])                      // cleans stale references
-   ```
-   `simple-git` has no dedicated `.worktree()` method (confirmed by TypeScript typings and runtime inspection). `.raw()` is the correct and supported path — used elsewhere in the project (`pr-creator.ts` uses `.raw(['merge-base', ...])` and `.raw(['cherry-pick', ...])`).
-
-2. **Node.js stdlib** — `node:path`, `node:fs/promises`, `node:os` for worktree directory path construction and cleanup.
-
-3. **Pure TypeScript changes** — new task type (`exploration`), new prompt builder, modified orchestration path for read-only execution (no verification gate, no PR creation).
+| Capability | Decision | Library/Approach |
+|------------|----------|-----------------|
+| Recipe YAML load + schema validate | `yaml@^2.8.3` (`parseDocument`) + Zod (existing) | No new schema validator needed |
+| YAML roundtrip-safe edit (comments) | `yaml@^2.8.3` with `parseDocument` AST | Already decided above — one library for both |
+| JSON-Schema file validation (schema_validate recipe slot) | `ajv@^8.18.0` | New dep, pure JS, no native, Alpine-safe |
+| Tree-sitter AST query/rewrite (Java/Python/TS) | `web-tree-sitter@^0.22.4` + `tree-sitter-wasms@^0.1.13` (WASM path) | Avoids glibc/musl native build issue |
+| BM25 doc_retrieve over context bundle | `wink-bm25-text-search@^3.1.2` | Pure JS, no native, no network, no embeddings |
+| Persistent RefactorRun ledger | `better-sqlite3@^12.8.0` | Alpine musl prebuilds available since 2021 |
+| OpenRewrite bridge (Java repos) | CLI invocation: `mvn -o org.openrewrite.maven:rewrite-maven-plugin:run` | No Node library — CLI-only, Maven local repo pre-seeded at image build |
+| jscodeshift bridge (JS/TS repos) | CLI invocation: `npx jscodeshift` or direct `node_modules/.bin/jscodeshift` | `jscodeshift@^17.3.0` pre-installed in image; no Node API needed |
+| semgrep bridge (search/pattern) | CLI invocation: `semgrep --config <pattern> --json` | Python binary pre-seeded in image; `pip install semgrep` at image build |
 
 ---
 
-## Changes to Existing Modules
+## Recommended Stack
 
-### 1. Git Worktree Manager — new module
+### Core Technologies (new for v3.0)
 
-**File:** `src/agent/worktree.ts` (new)
+| Technology | Version | Purpose | Why Recommended |
+|------------|---------|---------|-----------------|
+| `yaml` | `^2.8.3` | YAML recipe load AND roundtrip-safe config editing | `parseDocument()` is the only pure-JS YAML parser that preserves comments in a mutable AST. `js-yaml` does not. This one library covers both Phase 32 (recipe loading) and Phase 33 (`config_edit` tool). Dual-licensed ISC. |
+| `ajv` | `^8.18.0` | JSON Schema validation for `schema_validate` recipe invariant | Fastest JSON schema validator (codegen-based). Pure JavaScript — zero native deps. Alpine-safe. Already transitively present in most Node projects (16,000+ dependents). Draft-04 through 2020-12 supported. |
+| `web-tree-sitter` | `^0.22.4` | AST query/rewrite runtime (WASM-based) | The native `tree-sitter` npm package has prebuilt binaries linked against glibc — not compatible with Alpine's musl without compilation. `web-tree-sitter` is pure WASM, no native build, works in any Node.js ≥16 environment. |
+| `tree-sitter-wasms` | `^0.1.13` | Pre-compiled WASM grammar files for 36 languages | Provides `tree-sitter-java.wasm` (430 kB), `tree-sitter-typescript.wasm` (2.34 MB), `tree-sitter-python.wasm` (476 kB) among 36 languages. Ships as a single npm package, binaries are static files, no compilation needed. Maintained by Sourcegraph. |
+| `wink-bm25-text-search` | `^3.1.2` | BM25 full-text retrieval over mounted context bundles | Pure JavaScript, no native deps, no network calls, in-memory indexing. Exactly what `doc_retrieve` MCP tool needs: build index from `/context/` files, query by recipe template string. No embeddings model required. |
+| `better-sqlite3` | `^12.8.0` | Persistent RefactorRun ledger across sessions | Synchronous API fits the serialized, single-process RefactorRun orchestrator. Alpine musl prebuilds have been available since PR#641 (Nov 2021) — confirmed working for Node 20 / amd64. Latest v12.8.0 requires Node.js ≥20 (matches current stack). |
 
-**What it does:** Encapsulates all `git worktree` lifecycle operations. Called by `runAgent()` before Docker launch (create worktree) and in a `finally` block (remove worktree).
+### Supporting Libraries (new for v3.0)
 
-```typescript
-export interface WorktreeHandle {
-  worktreePath: string;   // absolute path to the created worktree
-  branch: string;         // the branch checked out in that worktree
-}
+| Library | Version | Purpose | When to Use |
+|---------|---------|---------|-------------|
+| `wink-nlp` | `^1.14.3` | Optional tokenizer/stemmer for `wink-bm25-text-search` | Use when context bundle is prose documentation; provides stemming and stop-word removal for better BM25 recall. Not required if bundle is structured data (API maps, YAML schemas). |
+| `ajv-formats` | `^3.0.1` | JSON Schema `format` keywords (uri, date, email, etc.) | Use alongside `ajv` when recipe schema or target JSON schemas use `format` keywords. Pure JS, zero native. |
 
-export async function createWorktree(
-  repoPath: string,
-  branch: string,
-): Promise<WorktreeHandle>
+### Docker Image Additions (pre-seeded tools)
 
-export async function removeWorktree(
-  repoPath: string,
-  worktreePath: string,
-): Promise<void>
-```
+These are NOT npm packages — they are binaries installed in the Alpine Docker image at build time. No network access at runtime.
 
-**Path convention:** Worktrees are created as siblings of the repo directory:
-```
-/path/to/repo/         ← original checkout
-/path/to/repo-wt-<sessionId>/   ← worktree created for this run
-```
-
-Using `path.dirname(repoPath) + path.basename(repoPath) + '-wt-' + sessionId` produces a predictable, collision-safe path. The parent directory is guaranteed to be writable (it already contains the repo). No `/tmp` — worktrees must be on the same filesystem as `.git/` to avoid cross-device issues.
-
-**Why sibling rather than subdirectory:** `git worktree add` rejects paths inside the repo itself (`.git/` is inside). A sibling directory is the conventional pattern and avoids any conflict with the existing workspace mount.
-
-**Error handling:** If `removeWorktree` fails (e.g., process killed mid-run), `git worktree prune` is called as a fallback. Stale worktree locks are cleaned with `--force` on remove.
-
-**Integration point:** `runAgent()` in `src/agent/index.ts` currently receives `repo` as the workspace dir passed to Docker. For worktree runs, `worktreePath` replaces `repo` as `workspaceDir`. The original `repo` is still needed for `createWorktree` — pass both.
-
-### 2. AgentOptions — `useWorktree` flag
-
-**File:** `src/agent/index.ts`
-
-**What changes:** Add optional `useWorktree?: boolean` to `AgentOptions`. When true, `runAgent()` calls `createWorktree()` before Docker launch and `removeWorktree()` in a `finally` block after the run completes (success, failure, or cancellation). The Docker container is launched with the worktree path as `workspaceDir` instead of `repo`.
-
-This is the minimal invasive change: one boolean flag, three lines of code around the Docker launch, no changes to the verification pipeline or ClaudeCodeSession.
-
-### 3. Task Types — add `exploration`
-
-**File:** `src/intent/types.ts`
-
-**What changes:**
-
-```typescript
-export const TASK_TYPES = [
-  'npm-dependency-update',
-  'maven-dependency-update',
-  'generic',
-  'exploration',   // new
-] as const;
-```
-
-`exploration` is a read-only investigative task. The agent uses `git log`, `grep`, `find`, `cat`, and `ripgrep` (all already in the Docker image) to produce a report. No writes. No verification gate. No PR.
-
-**Why a distinct task type over a generic task with "read-only" instructions:** The orchestration path diverges meaningfully — exploration runs skip the entire verification pipeline (`compositeVerifier`, `llmJudge`, zero-diff check) and PR creation. A task type flag makes that routing explicit and testable rather than inferred from `taskCategory`.
-
-### 4. Prompts — `buildExplorationPrompt`
-
-**File:** `src/prompts/exploration.ts` (new)
-
-**What it does:** Builds a read-only agent prompt that:
-- Opens with an explicit instruction that the agent must not modify, create, or delete files
-- Lists the investigative question(s) from the user
-- Instructs the agent to return a structured Markdown report as its final response
-- Lists allowed tools: `Read`, `Bash` (git/grep/ripgrep only), `Glob`, `Grep`
-
-The agent already has `Read`, `Bash`, `Glob`, `Grep` as built-in tools from the Claude Agent SDK. The PreToolUse hook in `ClaudeCodeSession` will block any write attempts (it already blocks `Edit`, `Write` outside the workspace — for exploration tasks it should block all writes).
-
-### 5. RetryOrchestrator — exploration fast path
-
-**File:** `src/orchestrator/retry.ts`
-
-**What changes:** When `taskType === 'exploration'`, `RetryOrchestrator` runs one session and returns the `finalResponse` directly. No retries (nothing to correct — read-only output), no verification, no judge, no PR. `RetryResult.finalStatus` is `'success'` if the session completes without error, regardless of diff state.
-
-**Integration:** `runAgent()` passes `taskType` through to `RetryOrchestrator`. The orchestrator already receives `RetryConfig`; exploration can set `verifier: undefined` and `judge: undefined` to skip both. The routing decision (to skip verification) lives in `runAgent()` based on `taskType`, keeping `RetryOrchestrator` generic.
-
-### 6. REPL — `ExplorationResult` display
-
-**File:** `src/repl/session.ts`
-
-**What changes:** When `RetryResult.finalStatus === 'success'` and the task type is `exploration`, render `result.sessionResults[0].finalResponse` as the report output instead of the standard diff/verification summary block. Exploration results never have a PR to create, so `state.lastResult` still stores them (for `history`) but the `pr` command should print "Exploration tasks do not create PRs."
+| Tool | Install Method | Purpose | Notes |
+|------|---------------|---------|-------|
+| `jscodeshift@17.3.0` | `npm install -g jscodeshift` in Dockerfile | JS/TS codemod bridge for `rewrite_run` | Pure Node.js; install globally during image build. Available as `jscodeshift` CLI inside container. Node 16+ required. |
+| `semgrep` (latest stable) | `pip install semgrep` in Dockerfile | Pattern-based search/rewrite bridge | Python binary, statically linked. Semgrep's own Docker image uses Alpine 3.23 — installation on Alpine is officially supported. Runs offline, code never uploaded by default. |
+| OpenRewrite via Maven wrapper | Maven local repo pre-seeded during image build with `mvn dependency:resolve` | Java recipe execution bridge | Invoke as `mvn -o org.openrewrite.maven:rewrite-maven-plugin:run` with `-o` (offline) flag once Maven local repo is populated. No network at runtime. |
 
 ---
 
-## What NOT to Add
+## Decision Rationale (Detailed)
 
-| Avoid | Why | Use Instead |
-|-------|-----|-------------|
-| `execa` npm package | `.raw()` on the existing `simple-git` instance handles all git worktree commands with no shell injection risk and no new dependency. `node:child_process.execFile` (already used in `agent/index.ts`, `verifier.ts`, `docker/index.ts`) covers the remaining subprocess needs. | `simple-git.raw()` for git ops, `node:child_process.execFile` (already imported) for other subprocesses |
-| `git-worktree` npm package (alexweininger/git-worktree) | 27 stars, last commit 2020, unmaintained. Does not support modern git worktree features. | `simple-git.raw(['worktree', ...])` |
-| `simple-worktree` npm package (max-winderbaum) | 3 stars, focused on file syncing across worktrees for human developers. Not an API library. Solves the wrong problem. | `simple-git.raw(['worktree', ...])` |
-| New Docker image layer for exploration | `git`, `bash`, `ripgrep` are already installed in the Alpine image. Exploration uses the same image as code-change tasks. | Existing `background-agent:latest` image |
-| Write-blocking via a separate Docker flag (`--read-only` already set) | Container is already `--read-only` with `/workspace` as the only writable volume. The PreToolUse hook already blocks writes outside repo. For exploration, strengthen the hook to reject all write tools. | PreToolUse hook in `ClaudeCodeSession` |
-| Separate "exploration" Docker network or container config | Exploration tasks have the same isolation requirements as code-change tasks. Same network, same iptables rules (Anthropic API access only, rest blocked). | Existing `buildDockerRunArgs()` unchanged |
-| A dedicated report storage system | Exploration reports are returned as `RetryResult.sessionResults[0].finalResponse` — plain Markdown text in the existing result object. REPL prints to terminal. No persistence needed. | `RetryResult.finalResponse` (already in `SessionResult`) |
-| `taskCategory` extension for exploration | `exploration` is a first-class task type, not a category of `generic`. It routes to a completely different orchestration path. Adding it as a category would require detecting it in multiple places. | `TASK_TYPES` enum extension |
+### YAML: `yaml@2.x` vs `js-yaml` — Choose `yaml`
+
+**Chosen:** `yaml@^2.8.3` via `parseDocument()`
+
+`js-yaml` has explicitly rejected comment-preservation support (GitHub issue #689: "Support option to keep comments — closed as wontfix"). Its `load()` / `dump()` pipeline discards all comments.
+
+`yaml@2.x` (`eemeli/yaml`) is the only Node.js YAML library where `parseDocument()` returns a full AST with `comment`, `commentBefore`, and `spaceBefore` properties on each node. Mutating the AST and calling `doc.toString()` produces YAML with comments intact. This is required for `config_edit` to be a first-class tool (e.g., bumping `image.tag` in a Helm values file without stripping all operator comments).
+
+**Caveat:** The docs note that trailing comment attachment "is not completely stable" — they may shift to a sibling node after a roundtrip cycle. This is acceptable for the `config_edit` use case (value edits, not comment edits), and is a known limitation to document in `config_edit`'s tool description.
+
+Latest stable: v2.8.3 (March 21, 2025). A v3.0.0-0 pre-release exists but is not used — wait for stable v3.
+
+**Why not `enhanced-yaml`:** It is a thin wrapper over `yaml@2.x` that uses the original source string to re-align comments. Adds a dependency for marginal gain. Using `yaml` directly with `parseDocument` AST mutation is the canonical approach and requires zero wrappers.
+
+### JSON Schema Validator: `ajv` vs Zod — Use Both for Different Purposes
+
+**Recipe schema (internal):** Use existing **Zod** (already in project). Zod is TypeScript-first, co-located with the TypeScript types, and produces better developer-facing error messages. The recipe schema (Appendix A in the roadmap) is a TypeScript data structure — Zod is the right tool.
+
+**External JSON Schema validation (`schema_validate` recipe invariant):** Use **`ajv@8.x`**. The recipe's `verification.schema` field points to a user-supplied JSON Schema file (e.g., `./schemas/values.schema.json`). AJV loads and compiles arbitrary JSON Schema files at runtime, which is not what Zod is designed for. AJV supports JSON Schema Draft-04 through 2020-12. Pure JS, no native deps, Alpine-safe. Version 8.18.0 (Feb 2025) adds `sideEffects: false` for tree-shaking.
+
+**Do NOT use:** `jsonschema` (npm) — slower, less actively maintained. `zod-to-json-schema` — not for runtime validation of external schema files.
+
+### Tree-Sitter: WASM vs Native — Choose WASM
+
+**Chosen:** `web-tree-sitter@^0.22.4` + `tree-sitter-wasms@^0.1.13`
+
+The native `tree-sitter` Node.js package (`tree-sitter` npm, latest v0.22.4 with Node bindings) ships prebuilt `.node` binaries linked against **glibc**. Alpine Linux uses **musl libc**. These binaries will fail with "symbol not found" errors unless compiled from source in Alpine with C and Rust compilers. Issue #597 in the tree-sitter repository was closed in 2020 with "not in published builds, compile from source on Alpine" — there is no official fix. Requiring compilation adds significant Docker image build complexity and time.
+
+`web-tree-sitter` is the official WebAssembly port of the tree-sitter runtime. It runs in any JavaScript engine that supports WebAssembly (Node.js ≥ 12 via V8). No native compilation. No glibc/musl distinction. Grammar `.wasm` files load via `Language.load(wasmPath)`.
+
+`tree-sitter-wasms@0.1.13` (Sourcegraph fork, actively maintained) ships 36 prebuilt grammar WASM files including:
+- `tree-sitter-java.wasm` (430 kB)
+- `tree-sitter-typescript.wasm` (2.34 MB)
+- `tree-sitter-python.wasm` (476 kB)
+- Plus Kotlin, Rust, Go, C#, Ruby, and 28 more
+
+These are static `.wasm` files baked into the image — no runtime downloads needed.
+
+**Performance note:** WASM tree-sitter is slower than native bindings. For the RefactorRun use case (query a file, rewrite, move on), per-file latency is acceptable. This is not a language server running on every keystroke.
+
+**Version note:** `node-tree-sitter` (native) is at v0.22.4. `web-tree-sitter` is also at v0.22.4. These are versioned together with the tree-sitter core grammar interface. Ensure `tree-sitter-wasms` grammar WASM files are built against the same tree-sitter ABI version as `web-tree-sitter`.
+
+**Why not `@vscode/tree-sitter-wasm`:** Microsoft's package is specifically for VS Code's internal use and includes TypeScript and some web languages but does not cover Java or Python with a stable public API contract.
+
+### BM25: `wink-bm25-text-search` — Only Viable Choice
+
+**Chosen:** `wink-bm25-text-search@^3.1.2`
+
+Requirements for `doc_retrieve`:
+1. Pure JavaScript — no native binaries (Alpine safety)
+2. No network calls at query time
+3. No embedding model — just term frequency statistics
+4. In-memory index built from files at container startup
+5. Maintained library (not abandoned)
+
+`wink-bm25-text-search@3.1.2` (winkJS, MIT license) satisfies all five. Pure JS, in-memory, BM25F algorithm, configurable k1/b/k parameters, field weighting, works in Node.js and browser. The index is built from JSON documents: split context bundle files into chunks, index with field weights for title/body/section, query with the recipe's `retrieval_query_template`.
+
+**Alternatives rejected:**
+- `lunr.js` — TF-IDF not BM25; lower recall for technical documentation
+- `flexsearch` — faster for large indexes but BM25 not the default algorithm; overkill
+- `elasticlunr` — abandoned (last commit 2016)
+- Any vector/embedding search — explicitly out of scope (no embeddings, no network)
+
+### Persistent Ledger: `better-sqlite3` vs JSON files vs `conf`
+
+**Chosen:** `better-sqlite3@^12.8.0`
+
+The RefactorRun ledger is the most architecturally significant new data store in v3.0. It needs:
+1. Survives process crashes (Phase 29: `agent refactor resume`)
+2. Atomic updates per chunk (mark target done + record commit SHA atomically)
+3. Query by run-id, status, target locator
+4. Works in the host Node.js process (not inside Docker)
+
+**JSON files** (with `write-file-atomic` already in project): Viable for simple key-value state but atomic partial updates across multiple targets require read-modify-write with locking. Querying by status requires full file parse every time. Adequate for ledgers with <50 targets, brittle for 500+ targets across a large repo.
+
+**`conf`** (already in project for project registry): Designed for user preferences, not transactional ledger data. No transaction semantics. Not the right abstraction.
+
+**`better-sqlite3@12.8.0`**: Synchronous API (no async needed for the serial orchestrator), WAL mode for crash safety, transactions for atomic chunk updates, simple SQL queries for status counts. Alpine musl prebuilds have been shipping since November 2021 (PR #641, issue #619 resolved). Latest v12.8.0 requires Node.js ≥20 (matches current stack). Multi-stage Dockerfile already used — `npm install` in build stage compiles/fetches the native addon there; runtime stage copies `node_modules/`.
+
+**Native Node.js `node:sqlite`:** As of April 2026, this module is in "Active development" (stability 1.1) and requires the `--experimental-sqlite` CLI flag. Not production-ready. Revisit for v4.0.
+
+**SQLite schema for RefactorRun:**
+```sql
+CREATE TABLE refactor_runs (
+  id TEXT PRIMARY KEY,
+  recipe_name TEXT NOT NULL,
+  recipe_version TEXT NOT NULL,
+  repo_path TEXT NOT NULL,
+  worktree_path TEXT,
+  branch TEXT,
+  status TEXT NOT NULL,  -- pending|running|complete|failed
+  baseline_json TEXT,    -- JSON blob for differential verification
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE refactor_targets (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES refactor_runs(id),
+  file TEXT NOT NULL,
+  locator TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL,  -- pending|in-progress|done|failed|skipped
+  commit_sha TEXT,
+  error_reason TEXT,
+  updated_at INTEGER NOT NULL
+);
+```
+
+### OpenRewrite Bridge: CLI Only
+
+**Not a Node.js library.** OpenRewrite is a Java ecosystem tool. The bridge invocation pattern:
+
+```
+mvn -o org.openrewrite.maven:rewrite-maven-plugin:run \
+  -Drewrite.activeRecipes=<recipe.fully.qualified.Name>
+```
+
+The `-o` (offline) flag tells Maven to use the local repository only — no network. The Maven local repository (`~/.m2/repository`) must be pre-seeded at Docker image build time by running `mvn dependency:resolve` with network access. This is the standard pattern for air-gapped Maven builds.
+
+At runtime (no network), the `rewrite_run` MCP tool calls `execFile('mvn', [...])` from inside the container. The rewrite plugin JAR, recipe JARs, and all transitive deps must be in the image's Maven local repo.
+
+**Why not `@openrewrite/rewrite` npm package:** Does not exist. OpenRewrite has no Node.js library API.
+
+### jscodeshift Bridge: CLI pre-installed in image
+
+`jscodeshift@17.3.0` (latest, March 24, 2025) is a pure Node.js package. Install it globally in the Docker image during build (`npm install -g jscodeshift`). The `rewrite_run` tool calls it as a subprocess:
+
+```
+jscodeshift --transform <recipe.js> --extensions ts,tsx <files...>
+```
+
+Or for bundled transforms registered by recipe id, call `node_modules/.bin/jscodeshift` with the transform file path.
+
+jscodeshift v17.x is a significant version jump (from v0.x) reflecting maturity. Node.js 16+ required. Alpine compatible (pure Node.js, no native).
+
+### semgrep Bridge: Python binary in image
+
+`semgrep` is a Python package. Pre-install in Docker image with `pip install semgrep`. Semgrep's own official Docker image uses Alpine (confirmed: bumped Alpine 3.21 → 3.22 → 3.23 in recent releases), so Alpine compatibility is first-class. At runtime, `rewrite_run` invokes:
+
+```
+semgrep --config <pattern.yaml> --json <path>
+```
+
+Semgrep never uploads code by default. Runs offline once installed.
 
 ---
 
 ## Installation
 
 ```bash
-# No new dependencies for v2.4
-# simple-git already installed; update to latest if desired:
-npm install simple-git@^3.33.0
+# New npm dependencies for v3.0 (host-side, Node.js process)
+npm install yaml@^2.8.3 ajv@^8.18.0 ajv-formats@^3.0.1
+npm install web-tree-sitter@^0.22.4 tree-sitter-wasms@^0.1.13
+npm install wink-bm25-text-search@^3.1.2
+npm install better-sqlite3@^12.8.0
+
+# Optional (for wink-nlp tokenizer/stemmer with BM25)
+npm install wink-nlp@^1.14.3 wink-eng-lite-web-model
+
+# Type stubs
+npm install -D @types/better-sqlite3
 ```
 
----
+```dockerfile
+# Additions to Dockerfile (agent sandbox image — build stage)
 
-## Version Compatibility
+# jscodeshift (JS/TS codemods)
+RUN npm install -g jscodeshift@17.3.0
 
-| Package | Version | Notes |
-|---------|---------|-------|
-| `simple-git` | `3.32.3` (installed), `3.33.0` (latest as of 2026-04-05) | `.raw()` worktree commands verified working on installed version. Patch bump is safe. |
-| `node:child_process` | Node.js 20 built-in | `execFile` + `promisify` pattern already used across 6 files in the project. No changes needed. |
-| `node:path`, `node:fs/promises`, `node:os` | Node.js 20 built-in | Sufficient for worktree path construction (`path.dirname`, `path.basename`, `path.join`) and cleanup. |
+# semgrep (pattern-based transforms)
+RUN pip3 install --no-cache-dir semgrep
+
+# OpenRewrite recipes pre-seeded in Maven local repo
+# (requires network at image build time, not at runtime)
+RUN mvn dependency:resolve \
+    -Dartifact=org.openrewrite.maven:rewrite-maven-plugin:LATEST \
+    && mvn dependency:resolve \
+    -Dartifact=org.openrewrite.recipe:rewrite-migrate-java:LATEST
+```
 
 ---
 
@@ -172,27 +260,96 @@ npm install simple-git@^3.33.0
 
 | Recommended | Alternative | Why Not |
 |-------------|-------------|---------|
-| `simple-git.raw(['worktree', ...])` | `execFile('git', ['worktree', ...])` directly | Both work. `.raw()` is preferred because it reuses the existing `simpleGit(repoPath)` instance (same `cwd` binding), consistent error handling, and matches the pattern already used in `pr-creator.ts`. |
-| Worktree as sibling directory | Worktree inside repo (e.g. `repo/.worktrees/session-id/`) | `git worktree add` rejects paths inside the repository. Git documentation recommends siblings or separate top-level paths. |
-| Worktree as sibling directory | `/tmp/agent-worktrees/session-id/` | `/tmp` may be a different filesystem than the repo root on macOS (APFS volumes vs. tmpfs). `git worktree add` can fail cross-device. Sibling directories are always on the same filesystem. |
-| `useWorktree?: boolean` flag on `AgentOptions` | Always use worktrees | Worktrees add a git dependency overhead and disk space cost. For single-session REPL runs, it's unnecessary. Default off, explicitly enabled for concurrent scenarios. |
-| `exploration` as a distinct `TASK_TYPES` entry | `generic` task with `taskCategory: 'exploration'` | The orchestration path diverges at `RetryOrchestrator` (no verification, no PR, no retries). Routing on `taskCategory` spreads the conditional logic across multiple layers. A named task type makes the routing explicit and keeps verification bypass in one place. |
+| `yaml@2.x` with `parseDocument` | `js-yaml` | `js-yaml` explicitly does NOT preserve comments (issue #689 closed wontfix). Cannot do roundtrip-safe edits. |
+| `yaml@2.x` with `parseDocument` | `enhanced-yaml` (npm) | Thin wrapper over `yaml@2.x`. Adds dep for marginal gain. Using `parseDocument` directly is the canonical API. |
+| `ajv@8.x` for external JSON Schema | `zod-to-json-schema` + Zod | AJV validates arbitrary user-supplied `.json` schema files. Zod validates TypeScript-typed structures. Different problems. |
+| `web-tree-sitter` + `tree-sitter-wasms` | `tree-sitter` native npm | Native binaries linked against glibc — fails on Alpine musl. Issue #597 closed without Alpine fix. Compile-from-source adds build complexity. |
+| `web-tree-sitter` + `tree-sitter-wasms` | `@vscode/tree-sitter-wasm` | Microsoft-internal package. Does not include Java grammar. No public API stability contract. |
+| `wink-bm25-text-search` | `lunr.js` | TF-IDF, not BM25. Lower recall for technical documentation retrieval. |
+| `wink-bm25-text-search` | Embedding-based vector search | Requires embedding model (heavy dep), network or GPU. Explicitly out of scope per recipe schema design (`retrieval: none | bm25`). |
+| `better-sqlite3` | JSON files + `write-file-atomic` | No transaction semantics for atomic per-chunk ledger updates. Full-parse queries for large ledgers. Not crash-safe for concurrent writes. |
+| `better-sqlite3` | `conf` (already in project) | `conf` is for user preferences. No transactions, no SQL queries, no relational structure. Wrong abstraction for a multi-table run ledger. |
+| `better-sqlite3` | `node:sqlite` (built-in) | Experimental (`--experimental-sqlite` flag required) as of Node.js 22 / April 2026. Not production-ready. |
+| OpenRewrite CLI invocation | `@openrewrite/rewrite` npm package | Does not exist. No Node.js library API for OpenRewrite. |
+
+---
+
+## What NOT to Add
+
+| Avoid | Why | Use Instead |
+|-------|-----|-------------|
+| `js-yaml` | Does not preserve YAML comments. Roundtrip will silently strip all operator/user comments. | `yaml@2.x` with `parseDocument` |
+| `tree-sitter` (native npm) | glibc-linked prebuilds fail on Alpine musl. Requires compiling from source with C + Rust toolchains in Dockerfile. | `web-tree-sitter` + `tree-sitter-wasms` |
+| Any vector/embedding library (`langchain`, `transformers.js`, `hnswlib`) | v3.0 `doc_retrieve` is BM25-only per recipe schema. Heavy deps, network for model download, no-network constraint violated. | `wink-bm25-text-search` |
+| `node:sqlite` experimental | Requires `--experimental-sqlite` flag; API stability not guaranteed; breaks clean startup. | `better-sqlite3@12.x` |
+| `typeorm` or `prisma` for ledger | Massive deps for a single-table ledger. ORM migrations, codegen, and runtime complexity far exceed needs. | `better-sqlite3` with raw SQL |
+| `execa` | `node:child_process.execFile` (already used in 6+ files in the project) handles all subprocess invocations. | `node:child_process.execFile` + `promisify` |
+| Additional YAML roundtrip library (`yaml-js`, `yaml-ast-parser`) | These are old, unmaintained forks. `yaml@2.x` is the actively maintained successor with full YAML 1.2 spec coverage. | `yaml@2.x` |
+
+---
+
+## Stack Patterns by Variant
+
+**If adding a new language grammar for `ast_query`/`ast_rewrite`:**
+- Check if `tree-sitter-wasms@0.1.13` already includes it (36 languages covered)
+- If not: download the prebuilt `.wasm` file from the language's official GitHub releases and add to `docker/grammars/`
+- Register the language in the `AstCapabilityTool` language registry — no code change to the runner
+
+**If a recipe uses `strategy: deterministic` with `capability: config_edit`:**
+- Use `yaml@2.x` `parseDocument` → mutate → `doc.toString()` for YAML
+- Use `JSON.parse` / `JSON.stringify` with `jsonc-parser` (already a VS Code/TypeScript dep if present) for JSON with comments
+- No tree-sitter needed; no LLM per chunk — fastest path
+
+**If a recipe uses `strategy: end-state-prompt` or `doc-grounded`:**
+- The Claude Agent SDK session gets the `ast_query`, `ast_rewrite`, `import_rewrite` MCP tools exposed
+- The recipe's `allowed_tools` field gates which tools the session may call
+- `doc_retrieve` tool is only added to the session tool list when `context.bundle` is set and `context.retrieval === 'bm25'`
+
+**If the target repo is Maven/Gradle (Java):**
+- OpenRewrite via `mvn -o rewrite:run` is available as `rewrite_run` tool
+- `ast_query`/`ast_rewrite` use `tree-sitter-java.wasm` grammar
+- `import_rewrite` uses Java-specific import scanning logic
+
+**If the target repo is npm (JS/TS):**
+- jscodeshift available as `rewrite_run` tool
+- `ast_query`/`ast_rewrite` use `tree-sitter-typescript.wasm` grammar
+
+---
+
+## Version Compatibility
+
+| Package | Version | Alpine musl | Node 20 | Notes |
+|---------|---------|-------------|---------|-------|
+| `yaml` | `^2.8.3` | Pure JS — yes | Yes | TypeScript typings require TS ≥5.9; set `skipLibCheck: true` for older TS |
+| `ajv` | `^8.18.0` | Pure JS — yes | Yes | `"sideEffects": false` since 8.18.0 enables tree-shaking |
+| `ajv-formats` | `^3.0.1` | Pure JS — yes | Yes | Peer dep on `ajv@^8.0.0` |
+| `web-tree-sitter` | `^0.22.4` | WASM — yes | Yes | Must match ABI of grammar .wasm files |
+| `tree-sitter-wasms` | `^0.1.13` | Static files — yes | N/A | Grammar WASM files built against same tree-sitter ABI as `web-tree-sitter@0.22.4` |
+| `wink-bm25-text-search` | `^3.1.2` | Pure JS — yes | Yes | CommonJS module; import via `createRequire` under NodeNext |
+| `better-sqlite3` | `^12.8.0` | Native + musl prebuilds — yes | Requires ≥20 | Alpine musl prebuilds available since v7.x (2021); v12.8.0 minimum Node 20 enforced |
+| `jscodeshift` (image) | `17.3.0` | Pure Node.js — yes | Requires ≥16 | Install globally in Docker build stage |
+| `semgrep` (image) | latest stable | Alpine officially supported | N/A (Python) | Official Semgrep Docker image uses Alpine 3.23 |
 
 ---
 
 ## Sources
 
-- `node_modules/simple-git/typings/simple-git.d.ts` — no `.worktree()` method in TypeScript typings (HIGH confidence — live file)
-- Runtime test: `simpleGit(repoPath).raw(['worktree', 'list', '--porcelain'])` — returns current worktree entry successfully (HIGH confidence — live test)
-- `src/orchestrator/pr-creator.ts` lines 362, 460 — `git.raw(['merge-base', ...])` and `git.raw(['cherry-pick', ...])` confirm `.raw()` is the established pattern for arbitrary git commands (HIGH confidence — live source)
-- `npm show simple-git version` → `3.33.0` (HIGH confidence — live npm registry)
-- `docker/Dockerfile` — `git`, `bash`, `ripgrep` confirmed installed in Alpine image (HIGH confidence — live file)
-- `src/cli/docker/index.ts` line 79 — `-v ${workspaceDir}:/workspace:rw` volume mount pattern (HIGH confidence — live source)
-- `src/intent/types.ts` — `TASK_TYPES`, `TASK_CATEGORIES` current definitions (HIGH confidence — live source)
-- `src/types.ts` — `RetryResult`, `SessionResult.finalResponse` fields (HIGH confidence — live source)
-- [git worktree official docs](https://git-scm.com/docs/git-worktree) — `add`, `list`, `remove`, `prune` subcommands (HIGH confidence — official git documentation)
-- [Upsun: Git Worktrees for Parallel AI Agents](https://devcenter.upsun.com/posts/git-worktrees-for-parallel-ai-coding-agents/) — worktree isolation pattern for AI agents, confirmed same-filesystem requirement (MEDIUM confidence — technical blog, 2025)
+- [github.com/eemeli/yaml releases](https://github.com/eemeli/yaml/releases) — v2.8.3 latest stable confirmed (HIGH confidence)
+- [eemeli.org/yaml/v2/ — comment preservation docs](https://eemeli.org/yaml/v2/) — `parseDocument` comment handling verified (HIGH confidence)
+- [nodeca/js-yaml#689](https://github.com/nodeca/js-yaml/issues/689) — wontfix on comment preservation confirmed (HIGH confidence)
+- [github.com/tree-sitter/tree-sitter issues#597](https://github.com/tree-sitter/tree-sitter/issues/597) — Alpine glibc issue closed without fix (HIGH confidence)
+- [github.com/tree-sitter/node-tree-sitter releases](https://github.com/tree-sitter/node-tree-sitter/releases) — v0.22.4 latest, v0.26 requires Node 24 (HIGH confidence)
+- [unpkg tree-sitter-wasms@latest/out/](https://app.unpkg.com/tree-sitter-wasms@latest/files/out) — Java, TypeScript, Python WASM files confirmed at v0.1.13 (HIGH confidence)
+- [web-tree-sitter npm](https://www.npmjs.com/package/web-tree-sitter) — WASM runtime, no native compilation (HIGH confidence)
+- [github.com/winkjs/wink-bm25-text-search](https://github.com/winkjs/wink-bm25-text-search) — v3.1.2, pure JS, no native (HIGH confidence)
+- [github.com/WiseLibs/better-sqlite3 issues#619](https://github.com/WiseLibs/better-sqlite3/issues/619) — musl/Alpine prebuilds added 2021, confirmed working (HIGH confidence)
+- [github.com/WiseLibs/better-sqlite3 releases](https://github.com/WiseLibs/better-sqlite3/releases) — v12.8.0 latest, Node ≥20 required (HIGH confidence)
+- [github.com/ajv-validator/ajv releases](https://github.com/ajv-validator/ajv/releases) — v8.18.0 latest, pure JS confirmed (HIGH confidence)
+- [github.com/facebook/jscodeshift releases](https://github.com/facebook/jscodeshift/releases) — v17.3.0 latest (March 2025) (HIGH confidence)
+- [docs.openrewrite.org offline invocation](https://docs.openrewrite.org/running-recipes/running-rewrite-on-a-maven-project-without-modifying-the-build) — `-o` offline flag, Maven local repo pre-seeding (MEDIUM confidence — docs confirm offline flag but don't document image pre-seeding explicitly)
+- [semgrep.dev docs/semgrep-ci/packages-in-semgrep-docker](https://semgrep.dev/docs/semgrep-ci/packages-in-semgrep-docker) — Alpine 3.23 base confirmed (HIGH confidence)
+- WebSearch: Zod v4.3.6 current version confirmed — already in project per v2.4 STACK.md (HIGH confidence)
 
 ---
-*Stack research for: Git worktree isolation and repo exploration tasks (background-coding-agent v2.4)*
-*Researched: 2026-04-05*
+*Stack research for: v3.0 Program Automator — sweeping-refactor capability additions*
+*Researched: 2026-04-08*

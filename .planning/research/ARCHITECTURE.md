@@ -1,680 +1,707 @@
 # Architecture Research
 
-**Domain:** Git worktree isolation + repo exploration tasks — background coding agent v2.4
-**Researched:** 2026-04-05
-**Confidence:** HIGH (first-party codebase analysis; all integration points verified in source)
+**Domain:** v3.0 Program Automator — sweeping-refactor capability integration into existing TypeScript background coding agent
+**Researched:** 2026-04-08
+**Confidence:** HIGH (direct source code analysis of all integration-relevant files)
 
 ## Context: What This Research Is
 
-This is an integration analysis for v2.4. The system is fully operational (v2.3). The question is: how do two new capabilities — git worktree isolation for concurrent agent runs and read-only repo exploration tasks — slot into the existing pipeline without breaking existing flows or adding unnecessary complexity?
+This is an integration analysis for v3.0. The system is fully operational at v2.4. The question is: how do the eight v3.0 capabilities slot into the existing pipeline without breaking existing task flows, while respecting the architectural invariants established across 27 phases?
 
-This document maps every touch point: what is new, what is modified, what is untouched, and the recommended build order with dependency rationale.
-
----
-
-## Existing Architecture (v2.3 — What Already Works)
-
-```
-User input (REPL | one-shot | Slack)
-  └─> parseIntent(input, options)
-       ├─> fastPathParse()       regex: dep-update patterns
-       └─> llmParse()            Haiku 4.5, GA structured output
-  └─> processInput(input, state, callbacks, registry)
-       ├─> clarify()             low-confidence menu
-       ├─> confirm()             intent display + Y/n
-       └─> runScopingDialogue()  scope questions (generic only)
-  └─> runAgent(AgentOptions, AgentContext)
-       ├─> buildPrompt(options)  → prompt string
-       └─> RetryOrchestrator
-            ├─> captureBaselineSha(workspaceDir)   [HOST git]
-            ├─> ClaudeCodeSession.run(message)
-            │    └─> spawn('docker', buildDockerRunArgs({workspaceDir, ...}))
-            │         └─> -v workspaceDir:/workspace:rw
-            │         └─> claude <sdk-args>   [inside container]
-            ├─> getWorkspaceDiff(workspaceDir)     [HOST git]
-            ├─> compositeVerifier(workspaceDir)    [HOST npm/mvn/tsc]
-            └─> llmJudge(workspaceDir, task, sha)  [HOST Anthropic API]
-  └─> GitHubPRCreator.create(...)   [HOST Octokit]
-  └─> RetryResult → processInput() → rendered in adapter
-```
-
-### Key Architectural Constants
-
-| Constant | Value | Why Fixed |
-|----------|-------|-----------|
-| `workspaceDir` | Absolute host path to repo | Git, verifier, judge, Docker mount all use this |
-| Container mount | `-v workspaceDir:/workspace:rw` | Agent reads/writes files at `/workspace` |
-| Host git | `git` commands run on host (not in container) | Container user (UID 1001) can't write `.git/` |
-| `containerWorkspaceDir` | `/workspace` (hardcoded in session) | PreToolUse hook and SDK `cwd` use this value |
+Every component below is classified as NEW, MODIFIED, or UNTOUCHED with the specific file and the nature of the change.
 
 ---
 
-## Feature 1: Git Worktree Isolation
-
-### Problem Being Solved
-
-Currently, all agent runs operate on the same working tree of the target repo. Two concurrent runs on the same repo would conflict: both would be on the same branch, both would write to the same files, and `git reset --hard` (cancellation cleanup) would destroy both. Worktree isolation gives each session its own directory, its own branch, and independent working-tree state.
-
-### How Git Worktrees Work
-
-A git worktree is a linked working directory pointing to the same `.git` object store as the main checkout. Each worktree has its own HEAD, index, and working tree, but shares all commit history and branch metadata.
-
-```bash
-# Creates a sibling directory with a fresh branch
-git worktree add ../my-repo-agent-abc123 -b agent/abc123
-# → ../my-repo-agent-abc123/ now exists, checked out at HEAD of main branch
-# → branch agent/abc123 created
-# → git worktree list shows it
-
-# Cleanup
-git worktree remove ../my-repo-agent-abc123
-git branch -d agent/abc123
-```
-
-The worktree directory shares the `.git` object store but has its own `.git` file (not directory) containing: `gitdir: /path/to/main/.git/worktrees/agent-abc123`.
-
-### Filesystem Layout
+## Current Architecture (v2.4 Baseline)
 
 ```
-/repos/
-├── my-app/                  ← main checkout (workspaceDir in existing code)
-│   ├── .git/                ← shared object store; worktrees registered here
-│   └── src/...
-└── my-app-agent-abc123/     ← worktree for session abc123 (NEW)
-    ├── .git                 ← FILE (not dir): gitdir: ../my-app/.git/worktrees/agent-abc123
-    └── src/...              ← independent working tree
+┌────────────────────────────────────────────────────────────────────┐
+│              Entry Points (src/cli/commands/, src/slack/)           │
+│   one-shot.ts      repl.ts      slack/adapter.ts                   │
+└───────────────────────────────────────────────────────┬────────────┘
+                                                         │
+┌───────────────────────────────────────────────────────▼────────────┐
+│              Intent Layer (src/intent/)                              │
+│   explorationFastPath() → fastPathParse() → llmParse()             │
+│   parseIntent() → ResolvedIntent { taskType, repo, ... }           │
+└───────────────────────────────────────────────────────┬────────────┘
+                                                         │
+┌───────────────────────────────────────────────────────▼────────────┐
+│              Scoping Dialogue + Confirm Loop                         │
+│   repl/session.ts::runScopingDialogue()                            │
+│   intent/confirm-loop.ts::confirmLoop()                            │
+└───────────────────────────────────────────────────────┬────────────┘
+                                                         │
+┌───────────────────────────────────────────────────────▼────────────┐
+│              runAgent() (src/agent/index.ts)                         │
+│                                                                     │
+│   ┌──────────────────────┐   ┌─────────────────────────────────┐   │
+│   │ Investigation bypass │   │ Worktree lifecycle               │   │
+│   │ :ro Docker mount     │   │ WorktreeManager.create()        │   │
+│   │ ClaudeCodeSession    │   │ RetryOrchestrator.run()         │   │
+│   │ readOnly: true       │   │   ClaudeCodeSession per attempt  │   │
+│   │ no verifier/judge/PR │   │   compositeVerifier             │   │
+│   └──────────────────────┘   │   llmJudge                      │   │
+│                               │   GitHubPRCreator (opt)         │   │
+│                               │ WorktreeManager.remove()        │   │
+│                               └─────────────────────────────────┘   │
+└────────────────────────────────────────────────────────────────────┘
+                                          │
+┌─────────────────────────────────────────▼──────────────────────────┐
+│   ClaudeCodeSession (src/orchestrator/claude-code-session.ts)       │
+│   query() → Docker (iptables, uid 1001, :rw or :ro mount)          │
+│   PreToolUse hook (path guard + read-only Write/Edit block)         │
+│   MCP verifier server (in-process, mcp__verifier__verify)          │
+│   PostToolUse hook (audit log)                                      │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
-The worktree lives as a sibling directory to the main checkout. The naming convention `{repo-basename}-agent-{sessionId}` ensures uniqueness and traceability.
+### Key Architectural Invariants (Do Not Break)
 
-### Integration Point: `WorktreeManager`
+| Invariant | Location | Why Fixed |
+|-----------|----------|-----------|
+| `WorktreeManager` single-use per session | `src/agent/index.ts` try/finally | No shared state, no leaks — explicit in key decisions |
+| `pruneOrphans` treats dead-PID worktrees as orphans | `src/agent/worktree-manager.ts` | Crash recovery mechanism; must remain reliable |
+| `compositeVerifier` signature `(workspaceDir, options?)` | `src/types.ts` RetryConfig.verifier | Used by RetryOrchestrator AND MCP verifier server; neither can change |
+| Investigation bypass skips verifier/judge/PR | `src/agent/index.ts` | Read-only tasks have no diff to verify |
+| Docker :ro mount + PreToolUse Write/Edit block (two layers) | `src/cli/docker/index.ts`, `claude-code-session.ts` | Defence in depth; neither can be bypassed alone |
+| `runAgent()` is single-session (one prompt, one worktree) | `src/agent/index.ts` | The retry loop in RetryOrchestrator handles session retries, not runAgent |
 
-A new module handles the full lifecycle of a worktree for a single session.
+---
 
-**New file:** `src/orchestrator/worktree.ts`
+## v3.0 Target Architecture
+
+```
+Entry Points
+  ├── existing: one-shot.ts, repl.ts, slack/adapter.ts  [UNTOUCHED]
+  └── new:      cli/commands/refactor.ts  [NEW: start/resume/status]
+        │
+        ▼
+Intent Layer (src/intent/)
+  sweepingRefactorFastPath() [NEW] → explorationFastPath() → fastPathParse() → llmParse()
+  parseIntent() routes 'sweeping-refactor' taskType [MODIFIED]
+        │
+        ├── generic/dep-update/investigation → existing runAgent() path [UNTOUCHED]
+        │
+        └── sweeping-refactor ─────────────────────────────────────────────┐
+                                                                             │
+┌────────────────────────────────────────────────────────────────────────────▼───┐
+│  RecipeRunner (src/refactor/runner.ts)  [NEW]                                   │
+│  - loads + validates YAML recipe against Appendix A schema                      │
+│  - strategy dispatch: deterministic | end-state-prompt | doc-grounded           │
+│  - drives DiscoveryPassRunner [NEW] → targets.json                              │
+│  - calls RefactorOrchestrator [NEW]                                             │
+└────────────────────────────────────────────────────────────────────────────────┬┘
+                                                                                  │
+┌─────────────────────────────────────────────────────────────────────────────────▼┐
+│  RefactorOrchestrator (src/refactor/orchestrator.ts)  [NEW]                      │
+│  - owns RefactorRun (persistent JSON ledger in .bg-agent-runs/<runId>/)          │
+│  - manages one long-lived worktree (createOrReuse, not per-session)              │
+│  - per-chunk loop: pop pending target → call runAgent() → mark done/failed       │
+│  - passes skipWorktree/skipWorktreeCleanup flags to each runAgent() call         │
+└─────────────────────────────────────────────────────────────────────────────────┬┘
+                                                                                   │
+                                                                     (per chunk)   │
+┌──────────────────────────────────────────────────────────────────────────────────▼┐
+│  runAgent() (src/agent/index.ts)  [MODIFIED — new AgentContext flags]              │
+│  skipWorktree: true (orchestrator owns lifecycle)                                  │
+│  skipWorktreeCleanup: true (do not remove in finally)                              │
+│  contextBundlePath: recipe.context.bundle (optional)                              │
+│  envelopeConfig: recipe.envelope (turn/timeout overrides)                         │
+│       │                                                                            │
+│       └── RetryOrchestrator with DifferentialVerifier [NEW] + recipeSpec judge   │
+└──────────────────────────────────────────────────────────────────────────────────-┘
+                                          │
+                               [ClaudeCodeSession — MODIFIED]
+                               - second -v mount for /context/ :ro
+                               - capability MCP tools registered when taskType=sweeping-refactor
+```
+
+---
+
+## Component Classification
+
+### NEW Components
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `RefactorRun` entity + types | `src/refactor/types.ts` | Data model: runId, recipe, ledger entries, baseline, worktreePath, branch |
+| `RefactorStateStore` | `src/refactor/state-store.ts` | JSON ledger persisted to `.bg-agent-runs/<runId>/state.json` and `targets.json` |
+| `RecipeLoader` + Zod schema | `src/refactor/recipe.ts` | YAML load + validation against Appendix A recipe schema |
+| `RecipeRunner` | `src/refactor/runner.ts` | Top-level: validate recipe → discovery → RefactorOrchestrator; strategy dispatch |
+| `DiscoveryPassRunner` | `src/refactor/discovery.ts` | Executes discovery block → `targets.json` via read-only runAgent() |
+| `RefactorOrchestrator` | `src/refactor/orchestrator.ts` | Multi-session loop: pop → runAgent() → mark done/failed → persist |
+| `BaselineCapture` | `src/refactor/baseline.ts` | Captures build/test/lint snapshot at run start; stored on RefactorRun |
+| `DifferentialVerifier` | `src/refactor/diff-verifier.ts` | Wrapper: closes over BaselineSnapshot, calls compositeVerifier, compares diff |
+| `buildSweepingRefactorPrompt` | `src/prompts/sweeping-refactor.ts` | Per-chunk prompt builder (end-state discipline; recipe spec + target) |
+| Capability MCP tools | `src/mcp/tools/config-edit.ts`, `ast-tools.ts`, `import-rewrite.ts`, `rewrite-run.ts`, `test-tools.ts`, `doc-retrieve.ts` | `config_edit`, `ast_query/rewrite`, `import_rewrite`, `rewrite_run`, `test_baseline/compare`, `doc_retrieve` |
+| `RecipeInterviewDialogue` | `src/repl/recipe-interview.ts` | 4-question interview → RecipeDraft validated against recipe schema |
+| `refactor` CLI subcommand | `src/cli/commands/refactor.ts` | `agent refactor start/resume/status` |
+
+### MODIFIED Components
+
+| Component | File | Change | Scope |
+|-----------|------|--------|-------|
+| `TASK_TYPES` + `TaskType` | `src/intent/types.ts` | Add `'sweeping-refactor'` to const array and union | ~2 lines |
+| `sweepingRefactorFastPath()` | `src/intent/fast-path.ts` | New fast-path function: verbs "modernize all X to Y", "migrate all X", "refactor all X to Y" | ~20 lines |
+| `parseIntent()` | `src/intent/index.ts` | Route sweeping-refactor before dep-update patterns; skip scoping questions path | ~10 lines |
+| LLM parser system prompt + schema | `src/intent/llm-parser.ts` | Add sweeping-refactor examples; update schema enum | ~10 lines |
+| `runScopingDialogue` caller | `src/repl/session.ts` | Branch to `runRecipeInterview()` when taskType=sweeping-refactor (Phase 34) | ~10 lines |
+| `AgentContext` | `src/agent/index.ts` | Add `skipWorktreeCleanup?`, `contextBundlePath?`, `envelopeConfig?` fields | ~5 lines |
+| `runAgent()` | `src/agent/index.ts` | Honor skipWorktreeCleanup in finally; pass contextBundlePath + envelopeConfig; sweeping-refactor task type routing | ~30 lines |
+| `WorktreeManager.create()` | `src/agent/worktree-manager.ts` | Write `runId` into sentinel when provided; `pruneOrphans` skips live-run sentinels | ~20 lines |
+| `SessionConfig` | `src/types.ts` | Add `contextBundlePath?: string`, `taskType?: string` | Additive fields |
+| `RetryConfig` | `src/types.ts` | Add `baselineSnapshot?: BaselineSnapshot`, `recipeSpec?: string` | Additive fields |
+| `buildDockerRunArgs()` | `src/cli/docker/index.ts` | Accept optional `contextBundlePath`; add second `-v` mount when set | ~5 lines |
+| `ClaudeCodeSession.run()` | `src/orchestrator/claude-code-session.ts` | Pass contextBundlePath to buildDockerRunArgs; append context-bundle instructions to system prompt; conditionally register capability MCP tools | ~20 lines |
+| `llmJudge()` | `src/orchestrator/judge.ts` | Add optional `recipeSpec` param; prepend as scope definition in judge prompt | ~15 lines |
+| `compositeVerifier()` | `src/orchestrator/verifier.ts` | `testVerifier` returns structured test names for differential comparison (Phase 30 only) | ~20 lines |
+| `buildPrompt()` dispatch | `src/prompts/index.ts` | Add `'sweeping-refactor'` case routing to `buildSweepingRefactorPrompt()` | ~5 lines |
+| `createVerifierMcpServer` | `src/mcp/verifier-server.ts` | Export `createCapabilityToolsMcpServer()`; existing server unchanged | ~5 lines |
+
+### UNTOUCHED Components
+
+- `src/orchestrator/retry.ts` — RetryOrchestrator works for chunks as-is; DifferentialVerifier is passed via retryConfig.verifier
+- `src/orchestrator/summarizer.ts`
+- `src/orchestrator/metrics.ts`
+- `src/orchestrator/pr-creator.ts`
+- `src/repl/types.ts`
+- `src/intent/context-scanner.ts`
+- `src/intent/confirm-loop.ts`
+- `src/agent/registry.ts`
+- `src/prompts/generic.ts`, `maven.ts`, `npm.ts`, `exploration.ts`
+- `src/slack/blocks.ts`, `src/slack/index.ts`, `src/slack/types.ts`
+- `src/cli/commands/one-shot.ts`, `run.ts`, `projects.ts`, `repl.ts`
+- `src/errors.ts`
+- All existing test files (new components add new test files)
+
+---
+
+## Detailed Integration Analysis
+
+### 1. RefactorRun Entity — Where It Lives
+
+**Decision: JSON ledger at `.bg-agent-runs/<runId>/`**
+
+The existing `conf@15` library (already in stack) uses atomic JSON writes. For the same pattern, `RefactorStateStore` writes to a project-relative `.bg-agent-runs/` directory using `fs.promises.writeFile` + atomic rename (`writeFile` to `.tmp`, then `fs.rename`).
+
+```
+.bg-agent-runs/
+└── <runId>/
+    ├── state.json       ← RefactorRun metadata: status, worktreePath, branch, baseline, timestamps
+    ├── targets.json     ← LedgerEntry[]: { id, file, locator, kind, status, commitSha?, failReason?, attempts }
+    └── recipe.yaml      ← verbatim copy of recipe (immutable history; recipe.version binds the run)
+```
+
+**Not SQLite.** `better-sqlite3` requires a native addon compiled separately for host (macOS/glibc) and Docker image (Alpine/musl). This is a two-platform build burden for no gain at single-repo, serial-chunk scale. Add SQLite only if `max_parallel > 1` (v3.1+) requires transaction isolation.
+
+**Not extending `TaskHistoryEntry`.** `TaskHistoryEntry` (in `src/repl/types.ts`) is in-memory session history for multi-turn follow-up context. A `RefactorRun` persists across process restarts and has a completely different lifecycle. They are different concerns.
+
+### 2. Long-Lived Worktree — Extending WorktreeManager Without Breaking Orphan Scan
+
+The invariant: `pruneOrphans()` checks whether the PID in the sentinel is alive. This remains correct for run-owned worktrees IF the `RefactorOrchestrator` process is still alive — the sentinel's PID is the orchestrator process, which is alive for the entire run.
+
+The problem is at the `runAgent()` boundary: its try/finally unconditionally removes the worktree.
+
+**Solution: two new `AgentContext` flags**
 
 ```typescript
-export interface WorktreeInfo {
-  worktreeDir: string;  // absolute path to the new worktree
-  branchName: string;   // agent/{sessionId}
-  sessionId: string;
+// src/agent/index.ts
+export interface AgentContext {
+  // ... existing fields ...
+  skipWorktree?: boolean;         // EXISTING: skip creation for tests
+  skipWorktreeCleanup?: boolean;  // NEW: skip removal in finally (orchestrator owns lifecycle)
+  contextBundlePath?: string;     // NEW: mount at /context/ :ro
+  envelopeConfig?: EnvelopeConfig; // NEW: per-chunk turn/timeout overrides
 }
+```
 
-export class WorktreeManager {
-  constructor(private mainRepo: string) {}
+`RefactorOrchestrator` creates one `WorktreeManager` at run start and holds it for the run's lifetime. For each chunk call to `runAgent()`:
 
-  /** Create a worktree for a session. Returns the worktree path. */
-  async create(sessionId: string): Promise<WorktreeInfo>;
+```typescript
+await runAgent(
+  { taskType: 'sweeping-refactor', repo: refactorRun.worktreePath, ... },
+  { skipWorktree: true, skipWorktreeCleanup: true, contextBundlePath: ... }
+);
+```
 
-  /** Remove the worktree directory and delete the branch. Best-effort — never throws. */
-  async remove(info: WorktreeInfo): Promise<void>;
+`pruneOrphans` is extended to check: if a sentinel has a `runId` field, and `.bg-agent-runs/<runId>/state.json` exists with `status: 'running'`, skip it. If `state.json` is absent or `status` is terminal, treat as orphan.
 
-  /** Prune orphaned worktrees from the repo (e.g. after crash). */
-  async prune(): Promise<void>;
+```typescript
+// Extended PidSentinel in src/agent/worktree-manager.ts
+interface PidSentinel {
+  pid: number;
+  branch: string;
+  createdAt: number;
+  runId?: string;  // NEW: set for RefactorRun-owned worktrees
 }
 ```
 
-All git operations in `WorktreeManager` run on the host (same as `captureBaselineSha`, `getWorkspaceDiff` in `judge.ts`). This is consistent with the established pattern: the container user (UID 1001) cannot write to `.git/`.
+This preserves the invariant: a crashed `RefactorOrchestrator` leaves `state.json` with `status: 'running'` and a dead PID — the orphan scan's PID-liveness check still fires and prunes correctly.
 
-### Integration Point: `runAgent()`
+### 3. Per-Chunk Session Loop — Where It Lives
 
-`runAgent()` in `src/agent/index.ts` is the single entry point for all agent runs. It owns the Docker lifecycle and wires `SessionConfig.workspaceDir`. This is where worktree creation/cleanup is added.
+**Decision: New `RefactorOrchestrator` class in `src/refactor/orchestrator.ts` — NOT inside RetryOrchestrator**
 
-**Modified:** `src/agent/index.ts`
-
-The change wraps the existing `RetryOrchestrator.run()` call:
-
-```
-runAgent(options, context):
-  1. Docker lifecycle (unchanged)
-  2. NEW: worktreeManager = new WorktreeManager(options.repo)
-  3. NEW: worktreeInfo = await worktreeManager.create(sessionId)
-  4. Construct RetryOrchestrator with:
-       workspaceDir: worktreeInfo.worktreeDir  ← CHANGED (was options.repo)
-  5. retryResult = await orchestrator.run(...)
-  6. GitHubPRCreator (uses worktreeDir, already has the branch)
-  7. NEW: finally { await worktreeManager.remove(worktreeInfo) }
-```
-
-The `workspaceDir` threading is the critical path. Every downstream component receives `workspaceDir`:
-- `ClaudeCodeSession` → mounts it as `-v workspaceDir:/workspace:rw`
-- `compositeVerifier(workspaceDir)` → runs tsc/vitest against worktree
-- `llmJudge(workspaceDir, ...)` → diffs against worktree
-- `captureBaselineSha(workspaceDir)` → captures HEAD in worktree
-- `GitHubPRCreator(workspaceDir)` → pushes branch from worktree
-
-No downstream component needs modification — they all accept `workspaceDir` as a parameter and are path-agnostic.
-
-### Docker Volume Mount Change
-
-The Docker volume mount in `buildDockerRunArgs` is `-v workspaceDir:/workspace:rw`. With worktrees, `workspaceDir` becomes the worktree path instead of the main repo path. The mount is otherwise identical — the agent sees `/workspace` regardless.
-
-**Not modified:** `src/cli/docker/index.ts` — `buildDockerRunArgs` is unchanged. The caller (`ClaudeCodeSession`) passes the worktree path as `workspaceDir`.
-
-### Branch Name Available for PR Creation
-
-The worktree creates a branch named `agent/{sessionId}`. `GitHubPRCreator` currently auto-generates branch names or accepts a `branchOverride`. With worktrees, the branch already exists in git, so `GitHubPRCreator` should use the worktree's branch rather than creating a new one.
-
-**Modified:** `src/orchestrator/pr-creator.ts` — Accept an optional `worktreeBranch` param in `PRCreatorOptions`. When present, push from that branch instead of generating a new one.
-
-### Cleanup Invariant
-
-Cleanup must run in a `finally` block in `runAgent()` — not after `orchestrator.run()` returns normally — because:
-- The session may be cancelled via `AbortSignal`
-- `orchestrator.run()` may throw on unexpected errors
-- Zombie worktrees accumulate disk space
-
-`WorktreeManager.remove()` is best-effort (catches and logs all errors) to avoid masking the actual run result.
-
-### Concurrent Run Safety
-
-Worktrees share the `.git` object store. Git handles concurrent reads safely. Concurrent writes to the object store (two agents committing simultaneously) are safe — git uses its own locking for pack operations. The isolation is at the working-tree level: each worktree has its own index file, HEAD file, and working directory. Two agents can commit to different branches concurrently without conflict.
-
-The one shared risk is `git worktree prune` running during active sessions. This is avoided by using `git worktree remove` per session (explicit) rather than relying on prune.
-
-### SessionId for Worktree Naming
-
-`ClaudeCodeSession` already generates a `sessionId` (UUID) per session. `runAgent()` needs to generate this ID before the session starts so it can pass it to both `WorktreeManager.create()` and `ClaudeCodeSession`. The session ID can be generated in `runAgent()` and threaded through `SessionConfig`.
-
-**Modified:** `src/types.ts` — Add optional `sessionId?: string` to `SessionConfig`. When set, `ClaudeCodeSession` uses it instead of generating its own. This enables the worktree branch name to match the container name.
-
-### What Is Unchanged
-
-- `ClaudeCodeSession` — receives `workspaceDir` (now the worktree path) via `SessionConfig`, no other changes
-- `compositeVerifier` — path-agnostic, works on any directory
-- `llmJudge` — path-agnostic
-- `buildDockerRunArgs` — path-agnostic
-- `processInput()`, intent parser, REPL, Slack — entirely unaffected (worktree is below the `runAgent()` boundary)
-- `GitHubPRCreator` — minor addition of optional `worktreeBranch` parameter
-
----
-
-## Feature 2: Repo Exploration Tasks
-
-### Problem Being Solved
-
-Some useful tasks are purely investigative: "what is the CI strategy for this repo?", "summarize the project structure", "what test coverage exists?". These do not change any files. They run the agent in read-only mode and return a structured report rather than a diff. The existing `generic` task type assumes code changes will happen (it runs the full verifier loop, creates a branch for PR). Exploration tasks need a different output path.
-
-### New Task Type: `investigation`
-
-A new `taskType: 'investigation'` flows through the intent parser as a distinct category. The intent parser identifies it when the task is read-only/analytical ("explain", "describe", "analyze", "show me", "what is", "list", "find").
-
-**Modified:** `src/intent/types.ts`
+`RetryOrchestrator` is the inner retry loop: N attempts at the same task until it passes verification. `RefactorOrchestrator` is the outer work loop: N chunks against the same recipe until the ledger is exhausted. These are different abstractions.
 
 ```typescript
-export const TASK_TYPES = [
-  'npm-dependency-update',
-  'maven-dependency-update',
-  'generic',
-  'investigation',   // NEW
-] as const;
+// src/refactor/orchestrator.ts
+export class RefactorOrchestrator {
+  constructor(
+    private runId: string,
+    private store: RefactorStateStore,
+    private recipe: ValidatedRecipe,
+  ) {}
+
+  async run(options: OrchestratorOptions): Promise<RefactorRunResult> {
+    // 1. Ensure worktree exists (createOrReuse)
+    // 2. Capture baseline if not already captured
+    // 3. while (pendingTargets.length > 0):
+    //      target = store.popPending(runId)
+    //      store.markInProgress(runId, target.id)
+    //      result = await runAgent({ ..., skipWorktree: true, skipWorktreeCleanup: true })
+    //      if (result.finalStatus === 'success'):
+    //        sha = await gitCommit(worktreePath, target)
+    //        store.markDone(runId, target.id, sha)
+    //      else:
+    //        store.markFailed(runId, target.id, result.error)
+    //        // continue to next target — do not abort run
+    // 4. Persist final run status
+  }
+}
 ```
 
-### How Exploration Differs from Code Change
+The loop lives entirely in `RefactorOrchestrator`. `RetryOrchestrator` runs inside each `runAgent()` call for per-chunk retries, as today.
 
-| Dimension | Code change (`generic`) | Exploration (`investigation`) |
-|-----------|------------------------|-------------------------------|
-| Docker mount | `:rw` (read-write) | `:ro` (read-only) |
-| Branch creation | Yes (worktree or main branch) | No branch needed |
-| Verification | compositeVerifier + LLM Judge | Skipped entirely |
-| Retry loop | Up to 3 retries | Single attempt only |
-| Output | `RetryResult.finalStatus` = success/failed | `RetryResult.finalStatus` = success + `finalResponse` populated |
-| PR creation | Optional | Never |
-| Zero-diff check | Yes (blocks retry) | Not applicable |
+### 4. Differential Verification — Orchestrator Wraps the Verifier
 
-### Docker Mount for Read-Only
+**Decision: DifferentialVerifier is a higher-order function, NOT a modification to compositeVerifier**
 
-The key distinction: `docker run -v workspaceDir:/workspace:ro` instead of `:rw`. This prevents the agent from accidentally or deliberately modifying files during an investigation task.
-
-**Modified:** `src/cli/docker/index.ts` — `buildDockerRunArgs` accepts a new `readOnly?: boolean` option in `DockerRunOptions`. When `true`, the workspace mount uses `:ro`.
+The existing `RetryConfig.verifier` signature `(workspaceDir, options?) => Promise<VerificationResult>` is used by both `RetryOrchestrator` and the MCP verifier server. Modifying `compositeVerifier` to accept a `BaselineSnapshot` parameter would break the MCP server (which has no baseline context).
 
 ```typescript
+// src/refactor/diff-verifier.ts
+export function createDifferentialVerifier(
+  baseline: BaselineSnapshot,
+  verifyBlock: VerifyBlock,
+): RetryConfig['verifier'] {
+  return async (workspaceDir, options) => {
+    const result = await compositeVerifier(workspaceDir, options);
+    return applyDifferentialRules(result, baseline, verifyBlock);
+  };
+}
+```
+
+`RefactorOrchestrator` passes `createDifferentialVerifier(baseline, recipe.verification)` as the `retryConfig.verifier` for each chunk. Existing `runAgent()` calls for non-sweeping-refactor tasks continue to use `compositeVerifier` directly.
+
+Phase 30 requires `testVerifier` to return structured test names (not just pass/fail) so `DifferentialVerifier` can compare which tests regressed. This is the one structural change to `verifier.ts`: extend `VerificationResult` with an optional `testResults?: TestResult[]` field.
+
+### 5. Context Bundle Mount — Coexistence with Workspace Mount
+
+`buildDockerRunArgs` currently produces one `-v` mount. Adding a second for `/context/` is additive:
+
+```typescript
+// src/cli/docker/index.ts
 export interface DockerRunOptions {
   workspaceDir: string;
   apiKey: string;
   sessionId: string;
   networkName?: string;
   imageTag?: string;
-  readOnly?: boolean;   // NEW — defaults to false (existing behavior)
+  readOnly?: boolean;
+  contextBundlePath?: string;  // NEW: absolute path; mounted at /context :ro
 }
-
-// Volume mount line change:
-'-v', `${opts.workspaceDir}:/workspace:${opts.readOnly ? 'ro' : 'rw'}`,
 ```
 
-**Modified:** `src/orchestrator/claude-code-session.ts` — `SessionConfig` gains `readOnly?: boolean`. The session passes this to `buildDockerRunArgs`.
-
-### Exploration Does Not Use Worktrees
-
-Worktrees are for concurrent write isolation. A read-only investigation task has no writes to isolate. Investigation tasks mount the main repo directly at its current HEAD — no branch creation, no worktree lifecycle.
-
-**Modified:** `src/agent/index.ts` — The worktree creation is conditional on `options.taskType !== 'investigation'`.
-
-### Output: Report as `finalResponse`
-
-The exploration agent's output is Claude's final text response. This already flows through `SessionResult.finalResponse` (a field that exists since v2.3's `TaskHistoryEntry` follow-up enrichment). No new types are needed — `RetryResult.sessionResults[0].finalResponse` contains the report.
-
-**No new types required.** The REPL and Slack adapters display `finalResponse` for investigation tasks using the same rendering path used for the `history` command enrichment.
-
-### Intent Parser Changes
-
-The LLM parser needs to recognize investigation tasks. Investigative verbs include: "analyze", "explain", "describe", "show", "list", "find", "summarize", "check", "review", "audit", "what is", "how does", "explore".
-
-**Modified:** `src/intent/llm-parser.ts` — Add `investigation` to the output schema. The system prompt is updated with examples: "analyze the CI setup" → `taskType: 'investigation'`. The fast-path parser does NOT handle investigation (no regex shortcut — these are complex NL queries that need LLM judgment).
-
-The refactoring verb guard (which blocks misclassification of "replace X with Y" as dep-update) remains unchanged — investigation tasks are not dep-update candidates.
-
-### Verification Bypass
-
-`RetryOrchestrator` runs the full verify loop for all tasks. Investigation tasks short-circuit this:
-
-**Modified:** `src/orchestrator/retry.ts` — The retry loop checks if `retryConfig.skipVerification` is set. When true, verification is skipped entirely after the session succeeds. The `RetryConfig` interface gains:
+The Docker args builder appends the second mount when `contextBundlePath` is set:
 
 ```typescript
-export interface RetryConfig {
-  maxRetries: number;
-  verifier?: (...) => Promise<VerificationResult>;
-  judge?: (...) => Promise<JudgeResult>;
-  maxJudgeVetoes?: number;
-  preVerify?: (...) => Promise<void>;
-  skipVerification?: boolean;   // NEW — true for investigation tasks
+if (opts.contextBundlePath) {
+  args.push('-v', `${opts.contextBundlePath}:/context:ro`);
 }
 ```
 
-**Modified:** `src/agent/index.ts` — When `options.taskType === 'investigation'`, pass `skipVerification: true` and `maxRetries: 1` to `RetryOrchestrator`.
+The existing PreToolUse path-traversal check in `ClaudeCodeSession` already blocks writes outside `/workspace` — `/context` falls outside `/workspace`, so it is automatically protected without any hook changes. The second mount is defence-at-mount-level only; the SDK hook provides no additional coverage because the agent cannot reach `/context` via Write/Edit (they require paths starting with `/workspace`).
 
-### Prompt for Investigation Tasks
+### 6. Capability Toolbox — Conditional MCP Server Registration
 
-**New file:** `src/prompts/investigation.ts`
+**Decision: Register capability tools only when `taskType === 'sweeping-refactor'`**
 
-The investigation prompt instructs the agent that it is in read-only analysis mode:
+`ClaudeCodeSession.run()` already conditionally sets `readOnly`. The same pattern applies to capability tools:
+
+```typescript
+// src/orchestrator/claude-code-session.ts
+const mcpServers: Record<string, unknown> = {
+  verifier: verifierServer,
+};
+if (this.config.taskType === 'sweeping-refactor') {
+  const { createCapabilityToolsMcpServer } = await import('../mcp/verifier-server.js');
+  mcpServers.capability_tools = createCapabilityToolsMcpServer(workspaceDir);
+}
+```
+
+`SessionConfig` gains `taskType?: string` — this is already present in `AgentOptions` and just needs threading through `runAgent()` → `SessionConfig`. No other component needs to know about the taskType.
+
+Tools are registered in a separate MCP server (`capability_tools`), not mixed into the existing `verifier` server. This keeps the verifier server's test surface unchanged.
+
+### 7. Recipe Runner — Position in the Architecture
+
+**Decision: RecipeRunner is a parallel entry point alongside runAgent(), not inside it**
+
+`runAgent()` is a single-session function. Its try/finally structure, Docker lifecycle, and worktree cleanup are all scoped to one session. Threading multi-session loops inside it would require significant refactoring and risk breaking existing task types.
+
+`RecipeRunner` is called by:
+1. `refactor` CLI subcommand (`agent refactor start`)
+2. `processInput()` in REPL/Slack when `intent.taskType === 'sweeping-refactor'` and a recipe is confirmed
+
+The call graph:
 
 ```
-You are analyzing the repository at /workspace. Do not modify any files.
-Your task: {description}
-
-Provide a structured report covering your findings. Be specific — include file names,
-directory paths, and concrete observations. End with a clear summary.
+agent refactor start --recipe ./recipe.yaml
+    └── RecipeRunner.start(recipe, options)
+             │
+             ├── DiscoveryPassRunner.run(recipe.discovery)
+             │       └── runAgent({ taskType: 'investigation', readOnly: true })
+             │           → targets.json (written host-side from finalResponse)
+             │
+             └── RefactorOrchestrator.run(runId, recipe, worktree)
+                      └── loop: runAgent() per chunk
 ```
 
-**Modified:** `src/prompts/index.ts` — `buildPrompt()` routes `taskType === 'investigation'` to `buildInvestigationPrompt()`.
+`RecipeRunner` does not call `runAgent()` directly for transform chunks — `RefactorOrchestrator` does. `RecipeRunner` owns recipe validation, strategy dispatch, and the top-level run lifecycle.
 
-### Output Rendering in Adapters
+### 8. Conversational Recipe Authoring — Extending the Scoping Dialogue
 
-Investigation tasks return no diff, no PR, and no verification results. The REPL adapter renders `finalResponse` from the session result when `finalStatus === 'success'` and `taskType === 'investigation'`. This reuses the existing `sanitizeForDisplay()` function.
+The Phase 22 scoping dialogue (`runScopingDialogue()` in `src/repl/session.ts`) asks up to 3 generic questions for `generic` tasks. For `sweeping-refactor`, the four questions are fixed and structured (not LLM-generated):
 
-**Modified:** `src/cli/commands/repl.ts` — The result renderer checks `intent.taskType === 'investigation'` and displays `result.sessionResults[0]?.finalResponse` as the report output.
+1. "What marks a target site?" → recipe.discovery
+2. "What should it become?" → recipe.transformation.spec
+3. "How do we know it still works?" → recipe.verification
+4. "Any docs I should read?" → recipe.context.bundle
 
-**Modified:** `src/slack/adapter.ts` — The Slack adapter posts the `finalResponse` as a thread reply (same pattern as other results). No Block Kit changes needed.
+**Integration point:** In `processInput()` in `src/repl/session.ts`, the existing branch for `generic` tasks calls `runScopingDialogue`. Add a parallel branch for `sweeping-refactor` that calls `runRecipeInterview()` from the new `src/repl/recipe-interview.ts` module.
 
-### What Is Unchanged
+```typescript
+// src/repl/session.ts (Phase 34 addition)
+if (intent.taskType === 'sweeping-refactor' && !options.recipeFile) {
+  const recipeDraft = await runRecipeInterview(intent, callbacks.askQuestion);
+  if (recipeDraft === null) return { status: 'cancelled' };
+  // recipeDraft is a ValidatedRecipe — pass to RecipeRunner
+}
+```
 
-- `compositeVerifier` — not called for investigation tasks
-- `llmJudge` — not called for investigation tasks
-- `GitHubPRCreator` — not called for investigation tasks
-- `ClaudeCodeSession.run()` — unmodified; it returns `finalResponse` regardless
-- `WorktreeManager` — not invoked for investigation tasks
-- `RetryResult` type — no new fields needed
+The existing `runScopingDialogue` is unchanged. The new `runRecipeInterview` is a separate function in a new file. The REPL and Slack callers use it via `SessionCallbacks.askQuestion` — the same channel-agnostic interface already used by the scoping dialogue.
 
 ---
 
-## System Overview: v2.4 Architecture
-
-```
-┌────────────────────────────────────────────────────────────────────┐
-│                         ADAPTERS (I/O)                              │
-│                                                                     │
-│   CLI REPL           One-Shot         Slack Bot                     │
-│   (unchanged)        (unchanged)      (unchanged)                   │
-└──────────────────────────────────────────────────────┬─────────────┘
-                                                        │
-┌─────────────────────────────────────────────────────▼─────────────┐
-│                      SESSION CORE (unchanged)                       │
-│   processInput() → parseIntent() → clarify → confirm → runAgent()  │
-│   investigation taskType routes through same processInput() flow    │
-└───────────────────────────────────────────────┬────────────────────┘
-                                                 │
-┌────────────────────────────────────────────────▼───────────────────┐
-│                    INTENT LAYER (minor addition)                     │
-│   parseIntent() — adds 'investigation' to TASK_TYPES enum          │
-│   LLM schema: investigation verbs → taskType: 'investigation'       │
-└───────────────────────────────────────────────┬────────────────────┘
-                                                 │
-┌────────────────────────────────────────────────▼───────────────────┐
-│                    PROMPT LAYER (new route)                          │
-│   buildPrompt()                                                     │
-│   ├─> buildMavenPrompt()       (unchanged)                          │
-│   ├─> buildNpmPrompt()         (unchanged)                          │
-│   ├─> buildGenericPrompt()     (unchanged)                          │
-│   └─> buildInvestigationPrompt() NEW — read-only analysis prompt    │
-└───────────────────────────────────────────────┬────────────────────┘
-                                                 │
-┌────────────────────────────────────────────────▼───────────────────┐
-│                    AGENT ENTRY POINT (modified)                      │
-│   runAgent(options, context)                                        │
-│                                                                     │
-│   if taskType !== 'investigation':                                  │
-│     worktreeInfo = WorktreeManager.create(sessionId)   NEW         │
-│     workspaceDir = worktreeInfo.worktreeDir             CHANGED     │
-│   else:                                                             │
-│     workspaceDir = options.repo  (main checkout, unchanged)        │
-│                                                                     │
-│   RetryOrchestrator({ workspaceDir, ... })                         │
-│   finally: WorktreeManager.remove(worktreeInfo)  NEW               │
-└──────────────┬──────────────────────────────────┬──────────────────┘
-               │ code-change tasks                │ investigation tasks
-┌──────────────▼──────────────┐  ┌────────────────▼───────────────┐
-│    EXECUTION (code change)  │  │  EXECUTION (investigation)      │
-│                             │  │                                  │
-│  RetryOrchestrator          │  │  RetryOrchestrator               │
-│  (maxRetries: 3)            │  │  (maxRetries: 1,                 │
-│                             │  │   skipVerification: true)        │
-│  ClaudeCodeSession          │  │  ClaudeCodeSession               │
-│  Docker: :rw mount          │  │  Docker: :ro mount  CHANGED     │
-│  workspaceDir = worktree    │  │  workspaceDir = main repo        │
-│                             │  │                                  │
-│  compositeVerifier ✓        │  │  compositeVerifier skipped      │
-│  llmJudge ✓                 │  │  llmJudge skipped               │
-│  GitHubPRCreator (opt) ✓    │  │  GitHubPRCreator skipped        │
-└──────────────────────────── ┘  └─────────────────────────────────┘
-```
-
----
-
-## New vs Modified vs Unchanged
-
-### New Components
-
-| Component | File | Purpose |
-|-----------|------|---------|
-| `WorktreeManager` | `src/orchestrator/worktree.ts` | Lifecycle for worktree create/remove/prune |
-| `WorktreeInfo` type | `src/orchestrator/worktree.ts` | Worktree path + branch name for a session |
-| `buildInvestigationPrompt()` | `src/prompts/investigation.ts` | Read-only analysis prompt |
-
-### Modified Components
-
-| Component | File | Change | Scope |
-|-----------|------|--------|-------|
-| `runAgent()` | `src/agent/index.ts` | Worktree create/cleanup for non-investigation; `readOnly` flag for investigation | ~30 lines |
-| `buildDockerRunArgs()` | `src/cli/docker/index.ts` | Add `readOnly?: boolean` to `DockerRunOptions`; `:ro` mount when true | ~5 lines |
-| `ClaudeCodeSession` | `src/orchestrator/claude-code-session.ts` | Pass `readOnly` from `SessionConfig` to `buildDockerRunArgs` | ~3 lines |
-| `SessionConfig` | `src/types.ts` | Add `sessionId?: string`, `readOnly?: boolean` | Additive fields |
-| `RetryConfig` | `src/types.ts` | Add `skipVerification?: boolean` | Additive field |
-| `RetryOrchestrator.run()` | `src/orchestrator/retry.ts` | Short-circuit verification when `skipVerification: true` | ~10 lines |
-| `PRCreatorOptions` | `src/orchestrator/pr-creator.ts` | Add optional `worktreeBranch?: string` | Additive field |
-| `TASK_TYPES` | `src/intent/types.ts` | Add `'investigation'` | Additive enum value |
-| `IntentSchema` | `src/intent/types.ts` | `z.enum([..., 'investigation'])` | Additive |
-| `buildPrompt()` | `src/prompts/index.ts` | Route `investigation` to `buildInvestigationPrompt()` | ~5 lines |
-| LLM system prompt | `src/intent/llm-parser.ts` | Add investigation verb examples; update schema | ~10 lines |
-| REPL result renderer | `src/cli/commands/repl.ts` | Display `finalResponse` for investigation results | ~10 lines |
-| Slack adapter | `src/slack/adapter.ts` | Post `finalResponse` for investigation results | ~5 lines |
-
-### Entirely Unchanged
-
-- `src/orchestrator/verifier.ts` — called by `RetryOrchestrator`; unchanged when `skipVerification: true` bypasses it
-- `src/orchestrator/judge.ts` — unchanged
-- `src/orchestrator/summarizer.ts` — unchanged
-- `src/orchestrator/metrics.ts` — unchanged
-- `src/repl/session.ts` — `processInput()` is unchanged; `runAgent()` handles the worktree/exploration split
-- `src/repl/types.ts` — `SessionCallbacks`, `ReplState`, `TaskHistoryEntry` unchanged
-- `src/intent/fast-path.ts` — fast-path does not handle investigation
-- `src/intent/context-scanner.ts` — unchanged
-- `src/intent/confirm-loop.ts` — unchanged
-- `src/mcp/verifier-server.ts` — unchanged (still used by code-change sessions)
-- `src/agent/registry.ts` — unchanged
-- `src/prompts/maven.ts`, `npm.ts`, `generic.ts` — unchanged
-- `src/slack/bot.ts`, `state.ts` — unchanged
-- `src/cli/commands/one-shot.ts` — unchanged (investigation tasks work via one-shot too)
-- `docker/Dockerfile` — unchanged (image supports both read-write and read-only mounts)
-
----
-
-## Data Flows
-
-### Concurrent Code-Change Flow (with worktrees)
-
-```
-User: "update lodash to 4.17.21" (session A)
-User: "bump axios to 1.7.0"     (session B, concurrent)
-
-Session A:
-  runAgent({ repo: '/repos/my-app', taskType: 'npm-dependency-update', ... })
-    sessionId = 'abc123'
-    worktreeInfo = WorktreeManager.create('abc123')
-      → git worktree add ../my-app-agent-abc123 -b agent/abc123
-      → worktreeDir = '/repos/my-app-agent-abc123'
-    RetryOrchestrator({ workspaceDir: '/repos/my-app-agent-abc123' })
-      → docker run -v /repos/my-app-agent-abc123:/workspace:rw ...
-      → agent edits package.json in /repos/my-app-agent-abc123
-      → host: git diff, npm install, tsc, vitest (all in worktreeDir)
-    GitHubPRCreator('/repos/my-app-agent-abc123')
-      → pushes branch agent/abc123
-  finally: WorktreeManager.remove(worktreeInfo)
-      → git worktree remove /repos/my-app-agent-abc123
-      → git branch -d agent/abc123 (optional, or kept for the pushed PR)
-
-Session B (concurrent, independent):
-  runAgent({ repo: '/repos/my-app', ... })
-    sessionId = 'def456'
-    worktreeInfo.worktreeDir = '/repos/my-app-agent-def456'
-    ... same flow, no interaction with session A
-```
-
-### Investigation Flow
-
-```
-User: "explain the CI pipeline for this repo"
-
-processInput()
-  └─> parseIntent() → taskType: 'investigation', confidence: 'high'
-  └─> callbacks.confirm() → user confirms
-  └─> runAgent({ taskType: 'investigation', repo: '/repos/my-app', ... })
-       workspaceDir = '/repos/my-app'  (main checkout, NO worktree)
-       RetryOrchestrator({
-         workspaceDir: '/repos/my-app',
-         maxRetries: 1,
-         skipVerification: true,
-         // verifier and judge not provided
-       })
-       ClaudeCodeSession({ workspaceDir, readOnly: true })
-         → docker run -v /repos/my-app:/workspace:ro ...
-         → agent reads .github/workflows/*.yml, README.md, Makefile
-         → returns structured report as finalResponse
-       RetryResult {
-         finalStatus: 'success',
-         sessionResults: [{
-           finalResponse: "CI pipeline analysis:\n\n1. Build: ...\n2. Test: ..."
-         }]
-       }
-  └─> REPL adapter displays sessionResults[0].finalResponse as the report
-```
-
----
-
-## Architectural Patterns
-
-### Pattern 1: `workspaceDir` as the Single Isolation Seam
-
-**What:** All downstream components (Docker mount, git ops, verifier, judge) already accept `workspaceDir` as a parameter. Changing what `workspaceDir` points to (main repo vs. worktree) changes isolation behavior without touching any downstream code.
-
-**When to use:** Any new isolation strategy (worktrees, temp dirs, network shares) only needs to change `workspaceDir` passed to `RetryOrchestrator`. No other component changes.
-
-**Trade-offs:** The seam is implicit — components don't know they're in a worktree. This is intentional: isolation is an infrastructure concern, not a business logic concern.
-
-### Pattern 2: Capability Gating via `RetryConfig` Flags
-
-**What:** `RetryOrchestrator` is already configurable via `RetryConfig` (verifier, judge, preVerify, maxRetries). Adding `skipVerification` extends this pattern rather than adding a new code path.
-
-**When to use:** Any time a task type needs different retry/verification behavior, add a flag to `RetryConfig` rather than branching in `runAgent()`.
-
-**Trade-offs:** `RetryConfig` grows. Offset by: each flag is optional with clear semantics, and the orchestrator is the right owner for these decisions.
-
-### Pattern 3: Task Type Routing at `buildPrompt()`
-
-**What:** The `buildPrompt()` dispatcher already routes by `taskType`. Adding `investigation` as a new case follows the established pattern (maven, npm, generic all work this way).
-
-**When to use:** Any new task type with distinct prompt requirements adds a `buildXPrompt()` function and a case in `buildPrompt()`.
-
-### Pattern 4: Read-Only as a `SessionConfig` Flag
-
-**What:** The Docker mount mode (`:rw` vs. `:ro`) is set by `readOnly` in `SessionConfig`, not by the task type directly. `runAgent()` sets `readOnly: true` for investigation tasks. `ClaudeCodeSession` passes it to `buildDockerRunArgs()`.
-
-**When to use:** Any future security-sensitive execution mode (e.g., a "sandbox preview" mode) can use the same flag without changing the Docker args builder's interface.
-
----
-
-## Anti-Patterns
-
-### Anti-Pattern 1: Sharing the Main Checkout for Concurrent Writes
-
-**What people do:** Skip worktrees, assume sequential execution, add file-level locks.
-
-**Why it's wrong:** The existing `git reset --hard` cleanup in `RetryOrchestrator.resetWorkspace()` would destroy another session's work. The LLM Judge's `captureBaselineSha` would pick up the wrong HEAD. Two agents on the same branch create git conflicts on commit.
-
-**Do this instead:** Worktrees give each session a fully isolated working tree. The main checkout is never touched during agent execution.
-
-### Anti-Pattern 2: Running Worktree Cleanup Inside the Container
-
-**What people do:** Have the agent run `git worktree remove` as a Bash tool call inside Docker.
-
-**Why it's wrong:** The container user (UID 1001) cannot write to the `.git/` directory — this is an established constraint in the codebase (see PROJECT.md Key Decisions). Cleanup must always run on the host.
-
-**Do this instead:** `WorktreeManager.remove()` runs on the host in `runAgent()`'s `finally` block.
-
-### Anti-Pattern 3: Mounting the Entire Parent Directory for Worktrees
-
-**What people do:** To make the worktree visible inside the container, mount the parent directory `/repos/` instead of the worktree itself.
-
-**Why it's wrong:** Mounts the entire repos directory, exposing sibling repositories. Breaks the workspace boundary — the agent at `/workspace` would see multiple repos.
-
-**Do this instead:** Mount only the worktree directory itself (`-v /repos/my-app-agent-abc123:/workspace:rw`). The worktree is self-contained as a directory; it does not need to see its parent.
-
-### Anti-Pattern 4: Using Worktrees for Investigation Tasks
-
-**What people do:** Create a worktree for investigation tasks to ensure a "clean" read-only state.
-
-**Why it's wrong:** Worktrees are for write isolation. An investigation task is already isolated by the `:ro` Docker mount — the agent cannot modify files. Creating a worktree adds overhead (disk copy, branch creation, cleanup) with no benefit.
-
-**Do this instead:** Investigation tasks use the main checkout with a `:ro` mount.
-
-### Anti-Pattern 5: Skipping Cleanup on Agent Error
-
-**What people do:** Only call `WorktreeManager.remove()` on the success path.
-
-**Why it's wrong:** Worktrees accumulate as orphans after cancellations, timeouts, or unexpected errors. In a busy environment this consumes significant disk (each worktree duplicates the working tree).
-
-**Do this instead:** `WorktreeManager.remove()` always runs in `finally { }` regardless of outcome.
-
----
-
-## Component Boundaries (v2.4 Target)
+## Recommended Project Structure (v3.0 additions)
 
 ```
 src/
-├── intent/
-│   ├── types.ts              MODIFY: add 'investigation' to TASK_TYPES
-│   ├── llm-parser.ts         MODIFY: investigation verb examples in system prompt
-│   ├── fast-path.ts          NO CHANGE (no fast-path for investigation)
-│   ├── context-scanner.ts    NO CHANGE
-│   ├── confirm-loop.ts       NO CHANGE
-│   └── index.ts              NO CHANGE
-├── prompts/
-│   ├── index.ts              MODIFY: route 'investigation' to buildInvestigationPrompt
-│   ├── investigation.ts      NEW: read-only analysis prompt
-│   ├── generic.ts            NO CHANGE
-│   ├── maven.ts              NO CHANGE
-│   └── npm.ts                NO CHANGE
-├── orchestrator/
-│   ├── worktree.ts           NEW: WorktreeManager (create/remove/prune)
-│   ├── retry.ts              MODIFY: skipVerification flag check
-│   ├── claude-code-session.ts MODIFY: pass readOnly to buildDockerRunArgs
-│   ├── verifier.ts           NO CHANGE
-│   ├── judge.ts              NO CHANGE
-│   ├── pr-creator.ts         MODIFY: optional worktreeBranch in PRCreatorOptions
-│   ├── summarizer.ts         NO CHANGE
-│   └── metrics.ts            NO CHANGE
 ├── agent/
-│   └── index.ts              MODIFY: worktree lifecycle; readOnly flag for investigation
+│   ├── index.ts              MODIFIED: skipWorktreeCleanup, contextBundlePath, envelopeConfig
+│   └── worktree-manager.ts   MODIFIED: runId in sentinel, pruneOrphans live-run check
 ├── cli/
-│   ├── docker/
-│   │   └── index.ts          MODIFY: readOnly field in DockerRunOptions
-│   └── commands/
-│       └── repl.ts           MODIFY: render finalResponse for investigation results
-├── slack/
-│   └── adapter.ts            MODIFY: post finalResponse for investigation results
-├── repl/                     NO CHANGE (all files)
-├── mcp/                      NO CHANGE
-└── types.ts                  MODIFY: sessionId?, readOnly? on SessionConfig; skipVerification? on RetryConfig
+│   ├── commands/
+│   │   └── refactor.ts       NEW: start/resume/status subcommands
+│   └── docker/
+│       └── index.ts          MODIFIED: contextBundlePath → second -v mount
+├── intent/
+│   ├── fast-path.ts          MODIFIED: sweepingRefactorFastPath()
+│   ├── index.ts              MODIFIED: route sweeping-refactor taskType
+│   └── types.ts              MODIFIED: add 'sweeping-refactor'
+├── mcp/
+│   ├── verifier-server.ts    MODIFIED: export createCapabilityToolsMcpServer()
+│   └── tools/                NEW directory
+│       ├── config-edit.ts    NEW: roundtrip YAML/JSON with schema validation
+│       ├── ast-tools.ts      NEW: ast_query + ast_rewrite (tree-sitter)
+│       ├── import-rewrite.ts NEW: rename/replace imports across module system
+│       ├── rewrite-run.ts    NEW: OpenRewrite/jscodeshift/semgrep bridge
+│       ├── test-tools.ts     NEW: test_baseline + test_compare
+│       └── doc-retrieve.ts   NEW: BM25 lookup over /context/ bundle
+├── orchestrator/
+│   ├── claude-code-session.ts MODIFIED: /context/ mount, capability tools registration
+│   ├── judge.ts               MODIFIED: optional recipeSpec param in llmJudge()
+│   └── verifier.ts            MODIFIED (Phase 30): testVerifier returns TestResult[]
+├── prompts/
+│   └── sweeping-refactor.ts   NEW: per-chunk prompt builder
+├── refactor/                  NEW top-level module (zero contamination of existing paths)
+│   ├── types.ts               NEW: RefactorRun, LedgerEntry, BaselineSnapshot, EnvelopeConfig
+│   ├── state-store.ts         NEW: JSON ledger read/write
+│   ├── recipe.ts              NEW: YAML loader + Zod validator (Appendix A schema)
+│   ├── runner.ts              NEW: RecipeRunner (entry point + strategy dispatch)
+│   ├── orchestrator.ts        NEW: RefactorOrchestrator (multi-chunk loop)
+│   ├── discovery.ts           NEW: DiscoveryPassRunner
+│   ├── baseline.ts            NEW: BaselineCapture
+│   └── diff-verifier.ts       NEW: DifferentialVerifier (wraps compositeVerifier)
+├── repl/
+│   ├── session.ts             MODIFIED (Phase 34): branch to recipe interview
+│   └── recipe-interview.ts   NEW: 4-question interview → RecipeDraft
+└── types.ts                   MODIFIED: SessionConfig + RetryConfig extensions
+```
+
+**Rationale for `src/refactor/` as a top-level module:** Zero contamination of existing paths. The module boundary means Phases 28-33 can be built and tested in isolation. None of the new types or functions need to be imported by `src/orchestrator/`, `src/agent/`, or `src/intent/` until the explicit integration points listed above are wired.
+
+---
+
+## Data Flow
+
+### Discovery Pass (Phase 28)
+
+```
+RecipeRunner.start(recipe)
+    └── DiscoveryPassRunner.run(recipe.discovery)
+             └── runAgent({ taskType: 'investigation', readOnly: true,
+                             description: discoveryPrompt(recipe.discovery) })
+                       │
+                       └── ClaudeCodeSession (readOnly: true)
+                                 agent uses grep/ast_query MCP tools
+                                 returns finalResponse with JSON target list
+             │
+             DiscoveryPassRunner parses finalResponse → LedgerEntry[]
+             RefactorStateStore.saveTargets(runId, entries)
+             → .bg-agent-runs/<runId>/targets.json
+             → .bg-agent-runs/<runId>/state.json  (all entries: 'pending')
+```
+
+Note: the agent cannot use the Write tool (readOnly: true blocks it). `targets.json` is written host-side by `DiscoveryPassRunner` after parsing `sessionResult.finalResponse`. This matches the existing pattern where `.reports/` files are written by the REPL, not the agent.
+
+### Per-Chunk Transform Session (Phase 29)
+
+```
+RefactorOrchestrator.run(runId)
+    │
+    ├── WorktreeManager: create() for new run; reuse existing for resume
+    ├── BaselineCapture.capture(worktreePath) → baseline stored in state.json
+    │
+    └── loop while store.pendingCount(runId) > 0:
+          target = store.popPending(runId)
+          store.markInProgress(runId, target.id)
+          │
+          result = await runAgent({
+            taskType: 'sweeping-refactor',
+            repo: refactorRun.worktreePath,       ← pre-created worktree path
+            description: buildSweepingRefactorPrompt(recipe, target),
+            contextBundlePath: recipe.context?.bundle,
+            envelopeConfig: recipe.envelope,       ← max_turns, timeout_seconds
+          }, {
+            skipWorktree: true,                    ← orchestrator owns lifecycle
+            skipWorktreeCleanup: true,
+          })
+          │
+          inside runAgent():
+            RetryOrchestrator(
+              verifier: createDifferentialVerifier(baseline, recipe.verification),
+              judge: llmJudge with recipeSpec: recipe.transformation.spec
+            )
+          │
+          if result.finalStatus === 'success':
+            sha = execFile('git', ['commit', ...], { cwd: worktreePath })
+            store.markDone(runId, target.id, sha)
+          else:
+            store.markFailed(runId, target.id, result.error ?? result.finalStatus)
+            // continue — single chunk failure does not abort run
+```
+
+### Context Bundle Mount (Phase 31)
+
+```
+agent refactor start --context-bundle ./scio-migration-guide/
+    └── RecipeRunner → RefactorOrchestrator → runAgent({ contextBundlePath: '/abs/path/scio-migration-guide' })
+             │
+             └── ClaudeCodeSession.run()
+                       buildDockerRunArgs({ ..., contextBundlePath })
+                       → docker run -v /workspace:rw -v /abs/path/scio-migration-guide:/context:ro ...
+                       │
+                       system prompt appended:
+                       "A read-only reference bundle is available at /context/.
+                        Use mcp__capability_tools__doc_retrieve to look up migration guidance
+                        before editing each target site."
+```
+
+### State Store Schema
+
+```typescript
+// src/refactor/types.ts
+
+export interface RefactorRun {
+  runId: string;            // UUID, immutable
+  recipe: ValidatedRecipe;  // verbatim parsed recipe
+  status: 'running' | 'completed' | 'paused' | 'failed';
+  worktreePath: string;
+  branch: string;
+  baseline: BaselineSnapshot | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface LedgerEntry {
+  id: string;               // UUID per target
+  file: string;
+  locator: string;          // line:N | jsonpath:$.a.b | symbol:Foo
+  kind: string;
+  status: 'pending' | 'in-progress' | 'done' | 'failed' | 'skipped';
+  commitSha?: string;
+  failReason?: string;
+  attempts: number;
+}
+
+export interface BaselineSnapshot {
+  buildPassed: boolean;
+  testResults: TestResult[];        // { name: string; passed: boolean }[]
+  lintErrorCount: number;
+  capturedAt: number;
+}
 ```
 
 ---
 
-## Build Order
+## Build Order and Phase Dependencies
 
 ```
-Phase 1: Tech Debt Cleanup
-  (No feature dependencies; clears noise before new code)
-       |
-       v
-Phase 2: Git Worktree Isolation
-  (WorktreeManager + runAgent integration + SessionId threading)
-       |
-       v
-Phase 3: Repo Exploration Tasks
-  (Depends on: investigation taskType in intent layer; readOnly Docker mount)
-  (Independent of: WorktreeManager — exploration skips worktrees)
+Phase 28: Sweeping-Refactor Task Type + Discovery Pass
+│
+│  NEW:  src/refactor/types.ts
+│        src/refactor/state-store.ts
+│        src/refactor/discovery.ts
+│        src/prompts/sweeping-refactor.ts
+│  MOD:  src/intent/types.ts         (add 'sweeping-refactor')
+│        src/intent/fast-path.ts     (sweepingRefactorFastPath)
+│        src/intent/index.ts         (routing)
+│        src/prompts/index.ts        (dispatch case)
+│
+│  No dependency on Phase 29+. Can be built and verified independently.
+│
+▼
+Phase 29: RefactorRun Orchestrator
+│
+│  NEW:  src/refactor/orchestrator.ts
+│        src/refactor/baseline.ts
+│        src/cli/commands/refactor.ts
+│  MOD:  src/agent/index.ts          (skipWorktreeCleanup, contextBundlePath, envelopeConfig)
+│        src/agent/worktree-manager.ts (runId in sentinel, pruneOrphans live-run check)
+│        src/types.ts                (SessionConfig + RetryConfig new fields)
+│
+│  REQUIRES Phase 28 (consumes targets.json from discovery)
+│
+▼
+Phase 30: Differential Verification     Phase 31: Context Bundle + Judge Scope
+│                                        │
+│  NEW:  src/refactor/diff-verifier.ts  │  MOD: src/cli/docker/index.ts
+│  MOD:  src/orchestrator/verifier.ts   │       src/orchestrator/claude-code-session.ts
+│        (testVerifier structured names)│       src/orchestrator/judge.ts (recipeSpec)
+│                                        │       src/types.ts (contextBundlePath)
+│  REQUIRES Phase 29 (baseline lives    │
+│    on RefactorRun)                     │  REQUIRES Phase 29 (runAgent() path)
+│
+└──────────────────────────────────────┬─┘
+                                        │ (both must complete before Phase 32)
+                                        ▼
+Phase 32: Recipe Format + Recipe Runner
+│
+│  NEW:  src/refactor/recipe.ts         (Zod schema + YAML loader)
+│        src/refactor/runner.ts         (RecipeRunner + strategy dispatch)
+│        recipes/                       (reference recipes at project root)
+│
+│  REQUIRES Phases 28, 29, 30, 31
+│
+▼
+Phase 33: Capability Toolbox
+│
+│  NEW:  src/mcp/tools/ (6 tool files)
+│  MOD:  src/mcp/verifier-server.ts    (export createCapabilityToolsMcpServer)
+│        src/orchestrator/claude-code-session.ts (conditional registration)
+│        docker/Dockerfile             (tree-sitter, OpenRewrite, jscodeshift, semgrep)
+│
+│  REQUIRES Phase 32 (recipes reference tools by name; reference recipes exercise tools)
+│
+▼
+Phase 34: Conversational Recipe Authoring
+│
+│  NEW:  src/repl/recipe-interview.ts
+│  MOD:  src/repl/session.ts           (branch to recipe interview)
+│        src/slack/adapter.ts          (4-question flow for Slack)
+│
+│  REQUIRES Phase 32 (must emit valid recipe)
+│  REQUIRES Phase 22 (scoping dialogue infrastructure — already shipped)
 ```
 
-### Phase 1 First: Tech Debt Cleanup
-
-Dead code removal, exit code fixes, and accumulated tech debt items (documented in `PROJECT.md` Known Tech Debt) are completely independent of v2.4 features. Doing this first means the new feature code is written against a clean codebase, and the tech debt fixes don't accidentally regress the new feature work.
-
-### Phase 2 Second: Git Worktree Isolation
-
-`WorktreeManager` is a new file with no dependencies on exploration tasks. The integration into `runAgent()` modifies the `workspaceDir` threading — which is the foundational plumbing both features share. Building worktrees first establishes the pattern of `workspaceDir` as the isolation seam, which the exploration task PR-creator bypass also relies on.
-
-The `sessionId` threading through `SessionConfig` (needed for worktree naming) also benefits exploration tasks indirectly — consistent session IDs improve log correlation across both task types.
-
-### Phase 3 Third: Repo Exploration Tasks
-
-Exploration depends on:
-1. `readOnly` Docker mount support (built in Phase 2's docker changes, or added here)
-2. `investigation` taskType in the intent layer (new, no prior dependency)
-3. `skipVerification` in `RetryConfig` (new, no prior dependency)
-
-Exploration does NOT depend on worktrees — the two features are cleanly independent after Phase 2 establishes the shared infrastructure.
+**Why Phases 30 and 31 are parallel:** They have no dependency on each other. Phase 30 modifies `verifier.ts` and creates `diff-verifier.ts`. Phase 31 modifies `claude-code-session.ts`, `docker/index.ts`, and `judge.ts`. No shared files. Both phases require only Phase 29 as a prerequisite.
 
 ---
 
-## Integration Boundaries
+## Anti-Patterns to Avoid
 
-| Boundary | Communication | Notes |
-|----------|---------------|-------|
-| `runAgent()` → `WorktreeManager` | `create(sessionId)` → `WorktreeInfo` | Host-side; always in finally for cleanup |
-| `runAgent()` → `RetryOrchestrator` | `workspaceDir` changed to worktree path | All downstream components receive this transparently |
-| `runAgent()` → `RetryOrchestrator` | `skipVerification: true` for investigation | Bypasses verifier + judge entirely |
-| `ClaudeCodeSession` → Docker | `readOnly` flag → `:ro` vs `:rw` mount | Investigation = `:ro`; code-change = `:rw` |
-| `buildPrompt()` → `buildInvestigationPrompt()` | `taskType === 'investigation'` routing | New case in existing dispatcher |
-| `processInput()` → `runAgent()` | No new params — `taskType` already flows | Session core unchanged |
-| Adapter → `finalResponse` | `result.sessionResults[0].finalResponse` | Existing field, new display path for investigation |
+### Anti-Pattern 1: Multi-Session Loop Inside runAgent()
+
+**What people do:** Add a `forEachTarget` loop inside `runAgent()` for sweeping-refactor.
+**Why it's wrong:** `runAgent()`'s try/finally worktree cleanup fires on the entire loop, not per-chunk. Partial failures (target 3 fails, resume from target 4) have no clean handling. The existing single-session exit statuses (`cancelled`, `zero_diff`, `vetoed`) become ambiguous across N chunks.
+**Do this instead:** `runAgent()` stays single-session. `RefactorOrchestrator` owns the loop and passes `skipWorktree/skipWorktreeCleanup` flags.
+
+### Anti-Pattern 2: Shared or Pooled WorktreeManager
+
+**What people do:** Add instance-level "reuse" state (`isActive`, `refCount`) to `WorktreeManager` to share a worktree across sessions.
+**Why it's wrong:** The key decisions log explicitly states `WorktreeManager single-use`. Pooling introduces shared mutable state that `pruneOrphans` cannot safely reason about — the PID sentinel maps one-to-one with one process.
+**Do this instead:** `RefactorOrchestrator` holds one `WorktreeManager` for the run's lifetime and passes `skipWorktree/skipWorktreeCleanup` to each `runAgent()` call. The sentinel gets a `runId` field; `pruneOrphans` checks the state store.
+
+### Anti-Pattern 3: Modifying compositeVerifier Signature for Baseline Comparison
+
+**What people do:** Add `baseline?: BaselineSnapshot` to `compositeVerifier(workspaceDir, options?)` so it can compare in-place.
+**Why it's wrong:** `compositeVerifier` is referenced as `RetryConfig.verifier` and called by the MCP verifier server (which has no baseline). Modifying the signature breaks both callers.
+**Do this instead:** `DifferentialVerifier` is a wrapper that closes over the baseline and calls `compositeVerifier` internally. It is passed as `retryConfig.verifier` by `RefactorOrchestrator`. Existing callers are untouched.
+
+### Anti-Pattern 4: SQLite for the Ledger
+
+**What people do:** Introduce `better-sqlite3` for the state store.
+**Why it's wrong:** Native addon requires separate compilation for macOS/glibc (host) and Alpine/musl (Docker). Significant operational burden for no gain at single-process, serial-chunk scale.
+**Do this instead:** JSON ledger with atomic rename. Add SQLite only at v3.1+ if `max_parallel > 1` requires transaction isolation.
+
+### Anti-Pattern 5: Registering Capability Tools for All Task Types
+
+**What people do:** Register all MCP tools unconditionally in `ClaudeCodeSession` to "keep it simple."
+**Why it's wrong:** Tools not scoped to sweeping-refactor create surface area for the generic agent to call `ast_rewrite` on a dep-update task. Tool descriptions add tokens to every session. Judge may veto unexpected tool use.
+**Do this instead:** Capability tools registered only when `SessionConfig.taskType === 'sweeping-refactor'`. Thread `taskType` through `AgentOptions` → `SessionConfig`.
+
+### Anti-Pattern 6: Discovery Writing targets.json via Agent Write Tool
+
+**What people do:** Have the discovery agent write `targets.json` directly using the Write tool.
+**Why it's wrong:** The discovery pass is read-only (same invariant as `investigation` tasks — Write tool is blocked). Discovery uses the agent's `finalResponse` text, which is parsed host-side by `DiscoveryPassRunner`.
+**Do this instead:** `DiscoveryPassRunner` parses `sessionResult.finalResponse` for a JSON block and writes `targets.json` on the host. This matches the established pattern where `.reports/` files are written by the REPL.
+
+---
+
+## Scaling Considerations
+
+| Concern | v2.4 (single session) | v3.0 (serial chunks) | v3.1+ (parallel chunks) |
+|---------|----------------------|----------------------|------------------------|
+| Worktrees | One per session | One per run, long-lived | One per parallel worker |
+| State | In-memory RetryResult | JSON ledger on disk | Requires atomic writes |
+| Docker containers | One at a time | One at a time (serial) | N simultaneous containers |
+| Cost bound | Turns × session | N chunks × envelope | max_parallel × chunks × envelope |
+| Crash recovery | None (one-shot) | Resume from `state.json` | Requires distributed locking |
+
+For v3.0, `max_parallel: 1` is enforced. The recipe schema already has `max_parallel: integer`; the runner rejects `max_parallel > 1` with a clear error rather than silently ignoring it. This surfaces the v3.1 boundary explicitly.
 
 ---
 
 ## Sources
 
-- `src/agent/index.ts` — `runAgent()` entry point, Docker lifecycle, `workspaceDir` threading — HIGH confidence
-- `src/orchestrator/claude-code-session.ts` — `buildDockerRunArgs` call, `containerWorkspaceDir = '/workspace'`, `spawnClaudeCodeProcess` — HIGH confidence
-- `src/cli/docker/index.ts` — `DockerRunOptions`, `-v workspaceDir:/workspace:rw` mount line — HIGH confidence
-- `src/orchestrator/retry.ts` — `RetryConfig`, `RetryOrchestrator.run()`, `resetWorkspace()` cleanup pattern — HIGH confidence
-- `src/types.ts` — `SessionConfig`, `RetryConfig`, `RetryResult` interfaces — HIGH confidence
-- `src/intent/types.ts` — `TASK_TYPES` enum, `IntentSchema` — HIGH confidence
-- `.planning/PROJECT.md` — v2.4 milestone spec, Key Decisions table (host-side git execution), Known Tech Debt — HIGH confidence
-- [BSWEN Worktree Isolation](https://docs.bswen.com/blog/2026-03-18-ai-agent-worktree-isolation/) — worktree filesystem layout, create/cleanup pattern — MEDIUM confidence
-- [Upsun: Git Worktrees for Parallel AI Agents](https://devcenter.upsun.com/posts/git-worktrees-for-parallel-ai-coding-agents/) — concurrent run safety, Docker volume interaction — MEDIUM confidence
-- [Jon Roosevelt: Worktrees Ate My Edits](https://jonroosevelt.com/blog/git-worktrees-broke-dedicated-machines-fixed-it) — shared `.git` pitfalls, isolation invariants — MEDIUM confidence
-- [OpenLibrary Docker Compose Issue](https://github.com/internetarchive/openlibrary/issues/11920) — sibling worktree mount pattern confirmation — MEDIUM confidence
+All findings are based on direct source code analysis (HIGH confidence):
+- `src/agent/index.ts` — `runAgent()`, `AgentOptions`, `AgentContext`, Docker lifecycle, worktree lifecycle
+- `src/agent/worktree-manager.ts` — `WorktreeManager`, `PidSentinel`, `pruneOrphans`
+- `src/orchestrator/retry.ts` — `RetryOrchestrator`, `RetryConfig`, session retry loop
+- `src/orchestrator/verifier.ts` — `compositeVerifier`, `RetryConfig.verifier` signature
+- `src/orchestrator/claude-code-session.ts` — `ClaudeCodeSession.run()`, `buildDockerRunArgs()` call, MCP server registration
+- `src/orchestrator/judge.ts` — `llmJudge` signature
+- `src/cli/docker/index.ts` — `DockerRunOptions`, `-v` mount generation
+- `src/mcp/verifier-server.ts` — `createVerifierMcpServer`, MCP server pattern
+- `src/intent/index.ts`, `fast-path.ts`, `types.ts` — intent routing, TASK_TYPES, fast-path patterns
+- `src/types.ts` — `SessionConfig`, `RetryConfig`, `RetryResult` interfaces
+- `src/repl/session.ts` — `processInput`, `runScopingDialogue`, `SessionCallbacks`
+- `.planning/milestones/v3.0-ROADMAP.md` — Phase 28-34 specs, Appendix A recipe schema
+- `.planning/PROJECT.md` — Key Decisions table, architectural invariants, known tech debt
 
 ---
-
-*Architecture research for: v2.4 Git Worktree Isolation + Repo Exploration Tasks — background coding agent*
-*Researched: 2026-04-05*
+*Architecture research for: v3.0 Program Automator — sweeping-refactor integration into background coding agent*
+*Researched: 2026-04-08*
