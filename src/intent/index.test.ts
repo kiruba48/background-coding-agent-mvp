@@ -295,7 +295,7 @@ describe('parseIntent coordinator', () => {
       expect(result.repo).toBe('/explicit/path');
     });
 
-    it('falls back to cwd when LLM project not in registry', async () => {
+    it('falls back to cwd when LLM project not in registry and sets unresolvedProject', async () => {
       const registry = makeRegistry({
         resolve: vi.fn().mockReturnValue(undefined),
       });
@@ -317,6 +317,58 @@ describe('parseIntent coordinator', () => {
 
       // Falls back to cwd since registry doesn't know about it
       expect(result.repo).toBe(process.cwd());
+      expect(result.unresolvedProject).toBe('unknown-project');
+    });
+
+    it('extracts project name from "in <project> repo" before LLM for generic tasks', async () => {
+      const registry = makeRegistry({
+        resolve: vi.fn().mockImplementation((name: string) => {
+          if (name.toLowerCase() === 'strategic-planner') return '/registered/strategic-planner';
+          return undefined;
+        }),
+      });
+
+      mockFastPathParse.mockReturnValue(null);
+      mockLlmParse.mockResolvedValue({
+        taskType: 'generic',
+        dep: null,
+        version: null,
+        confidence: 'high',
+        createPr: false,
+        taskCategory: 'refactor',
+        project: 'Strategic-planner',
+        clarifications: [],
+        scopingQuestions: [],
+      });
+
+      const result = await parseIntent('In Strategic-planner repo refactor the TaskCard', { registry });
+
+      expect(result.repo).toBe('/registered/strategic-planner');
+      expect(result.unresolvedProject).toBeUndefined();
+    });
+
+    it('does not set unresolvedProject when project resolves successfully', async () => {
+      const registry = makeRegistry({
+        resolve: vi.fn().mockReturnValue('/registered/myapp'),
+      });
+
+      mockFastPathParse.mockReturnValue(null);
+      mockLlmParse.mockResolvedValue({
+        taskType: 'generic',
+        dep: null,
+        version: null,
+        confidence: 'high',
+        createPr: false,
+        taskCategory: 'code-change',
+        project: 'myapp',
+        clarifications: [],
+        scopingQuestions: [],
+      });
+
+      const result = await parseIntent('fix bug in myapp repo', { registry });
+
+      expect(result.repo).toBe('/registered/myapp');
+      expect(result.unresolvedProject).toBeUndefined();
     });
   });
 

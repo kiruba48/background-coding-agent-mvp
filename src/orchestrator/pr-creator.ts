@@ -423,10 +423,12 @@ export class GitHubPRCreator {
       // Build authenticated URL — NEVER log this (token would leak)
       const authedUrl = `https://x-access-token:${token}@github.com/${owner}/${repo}.git`;
 
-      // Stage only tracked file changes — avoids committing .env, secrets, etc.
+      // Stage all changes including new files — relies on .gitignore to exclude secrets
       const statusResult = await git.status();
       if (!statusResult.isClean()) {
-        await git.add('-u');
+        await git.add('.');
+        // Unstage agent sentinel file — it lives in the worktree but must never be committed
+        try { await git.raw(['reset', 'HEAD', '.bg-agent-pid']); } catch { /* not staged — fine */ }
         await git.commit('chore: agent changes');
       }
 

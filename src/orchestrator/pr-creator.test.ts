@@ -602,7 +602,7 @@ describe('GitHubPRCreator', () => {
       expect(checkoutCalls[checkoutCalls.length - 1][0]).toBe('main');
     });
 
-    it('stages only tracked files with git add -u (#2)', async () => {
+    it('stages all files including new ones with git add . (#2)', async () => {
       setupStandardMocks({ isClean: false });
 
       const creator = new GitHubPRCreator('/workspace');
@@ -612,7 +612,20 @@ describe('GitHubPRCreator', () => {
         retryResult: makeRetryResult(),
       });
 
-      expect(mockAdd).toHaveBeenCalledWith('-u');
+      expect(mockAdd).toHaveBeenCalledWith('.');
+    });
+
+    it('unstages .bg-agent-pid sentinel after git add . (#2b)', async () => {
+      setupStandardMocks({ isClean: false });
+
+      const creator = new GitHubPRCreator('/workspace');
+      await creator.create({
+        taskType: 'test',
+        originalTask: 'Test',
+        retryResult: makeRetryResult(),
+      });
+
+      expect(mockRaw).toHaveBeenCalledWith(['reset', 'HEAD', '.bg-agent-pid']);
     });
 
     it('returns error when sessionResults is empty (#10)', async () => {

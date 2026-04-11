@@ -51,4 +51,5 @@ export interface ResolvedIntent {
   scopingQuestions: string[];              // LLM-generated scoping questions for generic tasks (empty array when none)
   inheritedFields?: Array<'taskType' | 'repo'>; // fields inherited from session history (follow-up)
   explorationSubtype?: ExplorationSubtype; // set when taskType is 'investigation'
+  unresolvedProject?: string; // project name mentioned in input but not found in registry
 }

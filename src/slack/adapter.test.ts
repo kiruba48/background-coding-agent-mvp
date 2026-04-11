@@ -285,6 +285,30 @@ describe('processSlackMention', () => {
     );
   });
 
+  it('posts error message when project is unresolved and does not run agent', async () => {
+    vi.mocked(parseIntent).mockResolvedValueOnce({
+      ...mockIntent,
+      unresolvedProject: 'Strategic-planner',
+    });
+
+    const client = createMockClient();
+    const session = createMockSession();
+    const ctx = { client, channel: 'C123', threadTs: '1234567890.123' };
+    const registry = new ProjectRegistry({ cwd: '/tmp/test-registry' });
+
+    await processSlackMention('refactor TaskCard in Strategic-planner repo', ctx, session, registry);
+
+    expect(mockPostMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'C123',
+        thread_ts: '1234567890.123',
+        text: expect.stringContaining('Project "Strategic-planner" is not registered'),
+      }),
+    );
+    // Agent should NOT have been called
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
   it('posts Block Kit confirmation to thread on successful parse', async () => {
     vi.mocked(parseIntent).mockResolvedValueOnce(mockIntent);
     vi.mocked(runAgent).mockResolvedValueOnce({

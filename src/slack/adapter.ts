@@ -140,6 +140,20 @@ export async function processSlackMention(
     throw err;
   }
 
+  // Step 1b: Reject if project was mentioned but not found in registry
+  if (intent.unresolvedProject) {
+    const registeredNames = Object.keys(registry.list());
+    const suggestions = registeredNames.length > 0
+      ? `\nRegistered projects: ${registeredNames.join(', ')}`
+      : '\nNo projects registered yet. Run the CLI from a project directory to auto-register it.';
+    await ctx.client.chat.postMessage({
+      channel: ctx.channel,
+      thread_ts: ctx.threadTs,
+      text: `Project "${intent.unresolvedProject}" is not registered.${suggestions}`,
+    });
+    return;
+  }
+
   // Step 2: Force auto-PR — Slack tasks always create PRs (except investigation)
   if (intent.taskType !== 'investigation') {
     intent.createPr = true;

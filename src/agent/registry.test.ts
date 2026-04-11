@@ -88,4 +88,18 @@ describe('ProjectRegistry', () => {
     registry.register('my-app_v2.0', '/path/to/app');
     expect(registry.resolve('my-app_v2.0')).toBe('/path/to/app');
   });
+
+  it('Test 14: resolve is case-insensitive', () => {
+    registry.register('strategic-planner', '/path/to/strategic-planner');
+    expect(registry.resolve('Strategic-planner')).toBe('/path/to/strategic-planner');
+    expect(registry.resolve('STRATEGIC-PLANNER')).toBe('/path/to/strategic-planner');
+    expect(registry.resolve('strategic-planner')).toBe('/path/to/strategic-planner');
+  });
+
+  it('Test 15: exact case match takes priority over case-insensitive', () => {
+    registry.register('MyApp', '/path/to/MyApp');
+    registry.register('myapp', '/path/to/myapp');
+    expect(registry.resolve('myapp')).toBe('/path/to/myapp');
+    expect(registry.resolve('MyApp')).toBe('/path/to/MyApp');
+  });
 });

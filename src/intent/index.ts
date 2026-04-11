@@ -96,10 +96,26 @@ export async function parseIntent(
     }
   }
 
+  // Track project name mentioned in input for unresolved reporting
+  let mentionedProject: string | null = null;
+
   if (!repoPath && fastResult?.project) {
     // Try registry lookup for project name from NL
+    mentionedProject = fastResult.project;
     const resolved = registry.resolve(fastResult.project);
     if (resolved) repoPath = resolved;
+  }
+
+  // Pre-LLM project extraction for generic tasks (fast-path only matches dep update patterns)
+  if (!repoPath && !fastResult?.project) {
+    const projectMatch = input.match(/\b(?:in|for)\s+([a-zA-Z0-9._-]+)\s+(?:repo|project)\b/i)
+      ?? input.match(/\b(?:in|for)\s+([a-zA-Z0-9._-]+)\b/i);
+    if (projectMatch) {
+      const candidate = projectMatch[1];
+      mentionedProject = candidate;
+      const resolved = registry.resolve(candidate);
+      if (resolved) repoPath = resolved;
+    }
   }
 
   let usedCwdFallback = false;
@@ -136,6 +152,7 @@ export async function parseIntent(
 
   // Step 3a: If LLM extracted a project name and we haven't resolved one yet, try registry
   if (!options.repoPath && llmPreResult.project) {
+    if (!mentionedProject) mentionedProject = llmPreResult.project;
     const resolved = registry.resolve(llmPreResult.project);
     if (resolved) {
       repoPath = path.resolve(resolved);
@@ -152,6 +169,8 @@ export async function parseIntent(
   // Merge createPr from fast-path (if it matched pattern but fell through) or LLM
   const createPr = fastResult?.createPr || llmResult.createPr;
   const isGeneric = llmResult.taskType === 'generic';
+  // Flag unresolved project when a project name was mentioned but fell back to cwd
+  const unresolvedProject = usedCwdFallback && mentionedProject ? mentionedProject : undefined;
   return {
     taskType: llmResult.taskType,
     repo: repoPath,
@@ -163,5 +182,6 @@ export async function parseIntent(
     taskCategory: isGeneric ? llmResult.taskCategory : undefined,
     clarifications: llmResult.clarifications.length > 0 ? llmResult.clarifications : undefined,
     scopingQuestions: isGeneric ? llmResult.scopingQuestions : [],
+    unresolvedProject,
   };
 }

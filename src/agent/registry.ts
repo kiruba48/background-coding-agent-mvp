@@ -33,7 +33,15 @@ export class ProjectRegistry {
 
   resolve(name: string): string | undefined {
     validateName(name);
-    return this.store.get('projects')[name];
+    const projects = this.store.get('projects');
+    // Exact match first
+    if (name in projects) return projects[name];
+    // Case-insensitive fallback
+    const lower = name.toLowerCase();
+    for (const [key, value] of Object.entries(projects)) {
+      if (key.toLowerCase() === lower) return value;
+    }
+    return undefined;
   }
 
   has(name: string): boolean {
