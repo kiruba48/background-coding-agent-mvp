@@ -50,6 +50,7 @@ import {
   handleAppMention,
   handleProceedAction,
   handleCancelAction,
+  handleEndThreadAction,
   getThreadSessions,
 } from './index.js';
 
@@ -71,8 +72,10 @@ function createTestSession(overrides: Partial<ThreadSession> = {}): ThreadSessio
     userId: 'U_OWNER',
     status: 'confirming',
     createdAt: Date.now(),
+    lastActiveAt: Date.now(),
     state: { currentProject: null, currentProjectName: null, history: [] },
     abortController: new AbortController(),
+    taskCount: 0,
     ...overrides,
   };
 }
@@ -503,7 +506,7 @@ describe('handleCancelAction', () => {
     expect(client.chat.update).not.toHaveBeenCalled();
   });
 
-  it('does not delete session from map — cleanup handled by handleAppMention .finally() (P2)', async () => {
+  it('does not delete session from map — session persists for thread context', async () => {
     const client = createMockClient();
     const ack = vi.fn().mockResolvedValue(undefined);
 
@@ -521,7 +524,215 @@ describe('handleCancelAction', () => {
 
     await handleCancelAction(ack, body, client as AnyClient);
 
-    // Session should still be in the map — .finally() in handleAppMention handles deletion
     expect(getThreadSessions().has(threadTs)).toBe(true);
+  });
+});
+
+describe('handleAppMention — thread context persistence', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getThreadSessions().clear();
+  });
+
+  it('rejects mention when a task is already running in the thread', async () => {
+    const client = createMockClient();
+    const threadTs = 'thr.concurrent.001';
+
+    const runningSession = createTestSession({ status: 'running' });
+    getThreadSessions().set(threadTs, runningSession);
+
+    await handleAppMention(
+      { text: '<@U123ABC> another task', channel: 'C456', ts: '999.000', thread_ts: threadTs, user: 'U_CONCURRENT' },
+      client as AnyClient,
+    );
+
+    expect(client.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('already running'),
+      }),
+    );
+  });
+
+  it('reuses session state when re-mentioning in a thread with a done session', async () => {
+    const client = createMockClient();
+    const threadTs = 'thr.reuse.001';
+
+    const doneSession = createTestSession({
+      status: 'done',
+      state: {
+        currentProject: '/projects/my-app',
+        currentProjectName: 'my-app',
+        history: [{ taskType: 'generic', dep: null, version: null, repo: '/projects/my-app', status: 'success', description: 'first task' }],
+      },
+      taskCount: 1,
+    });
+    getThreadSessions().set(threadTs, doneSession);
+
+    await handleAppMention(
+      { text: '<@U123ABC> follow up task', channel: 'C456', ts: '999.000', thread_ts: threadTs, user: 'U_REUSE' },
+      client as AnyClient,
+    );
+
+    const session = getThreadSessions().get(threadTs);
+    expect(session?.status).toBe('confirming');
+    expect(session?.state.currentProject).toBe('/projects/my-app');
+    expect(session?.state.history).toHaveLength(1);
+    expect(session?.taskCount).toBe(1);
+  });
+
+  it('caps history to SLACK_MAX_THREAD_HISTORY (5) on reuse', async () => {
+    const client = createMockClient();
+    const threadTs = 'thr.cap.001';
+
+    const history = Array.from({ length: 8 }, (_, i) => ({
+      taskType: 'generic' as const,
+      dep: null,
+      version: null,
+      repo: '/projects/my-app',
+      status: 'success' as const,
+      description: `task ${i}`,
+    }));
+
+    const doneSession = createTestSession({
+      status: 'done',
+      state: { currentProject: '/projects/my-app', currentProjectName: 'my-app', history },
+      taskCount: 8,
+    });
+    getThreadSessions().set(threadTs, doneSession);
+
+    await handleAppMention(
+      { text: '<@U123ABC> next task', channel: 'C456', ts: '999.000', thread_ts: threadTs, user: 'U_CAP' },
+      client as AnyClient,
+    );
+
+    const session = getThreadSessions().get(threadTs);
+    expect(session?.state.history).toHaveLength(5);
+    expect(session?.state.history[0].description).toBe('task 3');
+  });
+
+  it('session is NOT deleted after processSlackMention completes', async () => {
+    const client = createMockClient();
+    const threadTs = 'thr.persist.001';
+
+    mockProcessSlackMention.mockResolvedValueOnce(undefined);
+
+    await handleAppMention(
+      { text: '<@U123ABC> do work', channel: 'C456', ts: threadTs, user: 'U_PERSIST' },
+      client as AnyClient,
+    );
+
+    // Wait for fire-and-forget to complete
+    await new Promise<void>(resolve => setTimeout(resolve, 10));
+
+    expect(getThreadSessions().has(threadTs)).toBe(true);
+  });
+});
+
+describe('handleEndThreadAction', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getThreadSessions().clear();
+  });
+
+  it('calls ack(), updates message with summary, and removes session from map', async () => {
+    const client = createMockClient();
+    const ack = vi.fn().mockResolvedValue(undefined);
+
+    const threadTs = 'thr.end.001';
+    const session = createTestSession({
+      status: 'done',
+      taskCount: 2,
+      state: {
+        currentProject: '/projects/app',
+        currentProjectName: 'app',
+        history: [
+          { taskType: 'generic', dep: null, version: null, repo: '/projects/app', status: 'success', description: 'task 1' },
+          { taskType: 'generic', dep: null, version: null, repo: '/projects/app', status: 'failed', description: 'task 2' },
+        ],
+      },
+    });
+    getThreadSessions().set(threadTs, session);
+
+    const body = {
+      user: { id: 'U_OWNER' },
+      channel: { id: 'C456' },
+      message: { ts: 'end-btn-ts', thread_ts: threadTs },
+    } as unknown as BlockAction;
+
+    await handleEndThreadAction(ack, body, client as AnyClient);
+
+    expect(ack).toHaveBeenCalled();
+    expect(client.chat.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ts: 'end-btn-ts',
+        text: expect.stringContaining('Thread ended'),
+        blocks: [],
+      }),
+    );
+    expect(getThreadSessions().has(threadTs)).toBe(false);
+  });
+
+  it('rejects unauthorized user from ending the thread', async () => {
+    const client = createMockClient();
+    const ack = vi.fn().mockResolvedValue(undefined);
+
+    const threadTs = 'thr.end.auth';
+    const session = createTestSession({ status: 'done', userId: 'U_OWNER', taskCount: 1 });
+    getThreadSessions().set(threadTs, session);
+
+    const body = {
+      user: { id: 'U_INTRUDER' },
+      channel: { id: 'C456' },
+      message: { ts: 'end-btn-ts', thread_ts: threadTs },
+    } as unknown as BlockAction;
+
+    await handleEndThreadAction(ack, body, client as AnyClient);
+
+    expect(client.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('Only the user who initiated'),
+      }),
+    );
+    expect(getThreadSessions().has(threadTs)).toBe(true);
+  });
+
+  it('rejects ending thread while task is running', async () => {
+    const client = createMockClient();
+    const ack = vi.fn().mockResolvedValue(undefined);
+
+    const threadTs = 'thr.end.running';
+    const session = createTestSession({ status: 'running', taskCount: 0 });
+    getThreadSessions().set(threadTs, session);
+
+    const body = {
+      user: { id: 'U_OWNER' },
+      channel: { id: 'C456' },
+      message: { ts: 'end-btn-ts', thread_ts: threadTs },
+    } as unknown as BlockAction;
+
+    await handleEndThreadAction(ack, body, client as AnyClient);
+
+    expect(client.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining('Cannot end thread'),
+      }),
+    );
+    expect(getThreadSessions().has(threadTs)).toBe(true);
+  });
+
+  it('returns silently when no matching session', async () => {
+    const client = createMockClient();
+    const ack = vi.fn().mockResolvedValue(undefined);
+
+    const body = {
+      user: { id: 'U_SOMEONE' },
+      channel: { id: 'C456' },
+      message: { ts: 'some-ts', thread_ts: 'nonexistent' },
+    } as unknown as BlockAction;
+
+    await expect(
+      handleEndThreadAction(ack, body, client as AnyClient),
+    ).resolves.toBeUndefined();
+    expect(ack).toHaveBeenCalled();
   });
 });

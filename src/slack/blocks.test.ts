@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildConfirmationBlocks, stripMention } from '../slack/blocks.js';
+import { buildConfirmationBlocks, buildEndThreadBlocks, buildThreadSummary, stripMention } from '../slack/blocks.js';
 import type { ResolvedIntent } from '../intent/types.js';
 
 const genericIntent: ResolvedIntent = {
@@ -105,5 +105,73 @@ describe('stripMention', () => {
 
   it('handles mention IDs with lowercase characters (S7)', () => {
     expect(stripMention('<@Uabc123XY> fix tests')).toBe('fix tests');
+  });
+});
+
+describe('buildEndThreadBlocks', () => {
+  it('returns an actions block with an "End Thread" button', () => {
+    const blocks = buildEndThreadBlocks();
+    expect(blocks).toHaveLength(1);
+    const actionsBlock = blocks[0] as { type: string; elements?: Array<{ type: string; action_id: string; text?: { text: string } }> };
+    expect(actionsBlock.type).toBe('actions');
+    const btn = actionsBlock.elements?.find(e => e.action_id === 'end_thread');
+    expect(btn).toBeDefined();
+    expect(btn?.text?.text).toBe('End Thread');
+  });
+});
+
+describe('buildThreadSummary', () => {
+  it('returns summary with task count and project name', () => {
+    const summary = buildThreadSummary({
+      taskCount: 3,
+      state: {
+        currentProjectName: 'my-app',
+        history: [
+          { status: 'success' },
+          { status: 'success' },
+          { status: 'failed' },
+        ],
+      },
+    });
+    expect(summary).toContain('3 tasks');
+    expect(summary).toContain('my-app');
+    expect(summary).toContain('2 succeeded');
+    expect(summary).toContain('1 failed');
+  });
+
+  it('uses singular "task" for count of 1', () => {
+    const summary = buildThreadSummary({
+      taskCount: 1,
+      state: {
+        currentProjectName: 'app',
+        history: [{ status: 'success' }],
+      },
+    });
+    expect(summary).toContain('1 task ');
+    expect(summary).not.toContain('1 tasks');
+  });
+
+  it('shows "unknown project" when currentProjectName is null', () => {
+    const summary = buildThreadSummary({
+      taskCount: 0,
+      state: { currentProjectName: null, history: [] },
+    });
+    expect(summary).toContain('unknown project');
+  });
+
+  it('includes "other" count for non-success non-failure statuses', () => {
+    const summary = buildThreadSummary({
+      taskCount: 3,
+      state: {
+        currentProjectName: 'app',
+        history: [
+          { status: 'success' },
+          { status: 'cancelled' },
+          { status: 'zero_diff' },
+        ],
+      },
+    });
+    expect(summary).toContain('1 succeeded');
+    expect(summary).toContain('2 other');
   });
 });

@@ -3,7 +3,7 @@ import { LlmParseError } from '../intent/llm-parser.js';
 import { runAgent, type AgentOptions, type AgentContext } from '../agent/index.js';
 import { ProjectRegistry } from '../agent/registry.js';
 import { createLogger } from '../cli/utils/logger.js';
-import { buildConfirmationBlocks } from '../slack/blocks.js';
+import { buildConfirmationBlocks, buildEndThreadBlocks } from '../slack/blocks.js';
 import { appendHistory } from '../repl/session.js';
 import type { ThreadSession, SlackContext } from '../slack/types.js';
 import type { SessionCallbacks, ScopeHint, TaskHistoryEntry } from '../repl/types.js';
@@ -281,7 +281,18 @@ export async function processSlackMention(
           : undefined,
       finalResponse: taskResult?.sessionResults?.at(-1)?.finalResponse,
     });
+    session.taskCount++;
     session.status = 'done';
     callbacks.onAgentEnd?.();
+
+    // Post "End Thread" button so the user can explicitly close the thread
+    try {
+      await ctx.client.chat.postMessage({
+        channel: ctx.channel,
+        thread_ts: ctx.threadTs,
+        text: 'Thread still active — mention me again to continue, or:',
+        blocks: buildEndThreadBlocks(),
+      });
+    } catch { /* Non-fatal — Slack API failure shouldn't break the session */ }
   }
 }

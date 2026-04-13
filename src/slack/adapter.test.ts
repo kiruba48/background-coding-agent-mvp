@@ -82,8 +82,10 @@ function createMockSession(): ThreadSession {
     userId: 'U_TEST_USER',
     status: 'confirming',
     createdAt: Date.now(),
+    lastActiveAt: Date.now(),
     state,
     abortController: new AbortController(),
+    taskCount: 0,
   };
 }
 

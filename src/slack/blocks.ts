@@ -57,6 +57,49 @@ export function buildConfirmationBlocks(intent: ResolvedIntent): (KnownBlock | B
 }
 
 /**
+ * Build Block Kit blocks for an "End Thread" button posted after task completion.
+ */
+export function buildEndThreadBlocks(): (KnownBlock | Block)[] {
+  const actionsBlock: KnownBlock = {
+    type: 'actions',
+    elements: [
+      {
+        type: 'button',
+        text: {
+          type: 'plain_text',
+          text: 'End Thread',
+          emoji: false,
+        },
+        action_id: 'end_thread',
+      },
+    ],
+  };
+
+  return [actionsBlock];
+}
+
+/**
+ * Build a human-readable thread summary for when a thread is ended.
+ */
+export function buildThreadSummary(session: { taskCount: number; state: { currentProjectName: string | null; history: Array<{ status: string }> } }): string {
+  const taskCount = session.taskCount;
+  const project = session.state.currentProjectName ?? 'unknown project';
+  const successes = session.state.history.filter(h => h.status === 'success').length;
+  const failures = session.state.history.filter(h => h.status === 'failed').length;
+
+  const parts = [`Thread ended — ${taskCount} task${taskCount === 1 ? '' : 's'} run against *${project}*`];
+  if (taskCount > 0) {
+    const statParts: string[] = [];
+    if (successes > 0) statParts.push(`${successes} succeeded`);
+    if (failures > 0) statParts.push(`${failures} failed`);
+    const other = taskCount - successes - failures;
+    if (other > 0) statParts.push(`${other} other`);
+    if (statParts.length > 0) parts.push(`(${statParts.join(', ')})`);
+  }
+  return parts.join(' ');
+}
+
+/**
  * Strip Slack bot mention(s) from the start of a message.
  *
  * Removes patterns like `<@U012AB3CD>` (including trailing whitespace)

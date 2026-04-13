@@ -20,6 +20,10 @@ export interface ThreadSession {
   confirmationMessageTs?: string;
   /** The parsed intent awaiting confirmation */
   intent?: ResolvedIntent;
+  /** Number of tasks completed in this thread (for summary on end) */
+  taskCount: number;
+  /** Last activity timestamp — reset on each new mention, used for TTL */
+  lastActiveAt: number;
 }
 
 /** Context passed to adapter functions for Slack API calls */

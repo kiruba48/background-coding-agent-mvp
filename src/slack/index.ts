@@ -5,7 +5,7 @@ import { createSessionState } from '../repl/session.js';
 import { ProjectRegistry } from '../agent/registry.js';
 import { WorktreeManager } from '../agent/worktree-manager.js';
 import { processSlackMention } from './adapter.js';
-import { stripMention } from './blocks.js';
+import { stripMention, buildEndThreadBlocks, buildThreadSummary } from './blocks.js';
 import type { ThreadSession, SlackContext } from './types.js';
 
 /** Module-level per-thread session state map */
@@ -21,6 +21,9 @@ const userMentionTimestamps = new Map<string, number[]>();
 
 /** Session TTL — stale sessions evicted after this duration (P3) */
 const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+/** Max history entries carried across thread re-mentions */
+const SLACK_MAX_THREAD_HISTORY = 5;
 
 /** Expose sessions for testing */
 export function getThreadSessions(): Map<string, ThreadSession> {
@@ -54,11 +57,11 @@ function checkRateLimit(userId: string): boolean {
   return true;
 }
 
-/** Evict stale sessions that exceeded TTL (P3) */
+/** Evict stale sessions that exceeded TTL based on last activity (P3) */
 function evictStaleSessions(): void {
   const now = Date.now();
   for (const [key, session] of threadSessions) {
-    if (now - session.createdAt > SESSION_TTL_MS) {
+    if (now - session.lastActiveAt > SESSION_TTL_MS) {
       session.abortController.abort();
       session.pendingConfirm?.resolve(null);
       threadSessions.delete(key);
@@ -112,13 +115,44 @@ export async function handleAppMention(
     return;
   }
 
-  const session: ThreadSession = {
-    userId,
-    status: 'confirming',
-    createdAt: Date.now(),
-    state: createSessionState(),
-    abortController: new AbortController(),
-  };
+  // Concurrent run guard — reject if a task is already running in this thread
+  const existing = threadSessions.get(threadTs);
+  if (existing && (existing.status === 'running' || existing.status === 'confirming')) {
+    await client.chat.postMessage({
+      channel: event.channel,
+      thread_ts: threadTs,
+      text: 'A task is already running in this thread. Wait for it to finish or end the thread first.',
+    });
+    return;
+  }
+
+  // Reuse session state from a completed task in the same thread (thread context persistence)
+  let session: ThreadSession;
+  if (existing && existing.status === 'done') {
+    // Cap history depth to avoid bloating prompts
+    if (existing.state.history.length > SLACK_MAX_THREAD_HISTORY) {
+      existing.state.history = existing.state.history.slice(-SLACK_MAX_THREAD_HISTORY);
+    }
+    session = {
+      ...existing,
+      status: 'confirming',
+      abortController: new AbortController(),
+      lastActiveAt: Date.now(),
+      pendingConfirm: undefined,
+      confirmationMessageTs: undefined,
+      intent: undefined,
+    };
+  } else {
+    session = {
+      userId,
+      status: 'confirming',
+      createdAt: Date.now(),
+      lastActiveAt: Date.now(),
+      state: createSessionState(),
+      abortController: new AbortController(),
+      taskCount: 0,
+    };
+  }
   threadSessions.set(threadTs, session);
 
   const ctx: SlackContext = {
@@ -131,7 +165,6 @@ export async function handleAppMention(
     sharedRegistry = new ProjectRegistry();
   }
 
-  // P2: processSlackMention now awaits the agent run, so .finally() fires after completion
   void processSlackMention(text, ctx, session, sharedRegistry)
     .catch((err: Error) => {
       void client.chat.postMessage({
@@ -139,9 +172,6 @@ export async function handleAppMention(
         thread_ts: threadTs,
         text: 'Something went wrong processing your request.',
       });
-    })
-    .finally(() => {
-      threadSessions.delete(threadTs);
     });
 }
 
@@ -257,7 +287,63 @@ export async function handleCancelAction(
   // Resolve deferred confirm with null (user cancelled)
   session.pendingConfirm?.resolve(null);
 
-  // P2: Don't delete session here — .finally() in handleAppMention handles cleanup
+}
+
+/**
+ * Handle "end_thread" button action — explicitly close a thread session.
+ *
+ * Posts a summary of what happened in the thread and removes the session.
+ * Exported for testability.
+ */
+export async function handleEndThreadAction(
+  ack: () => Promise<void>,
+  body: BlockAction,
+  client: Pick<WebClient, 'chat'>,
+): Promise<void> {
+  await ack();
+
+  const { channelId, confirmMsgTs, threadTs } = extractActionContext(body);
+
+  if (!channelId || !threadTs) return;
+
+  const session = threadSessions.get(threadTs);
+
+  if (!session) {
+    return;
+  }
+
+  // Authorization — only the thread initiator can end it
+  if (body.user?.id && body.user.id !== session.userId) {
+    await client.chat.postMessage({
+      channel: channelId,
+      thread_ts: threadTs,
+      text: 'Only the user who initiated this thread can end it.',
+    });
+    return;
+  }
+
+  // Don't end while a task is still running
+  if (session.status === 'running' || session.status === 'confirming') {
+    await client.chat.postMessage({
+      channel: channelId,
+      thread_ts: threadTs,
+      text: 'Cannot end thread while a task is in progress.',
+    });
+    return;
+  }
+
+  // Remove the "End Thread" button
+  if (confirmMsgTs) {
+    await client.chat.update({
+      channel: channelId,
+      ts: confirmMsgTs,
+      text: buildThreadSummary(session),
+      blocks: [],
+    });
+  }
+
+  // Post summary and clean up
+  threadSessions.delete(threadTs);
 }
 
 /**
@@ -286,6 +372,10 @@ export async function startSlack(): Promise<void> {
 
   app.action('cancel_task', async ({ ack, body, client }) => {
     await handleCancelAction(ack, body as BlockAction, client);
+  });
+
+  app.action('end_thread', async ({ ack, body, client }) => {
+    await handleEndThreadAction(ack, body as BlockAction, client);
   });
 
   // P3: Periodic eviction of stale sessions
