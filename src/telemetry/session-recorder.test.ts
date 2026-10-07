@@ -221,4 +221,17 @@ describe('SessionSpanRecorder', () => {
     expect(named(exporter.getFinishedSpans(), 'invoke_agent claude-code')).toHaveLength(1);
     expect(warn).toHaveBeenCalledTimes(1);
   });
+
+  it('still ends the session and open tool spans when flushing a malformed pending chat throws', () => {
+    const warn = vi.fn();
+    const recorder = new SessionSpanRecorder('task', ROOT_CONTEXT, { now: clock(), logger: { warn } as never });
+    recorder.onMessage(assistant('m1', [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } }], 'tool_use'));
+    recorder.onMessage(assistant('m2', [null]));
+    expect(() => recorder.finish(sessionResult())).not.toThrow();
+
+    const spans = exporter.getFinishedSpans();
+    expect(named(spans, 'invoke_agent claude-code')).toHaveLength(1);
+    expect(named(spans, 'execute_tool Bash')).toHaveLength(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
 });

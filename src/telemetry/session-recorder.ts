@@ -261,28 +261,41 @@ export class SessionSpanRecorder {
   }
 
   private close(result: SessionResult): void {
-    this.flushChat();
+    // A malformed pending chat must not prevent the spans below from ending.
+    try {
+      this.flushChat();
+    } catch (err) {
+      this.pending = null;
+      this.warnOnce(err);
+    }
     const end = this.now();
 
     for (const toolSpan of this.openTools.values()) {
-      toolSpan.setAttribute('error.type', 'incomplete');
-      toolSpan.setStatus({ code: SpanStatusCode.ERROR, message: 'session ended before the tool returned' });
+      try {
+        toolSpan.setAttribute('error.type', 'incomplete');
+        toolSpan.setStatus({ code: SpanStatusCode.ERROR, message: 'session ended before the tool returned' });
+      } catch (err) {
+        this.warnOnce(err);
+      }
       toolSpan.end(end);
     }
     this.openTools.clear();
 
-    // Splunk AO requires an output on agent spans, so failures get a status line instead.
-    const output = result.finalResponse || `[${result.status}] ${result.error ?? ''}`.trim();
-    this.sessionSpan.setAttributes({
-      'bg_agent.session_status': result.status,
-      'bg_agent.tool_call_count': result.toolCallCount,
-      'gen_ai.output.messages': messagesAttribute([textMessage('assistant', output)]),
-    });
-    if (result.status !== 'success' && result.status !== 'cancelled') {
-      this.sessionSpan.setAttribute('error.type', result.status);
-      this.sessionSpan.setStatus({ code: SpanStatusCode.ERROR, message: result.error ?? result.status });
+    try {
+      // Splunk AO requires an output on agent spans, so failures get a status line instead.
+      const output = result.finalResponse || `[${result.status}] ${result.error ?? ''}`.trim();
+      this.sessionSpan.setAttributes({
+        'bg_agent.session_status': result.status,
+        'bg_agent.tool_call_count': result.toolCallCount,
+        'gen_ai.output.messages': messagesAttribute([textMessage('assistant', output)]),
+      });
+      if (result.status !== 'success' && result.status !== 'cancelled') {
+        this.sessionSpan.setAttribute('error.type', result.status);
+        this.sessionSpan.setStatus({ code: SpanStatusCode.ERROR, message: result.error ?? result.status });
+      }
+    } finally {
+      this.sessionSpan.end(end);
     }
-    this.sessionSpan.end(end);
   }
 
   private warnOnce(err: unknown): void {
