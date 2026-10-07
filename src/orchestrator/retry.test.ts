@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { SessionResult, VerificationResult } from '../types.js';
 
 // Mock ClaudeCodeSession — the only session type after legacy deletion.
@@ -34,6 +34,9 @@ vi.mock('node:child_process', () => ({
 import { RetryOrchestrator, PreVerifyError, isConfigFile, getChangedFilesFromBaseline } from './retry.js';
 import { ClaudeCodeSession } from './claude-code-session.js';
 import { compositeVerifier } from './verifier.js';
+import { trace, SpanStatusCode } from '@opentelemetry/api';
+import type { InMemorySpanExporter } from '@opentelemetry/sdk-trace-base';
+import { installTestTracing, resetTracingForTests } from '../telemetry/tracing.js';
 
 const MockClaudeCodeSession = ClaudeCodeSession as ReturnType<typeof vi.fn>;
 
@@ -909,5 +912,91 @@ describe('RetryOrchestrator', () => {
     const attempt3Msg = capturedMessages[2];
     expect(attempt3Msg).toContain('Test failure from attempt 2');
     expect(attempt3Msg).not.toContain('TS error from attempt 1');
+  });
+});
+
+describe('RetryOrchestrator tracing', () => {
+  let exporter: InMemorySpanExporter;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    exporter = installTestTracing();
+  });
+
+  afterEach(async () => {
+    await resetTracingForTests();
+  });
+
+  it('wraps an attempt in a span with verify and judge children, and passes its context to the session', async () => {
+    const session = createMockSession(makeSessionResult());
+    MockClaudeCodeSession.mockImplementationOnce(function () { return session; });
+    const verifier = vi.fn().mockResolvedValue(makePassedVerification());
+    const judge = vi.fn().mockResolvedValue({ verdict: 'APPROVE', reasoning: 'In scope', veto_reason: '', durationMs: 5 });
+    const orchestrator = new RetryOrchestrator({ workspaceDir: '/tmp/workspace' }, { maxRetries: 3, verifier, judge });
+
+    const result = await orchestrator.run('Fix the bug');
+
+    expect(result.finalStatus).toBe('success');
+    const spans = exporter.getFinishedSpans();
+    const attempt = spans.find((s) => s.name === 'attempt 1')!;
+    const verify = spans.find((s) => s.name === 'verify')!;
+    const judgeSpan = spans.find((s) => s.name === 'judge')!;
+    expect(attempt.attributes).toMatchObject({
+      'bg_agent.attempt': 1,
+      'bg_agent.session_status': 'success',
+      'bg_agent.verification.passed': true,
+      'bg_agent.judge.verdict': 'APPROVE',
+    });
+    expect(verify.parentSpanContext?.spanId).toBe(attempt.spanContext().spanId);
+    expect(verify.attributes).toMatchObject({ 'bg_agent.verification.passed': true, 'bg_agent.verification.error_count': 0 });
+    expect(judgeSpan.parentSpanContext?.spanId).toBe(attempt.spanContext().spanId);
+    expect(judgeSpan.attributes).toMatchObject({ 'bg_agent.judge.verdict': 'APPROVE', 'bg_agent.judge.skipped': false });
+
+    const sessionConfig = MockClaudeCodeSession.mock.calls[0][0];
+    expect(trace.getSpan(sessionConfig.traceContext)?.spanContext().spanId).toBe(attempt.spanContext().spanId);
+  });
+
+  it('records one attempt span per retry and the failing verification', async () => {
+    MockClaudeCodeSession
+      .mockImplementationOnce(function () { return createMockSession(makeSessionResult()); })
+      .mockImplementationOnce(function () { return createMockSession(makeSessionResult()); });
+    const verifier = vi.fn()
+      .mockResolvedValueOnce(makeFailedVerification('Build failed'))
+      .mockResolvedValueOnce(makePassedVerification());
+    const orchestrator = new RetryOrchestrator({ workspaceDir: '/tmp/workspace' }, { maxRetries: 3, verifier });
+
+    await orchestrator.run('Fix the bug');
+
+    const spans = exporter.getFinishedSpans();
+    expect(spans.filter((s) => s.name.startsWith('attempt ')).map((s) => s.name).sort()).toEqual(['attempt 1', 'attempt 2']);
+    const firstVerify = spans.filter((s) => s.name === 'verify')[0];
+    expect(firstVerify.attributes).toMatchObject({ 'bg_agent.verification.passed': false, 'bg_agent.verification.error_count': 1 });
+    expect(String(firstVerify.attributes['gen_ai.output.messages'])).toContain('Build failed');
+  });
+
+  it('ends the verify span as an error when the verifier crashes', async () => {
+    MockClaudeCodeSession.mockImplementationOnce(function () { return createMockSession(makeSessionResult()); });
+    const verifier = vi.fn().mockRejectedValue(new Error('mvn not found'));
+    const orchestrator = new RetryOrchestrator({ workspaceDir: '/tmp/workspace' }, { maxRetries: 3, verifier });
+
+    const result = await orchestrator.run('Fix the bug');
+
+    expect(result.finalStatus).toBe('failed');
+    const verify = exporter.getFinishedSpans().find((s) => s.name === 'verify')!;
+    expect(verify.status).toEqual({ code: SpanStatusCode.ERROR, message: 'mvn not found' });
+    expect(exporter.getFinishedSpans().find((s) => s.name === 'attempt 1')).toBeDefined();
+  });
+
+  it('ends the attempt span when the session fails terminally', async () => {
+    MockClaudeCodeSession.mockImplementationOnce(function () {
+      return createMockSession(makeSessionResult({ status: 'timeout', error: 'Session timeout reached' }));
+    });
+    const orchestrator = new RetryOrchestrator({ workspaceDir: '/tmp/workspace' }, { maxRetries: 3 });
+
+    await orchestrator.run('Fix the bug');
+
+    const attempt = exporter.getFinishedSpans().find((s) => s.name === 'attempt 1')!;
+    expect(attempt.attributes['bg_agent.session_status']).toBe('timeout');
+    expect(String(attempt.attributes['gen_ai.output.messages'])).toContain('session timeout');
   });
 });
