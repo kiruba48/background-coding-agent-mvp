@@ -303,6 +303,19 @@ background-coding-agent/
 - **`ANTHROPIC_API_KEY`**
 - **`GITHUB_TOKEN`** — only needed for `--create-pr`
 - **Slack app credentials** — only needed for `background-agent slack start`
+- **Splunk Agent Observability** (optional) — traces every run (attempts, LLM turns, tool calls, verifier, judge) when these are set:
+
+  | Variable | Required | Default | Purpose |
+  |---|---|---|---|
+  | `SPLUNK_AO_REALM` | yes | — | Splunk Observability Cloud realm, e.g. `eu0` |
+  | `SPLUNK_AO_O11Y_TOKEN` | yes | — | Access token with the **INGEST** scope |
+  | `SPLUNK_AO_PROJECT` | no | `background-coding-agent` | Agent Observability project |
+  | `SPLUNK_AO_AGENT_STREAM` | no | `default` | Agent Stream inside the project |
+  | `SPLUNK_AO_CAPTURE_CONTENT` | no | `true` | `false` redacts prompts, model output, tool arguments and tool results |
+  | `SPLUNK_AO_LOGGING_DISABLED` | no | — | `true` turns telemetry off |
+
+  Telemetry is exported from the host process only; the agent container never sees these values.
+  With `.env`, run via `npx tsx --env-file=.env src/cli/index.ts`.
 
 ### Install
 

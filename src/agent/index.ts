@@ -12,7 +12,7 @@
  */
 
 import pino from 'pino';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { access } from 'node:fs/promises';
@@ -26,6 +26,10 @@ import { buildPrompt } from '../prompts/index.js';
 import { assertDockerRunning, ensureNetworkExists, buildImageIfNeeded } from '../cli/docker/index.js';
 import { WorktreeManager } from './worktree-manager.js';
 import type { RetryResult } from '../types.js';
+import { SpanKind, SpanStatusCode, context as otelContext, trace, type Context, type Span } from '@opentelemetry/api';
+import { initTracing, flushTracing, getTracer } from '../telemetry/tracing.js';
+import { messagesAttribute } from '../telemetry/spans.js';
+import { textMessage } from '../telemetry/genai.js';
 import type { TaskCategory, ExplorationSubtype } from '../intent/types.js';
 
 const execFileAsync = promisify(execFile);
@@ -62,6 +66,18 @@ export interface AgentContext {
   skipWorktree?: boolean;       // tests can bypass worktree creation
 }
 
+/** Run outcomes that are not failures (zero_diff: agent finished cleanly; cancelled: user asked). */
+const NON_ERROR_STATUSES: ReadonlySet<RetryResult['finalStatus']> = new Set(['success', 'zero_diff', 'cancelled']);
+
+function summarizeRun(result: RetryResult): string {
+  const lines = [`status: ${result.finalStatus} after ${result.attempts} attempt(s)`];
+  if (result.prResult?.url) lines.push(`PR: ${result.prResult.url}`);
+  if (result.error) lines.push(`error: ${result.error}`);
+  const lastResponse = result.sessionResults[result.sessionResults.length - 1]?.finalResponse;
+  if (lastResponse) lines.push(lastResponse);
+  return lines.join('\n');
+}
+
 /**
  * Run an agent session with the given options.
  *
@@ -75,6 +91,54 @@ export interface AgentContext {
 export async function runAgent(
   options: AgentOptions,
   context: AgentContext = {}
+): Promise<RetryResult> {
+  const logger = context.logger ?? pino({ level: 'silent' });
+  initTracing({ logger });
+
+  const runId = randomUUID();
+  const runSpan = getTracer().startSpan('invoke_agent background-coding-agent', {
+    kind: SpanKind.INTERNAL,
+    attributes: {
+      'gen_ai.operation.name': 'invoke_agent',
+      'gen_ai.provider.name': 'anthropic',
+      'gen_ai.agent.name': 'background-coding-agent',
+      'gen_ai.conversation.id': runId,
+      'splunk_ao.session.id': runId,
+      'bg_agent.run_id': runId,
+      'bg_agent.task_type': options.taskType,
+      'bg_agent.repo': path.basename(options.repo),
+      'gen_ai.input.messages': messagesAttribute([textMessage('user', options.description ?? options.taskType)]),
+    },
+  });
+  const runCtx = trace.setSpan(otelContext.active(), runSpan);
+
+  try {
+    const result = await runAgentInner(options, context, runSpan, runCtx);
+    runSpan.setAttributes({ 'bg_agent.final_status': result.finalStatus, 'bg_agent.attempts': result.attempts });
+    if (result.prResult?.url) runSpan.setAttribute('bg_agent.pr_url', result.prResult.url);
+    runSpan.setAttribute('gen_ai.output.messages', messagesAttribute([textMessage('assistant', summarizeRun(result))]));
+    if (!NON_ERROR_STATUSES.has(result.finalStatus)) {
+      runSpan.setAttribute('error.type', result.finalStatus);
+      runSpan.setStatus({ code: SpanStatusCode.ERROR, message: result.error ?? result.finalStatus });
+    }
+    return result;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    runSpan.setAttribute('error.type', err instanceof Error ? err.name : 'Error');
+    runSpan.setAttribute('gen_ai.output.messages', messagesAttribute([textMessage('assistant', `run threw: ${message}`)]));
+    runSpan.setStatus({ code: SpanStatusCode.ERROR, message });
+    throw err;
+  } finally {
+    runSpan.end();
+    await flushTracing(logger);
+  }
+}
+
+async function runAgentInner(
+  options: AgentOptions,
+  context: AgentContext,
+  runSpan: Span,
+  runCtx: Context,
 ): Promise<RetryResult> {
   // Use caller's logger or fall back to a silent no-op logger
   const logger = context.logger ?? pino({ level: 'silent' });
@@ -140,6 +204,7 @@ export async function runAgent(
         description: options.description,
         explorationSubtype: options.explorationSubtype,
       });
+      runSpan.setAttribute('gen_ai.input.messages', messagesAttribute([textMessage('user', prompt)]));
 
       const { ClaudeCodeSession } = await import('../orchestrator/claude-code-session.js');
       const session = new ClaudeCodeSession({
@@ -149,6 +214,7 @@ export async function runAgent(
         logger: childLogger,
         signal: context.signal,
         readOnly: true,
+        traceContext: runCtx,
       });
 
       const sessionResult = await session.run(prompt, childLogger, context.signal);
@@ -245,6 +311,7 @@ export async function runAgent(
         timeoutMs: options.timeoutMs,
         logger: childLogger,
         signal: context.signal,  // Thread AbortSignal through the full chain
+        traceContext: runCtx,
       },
       {
         maxRetries: options.maxRetries,
@@ -288,6 +355,7 @@ export async function runAgent(
       repoPath: effectiveWorkspaceDir,
       scopeHints: options.scopeHints,
     });
+    runSpan.setAttribute('gen_ai.input.messages', messagesAttribute([textMessage('user', prompt)]));
 
     // Run the retry orchestration loop
     const retryResult = await orchestrator.run(prompt, childLogger);
