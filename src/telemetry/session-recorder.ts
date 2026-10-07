@@ -8,7 +8,7 @@
  *
  * Telemetry must never break a run: public methods swallow and log errors.
  */
-import { SpanKind, SpanStatusCode, context as otelContext, trace, type Context, type Span } from '@opentelemetry/api';
+import { INVALID_SPAN_CONTEXT, SpanKind, SpanStatusCode, context as otelContext, trace, type Context, type Span } from '@opentelemetry/api';
 import type pino from 'pino';
 import type { SessionResult } from '../types.js';
 import { getTracer } from './tracing.js';
@@ -86,24 +86,37 @@ export class SessionSpanRecorder {
 
     const parentCtx = parent ?? otelContext.active();
     const start = this.now();
-    const promptMessage = textMessage('user', prompt);
-    this.sessionSpan = getTracer().startSpan(
-      `invoke_agent ${AGENT_NAME}`,
-      {
-        kind: SpanKind.INTERNAL,
-        startTime: start,
-        attributes: {
-          'gen_ai.operation.name': 'invoke_agent',
-          'gen_ai.provider.name': PROVIDER,
-          'gen_ai.agent.name': AGENT_NAME,
-          'gen_ai.input.messages': messagesAttribute([promptMessage]),
-          ...(this.model ? { 'gen_ai.request.model': this.model } : {}),
+    let sessionSpan: Span;
+    let ctx: Context;
+    let promptMessage: GenAIMessage | undefined;
+    try {
+      promptMessage = textMessage('user', prompt);
+      sessionSpan = getTracer().startSpan(
+        `invoke_agent ${AGENT_NAME}`,
+        {
+          kind: SpanKind.INTERNAL,
+          startTime: start,
+          attributes: {
+            'gen_ai.operation.name': 'invoke_agent',
+            'gen_ai.provider.name': PROVIDER,
+            'gen_ai.agent.name': AGENT_NAME,
+            'gen_ai.input.messages': messagesAttribute([promptMessage]),
+            ...(this.model ? { 'gen_ai.request.model': this.model } : {}),
+          },
         },
-      },
-      parentCtx,
-    );
-    this.ctx = trace.setSpan(parentCtx, this.sessionSpan);
-    this.nextInput = [promptMessage];
+        parentCtx,
+      );
+      ctx = trace.setSpan(parentCtx, sessionSpan);
+    } catch (err) {
+      // Inert fallback: a non-recording span; all later calls become no-ops.
+      this.warnOnce(err);
+      sessionSpan = trace.wrapSpanContext(INVALID_SPAN_CONTEXT);
+      ctx = parentCtx;
+      this.finished = true;
+    }
+    this.sessionSpan = sessionSpan;
+    this.ctx = ctx;
+    this.nextInput = promptMessage ? [promptMessage] : [];
     this.lastBoundary = start;
   }
 

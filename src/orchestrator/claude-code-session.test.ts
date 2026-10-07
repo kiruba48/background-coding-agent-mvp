@@ -945,4 +945,27 @@ describe('ClaudeCodeSession tracing', () => {
     const sessionSpan = exporter.getFinishedSpans().find((s) => s.name === 'invoke_agent claude-code')!;
     expect(sessionSpan.attributes['bg_agent.session_status']).toBe('cancelled');
   });
+
+  it('still returns the normal result when span creation fails', async () => {
+    mockQuery.mockReturnValue(makeQueryGen([makeSuccessResult()]));
+    vi.spyOn(getTracer(), 'startSpan').mockImplementation(() => { throw new Error('tracer down'); });
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace' });
+
+    const result = await session.run('task');
+
+    expect(result.status).toBe('success');
+    vi.restoreAllMocks();
+  });
+
+  it('returns failed and ends the session span when runInner throws', async () => {
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace' });
+    vi.spyOn(session as any, 'runInner').mockRejectedValue(new Error('inner boom'));
+
+    await expect(session.run('task')).rejects.toThrow('inner boom');
+
+    const sessionSpan = exporter.getFinishedSpans().find((s) => s.name === 'invoke_agent claude-code')!;
+    expect(sessionSpan).toBeDefined();
+    expect(sessionSpan.status.code).toBe(SpanStatusCode.ERROR);
+    expect(sessionSpan.attributes['bg_agent.session_status']).toBe('failed');
+  });
 });

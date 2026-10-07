@@ -235,3 +235,25 @@ describe('SessionSpanRecorder', () => {
     expect(warn).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('SessionSpanRecorder when span creation fails', () => {
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await resetTracingForTests();
+  });
+
+  it('does not throw from constructor, onMessage or finish', () => {
+    installTestTracing();
+    vi.spyOn(getTracer(), 'startSpan').mockImplementation(() => { throw new Error('tracer down'); });
+    const warn = vi.fn();
+    const logger = { warn } as any;
+
+    let recorder!: SessionSpanRecorder;
+    expect(() => { recorder = new SessionSpanRecorder('task', undefined, { logger }); }).not.toThrow();
+    expect(() => recorder.onMessage({ type: 'result', subtype: 'success' })).not.toThrow();
+    expect(() => recorder.finish({
+      sessionId: 's', status: 'success', toolCallCount: 0, duration: 0, finalResponse: '',
+    } as SessionResult)).not.toThrow();
+    expect(warn).toHaveBeenCalled();
+  });
+});
