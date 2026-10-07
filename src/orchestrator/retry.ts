@@ -170,6 +170,8 @@ export class RetryOrchestrator {
         { 'bg_agent.attempt': attempt },
       );
       let attemptSummary = 'attempt started';
+      let attemptThrew = false;
+      let attemptError = '';
       try {
 
         // CRITICAL: Create a fresh session for each attempt.
@@ -438,8 +440,16 @@ export class RetryOrchestrator {
           },
           'Verification failed, retrying with error context'
         );
+      } catch (err) {
+        attemptThrew = true;
+        attemptError = err instanceof Error ? err.message : String(err);
+        throw err;
       } finally {
-        endWorkflowSpan(attemptTrace.span, attemptSummary);
+        endWorkflowSpan(
+          attemptTrace.span,
+          attemptThrew ? `attempt threw: ${attemptError}` : attemptSummary,
+          attemptThrew ? { error: attemptError } : {},
+        );
       }
     }
 

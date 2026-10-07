@@ -52,7 +52,9 @@ class LoggingExporter implements SpanExporter {
 
   export(spans: ReadableSpan[], done: (result: ExportResult) => void): void {
     this.inner.export(spans, (result) => {
-      if (result.code !== ExportResultCode.SUCCESS && !this.warned) {
+      if (result.code === ExportResultCode.SUCCESS) {
+        this.warned = false; // re-arm so the next outage is logged too
+      } else if (!this.warned) {
         this.warned = true;
         this.logger?.warn({ err: result.error?.message, spanCount: spans.length }, 'telemetry_export_failed');
       }
@@ -81,28 +83,41 @@ export function initTracing(options: InitTracingOptions = {}): boolean {
   if (initialized) return provider !== null;
   initialized = true;
 
-  const config = readTelemetryConfig(options.env ?? process.env);
-  if (!config) {
-    options.logger?.debug('Splunk AO telemetry disabled (SPLUNK_AO_REALM / SPLUNK_AO_O11Y_TOKEN not set)');
+  try {
+    const config = readTelemetryConfig(options.env ?? process.env);
+    if (!config) {
+      options.logger?.debug('Splunk AO telemetry disabled (SPLUNK_AO_REALM / SPLUNK_AO_O11Y_TOKEN not set)');
+      return false;
+    }
+
+    const exporter = new LoggingExporter(
+      options.exporter ?? new OTLPTraceExporter(buildSplunkExporterOptions(config)),
+      options.logger,
+    );
+    const candidate = new BasicTracerProvider({
+      resource: resourceFromAttributes(buildResourceAttributes(config)),
+      spanProcessors: [new BatchSpanProcessor(exporter)],
+    });
+    if (!trace.setGlobalTracerProvider(candidate)) {
+      // Fire-and-forget: never wait on a provider we are discarding.
+      void candidate.shutdown().catch(() => {});
+      provider = null;
+      options.logger?.warn({ reason: 'global tracer provider already registered' }, 'telemetry_init_failed');
+      return false;
+    }
+    provider = candidate;
+    captureContent = config.captureContent;
+
+    options.logger?.info(
+      { realm: config.realm, project: config.project, agentStream: config.agentStream, captureContent },
+      'Splunk AO telemetry enabled',
+    );
+    return true;
+  } catch (err) {
+    provider = null;
+    options.logger?.warn({ err: err instanceof Error ? err.message : String(err) }, 'telemetry_init_failed');
     return false;
   }
-
-  captureContent = config.captureContent;
-  const exporter = new LoggingExporter(
-    options.exporter ?? new OTLPTraceExporter(buildSplunkExporterOptions(config)),
-    options.logger,
-  );
-  provider = new BasicTracerProvider({
-    resource: resourceFromAttributes(buildResourceAttributes(config)),
-    spanProcessors: [new BatchSpanProcessor(exporter)],
-  });
-  trace.setGlobalTracerProvider(provider);
-
-  options.logger?.info(
-    { realm: config.realm, project: config.project, agentStream: config.agentStream, captureContent },
-    'Splunk AO telemetry enabled',
-  );
-  return true;
 }
 
 export function getTracer(): Tracer {

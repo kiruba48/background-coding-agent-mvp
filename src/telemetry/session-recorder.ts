@@ -12,7 +12,7 @@ import { INVALID_SPAN_CONTEXT, SpanKind, SpanStatusCode, context as otelContext,
 import type pino from 'pino';
 import type { SessionResult } from '../types.js';
 import { getTracer } from './tracing.js';
-import { contentAttribute, messagesAttribute } from './spans.js';
+import { contentAttribute, messagesAttribute, statusMessage } from './spans.js';
 import {
   assistantBlocksToMessage,
   extractToolResults,
@@ -304,7 +304,7 @@ export class SessionSpanRecorder {
       });
       if (result.status !== 'success' && result.status !== 'cancelled') {
         this.sessionSpan.setAttribute('error.type', result.status);
-        this.sessionSpan.setStatus({ code: SpanStatusCode.ERROR, message: result.error ?? result.status });
+        this.sessionSpan.setStatus({ code: SpanStatusCode.ERROR, message: statusMessage(result.error ?? result.status) });
       }
     } finally {
       this.sessionSpan.end(end);

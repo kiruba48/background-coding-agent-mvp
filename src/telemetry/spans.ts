@@ -16,6 +16,13 @@ export function contentAttribute(value: unknown): string {
   return truncate(typeof value === 'string' ? value : safeStringify(value ?? null));
 }
 
+const MAX_STATUS_MESSAGE_CHARS = 1024;
+
+/** Span status messages carry error text; redact or cap them like any other content. */
+export function statusMessage(text: string): string {
+  return shouldCaptureContent() ? truncate(text, MAX_STATUS_MESSAGE_CHARS) : REDACTED;
+}
+
 export interface TracedSpan {
   span: Span;
   ctx: Context;
@@ -25,7 +32,7 @@ export interface TracedSpan {
 export function startWorkflowSpan(name: string, parent: Context, input: string, attributes: Attributes = {}): TracedSpan {
   const span = getTracer().startSpan(
     name,
-    { attributes: { ...attributes, 'gen_ai.input.messages': messagesAttribute([textMessage('user', input)]) } },
+    { attributes: { ...attributes, 'gen_ai.provider.name': 'anthropic', 'gen_ai.input.messages': messagesAttribute([textMessage('user', input)]) } },
     parent,
   );
   return { span, ctx: trace.setSpan(parent, span) };
@@ -40,7 +47,7 @@ export function endWorkflowSpan(
   span.setAttribute('gen_ai.output.messages', messagesAttribute([textMessage('assistant', output)]));
   if (options.error !== undefined) {
     span.setAttribute('error.type', 'exception');
-    span.setStatus({ code: SpanStatusCode.ERROR, message: options.error });
+    span.setStatus({ code: SpanStatusCode.ERROR, message: statusMessage(options.error) });
   }
   span.end();
 }

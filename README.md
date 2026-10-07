@@ -312,6 +312,7 @@ background-coding-agent/
   | `SPLUNK_AO_PROJECT` | no | `background-coding-agent` | Agent Observability project |
   | `SPLUNK_AO_AGENT_STREAM` | no | `default` | Agent Stream inside the project |
   | `SPLUNK_AO_CAPTURE_CONTENT` | no | `true` | `false` redacts prompts, model output, tool arguments and tool results |
+  | `OTEL_SERVICE_NAME` | no | `background-coding-agent` | `service.name` resource attribute on exported spans |
   | `SPLUNK_AO_LOGGING_DISABLED` | no | — | `true` turns telemetry off |
 
   Telemetry is exported from the host process only; the agent container never sees these values.

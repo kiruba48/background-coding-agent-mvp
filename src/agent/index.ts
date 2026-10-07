@@ -28,7 +28,7 @@ import { WorktreeManager } from './worktree-manager.js';
 import type { RetryResult } from '../types.js';
 import { SpanKind, SpanStatusCode, context as otelContext, trace, type Context, type Span } from '@opentelemetry/api';
 import { initTracing, flushTracing, getTracer } from '../telemetry/tracing.js';
-import { messagesAttribute } from '../telemetry/spans.js';
+import { messagesAttribute, statusMessage } from '../telemetry/spans.js';
 import { textMessage } from '../telemetry/genai.js';
 import type { TaskCategory, ExplorationSubtype } from '../intent/types.js';
 
@@ -111,22 +111,27 @@ export async function runAgent(
     },
   });
   const runCtx = trace.setSpan(otelContext.active(), runSpan);
+  const spanContext = runSpan.spanContext();
+  logger.info(
+    trace.isSpanContextValid(spanContext) ? { runId, traceId: spanContext.traceId } : { runId },
+    'agent_run_started',
+  );
 
   try {
-    const result = await runAgentInner(options, context, runSpan, runCtx);
+    const result = await runAgentInner(options, context, runSpan, runCtx, runId);
     runSpan.setAttributes({ 'bg_agent.final_status': result.finalStatus, 'bg_agent.attempts': result.attempts });
     if (result.prResult?.url) runSpan.setAttribute('bg_agent.pr_url', result.prResult.url);
     runSpan.setAttribute('gen_ai.output.messages', messagesAttribute([textMessage('assistant', summarizeRun(result))]));
     if (!NON_ERROR_STATUSES.has(result.finalStatus)) {
       runSpan.setAttribute('error.type', result.finalStatus);
-      runSpan.setStatus({ code: SpanStatusCode.ERROR, message: result.error ?? result.finalStatus });
+      runSpan.setStatus({ code: SpanStatusCode.ERROR, message: statusMessage(result.error ?? result.finalStatus) });
     }
     return result;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     runSpan.setAttribute('error.type', err instanceof Error ? err.name : 'Error');
     runSpan.setAttribute('gen_ai.output.messages', messagesAttribute([textMessage('assistant', `run threw: ${message}`)]));
-    runSpan.setStatus({ code: SpanStatusCode.ERROR, message });
+    runSpan.setStatus({ code: SpanStatusCode.ERROR, message: statusMessage(message) });
     throw err;
   } finally {
     runSpan.end();
@@ -139,10 +144,12 @@ async function runAgentInner(
   context: AgentContext,
   runSpan: Span,
   runCtx: Context,
+  runId: string,
 ): Promise<RetryResult> {
   // Use caller's logger or fall back to a silent no-op logger
   const logger = context.logger ?? pino({ level: 'silent' });
   const childLogger = logger.child({
+    runId,
     taskType: options.taskType,
     repo: options.repo,
   });

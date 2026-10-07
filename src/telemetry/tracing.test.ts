@@ -14,6 +14,20 @@ import {
 } from './tracing.js';
 import type { TelemetryConfig } from './config.js';
 
+const exporterCtl = vi.hoisted(() => ({ throwOnConstruct: false }));
+vi.mock('@opentelemetry/exporter-trace-otlp-proto', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@opentelemetry/exporter-trace-otlp-proto')>();
+  return {
+    ...actual,
+    OTLPTraceExporter: class extends actual.OTLPTraceExporter {
+      constructor(...args: ConstructorParameters<typeof actual.OTLPTraceExporter>) {
+        if (exporterCtl.throwOnConstruct) throw new Error('boom');
+        super(...args);
+      }
+    },
+  };
+});
+
 const config: TelemetryConfig = {
   realm: 'eu0',
   token: 'tok',
@@ -105,6 +119,53 @@ describe('initTracing', () => {
     // Only the first export failure should warn; flushTracing should not log additional warnings
     expect(logger.warn.mock.calls).toHaveLength(1);
     expect(logger.warn.mock.calls[0][1]).toBe('telemetry_export_failed');
+  });
+});
+
+describe('initTracing robustness', () => {
+  it('returns false, does not throw and warns once when the exporter cannot be built', () => {
+    const logger = fakeLogger();
+    exporterCtl.throwOnConstruct = true;
+    let result: boolean | undefined;
+    expect(() => { result = initTracing({ env, logger }); }).not.toThrow();
+    exporterCtl.throwOnConstruct = false;
+    expect(result).toBe(false);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn.mock.calls[0][1]).toBe('telemetry_init_failed');
+    expect(JSON.stringify(logger.warn.mock.calls[0][0])).not.toContain('tok');
+    const span = getTracer().startSpan('x');
+    expect(span.isRecording()).toBe(false);
+    span.end();
+  });
+
+  it('returns false and warns when a global provider is already registered', async () => {
+    await resetTracingForTests();
+    const { trace } = await import('@opentelemetry/api');
+    const { BasicTracerProvider } = await import('@opentelemetry/sdk-trace-base');
+    trace.setGlobalTracerProvider(new BasicTracerProvider());
+    const logger = fakeLogger();
+    const result = initTracing({ env, exporter: new InMemorySpanExporter(), logger });
+    expect(result).toBe(false);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn.mock.calls[0][1]).toBe('telemetry_init_failed');
+  });
+});
+
+describe('LoggingExporter re-arming', () => {
+  it('warns once per outage: fail, success, fail gives 2 warnings', async () => {
+    let fail = true;
+    const flaky: SpanExporter = {
+      export: (_s, done) => done(fail ? { code: ExportResultCode.FAILED, error: new Error('down') } : { code: ExportResultCode.SUCCESS }),
+      shutdown: async () => {},
+      forceFlush: async () => {},
+    };
+    const logger = fakeLogger();
+    initTracing({ env, exporter: flaky, logger });
+    const send = async () => { getTracer().startSpan('s').end(); await flushTracing(logger); };
+    await send(); await send();
+    fail = false; await send();
+    fail = true; await send(); await send();
+    expect(logger.warn.mock.calls.filter((c) => c[1] === 'telemetry_export_failed')).toHaveLength(2);
   });
 });
 

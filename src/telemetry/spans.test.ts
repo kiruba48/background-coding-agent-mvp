@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { ROOT_CONTEXT, SpanStatusCode, trace } from '@opentelemetry/api';
 import { installTestTracing, resetTracingForTests } from './tracing.js';
 import { textMessage, MAX_CONTENT_CHARS } from './genai.js';
-import { messagesAttribute, contentAttribute, startWorkflowSpan, endWorkflowSpan } from './spans.js';
+import { messagesAttribute, contentAttribute, startWorkflowSpan, endWorkflowSpan, statusMessage } from './spans.js';
 
 afterEach(async () => {
   await resetTracingForTests();
@@ -62,6 +62,43 @@ describe('workflow spans', () => {
     const [span] = exporter.getFinishedSpans();
     expect(span.status).toEqual({ code: SpanStatusCode.ERROR, message: 'ENOENT: mvn not found' });
     expect(span.attributes['error.type']).toBe('exception');
+  });
+});
+
+describe('workflow span redaction and identity', () => {
+  it('stamps gen_ai.provider.name on every workflow span without gen_ai.operation.name', () => {
+    const exporter = installTestTracing();
+    const w = startWorkflowSpan('verify', ROOT_CONTEXT, 'x', { 'bg_agent.attempt': 2 });
+    endWorkflowSpan(w.span, 'ok');
+    const [span] = exporter.getFinishedSpans();
+    expect(span.attributes['gen_ai.provider.name']).toBe('anthropic');
+    expect(span.attributes['bg_agent.attempt']).toBe(2);
+    expect(span.attributes['gen_ai.operation.name']).toBeUndefined();
+  });
+
+  it('does not export raw error text in the status message when capture is off', () => {
+    const exporter = installTestTracing({ captureContent: false });
+    const w = startWorkflowSpan('verify', ROOT_CONTEXT, 'x');
+    endWorkflowSpan(w.span, 'crashed', { error: 'secret /home/me/token=abc' });
+    const [span] = exporter.getFinishedSpans();
+    expect(span.status.code).toBe(SpanStatusCode.ERROR);
+    expect(span.attributes['error.type']).toBe('exception');
+    expect(JSON.stringify(span.status)).not.toContain('secret');
+  });
+});
+
+describe('statusMessage', () => {
+  it('truncates long text when capture is on', () => {
+    installTestTracing();
+    const out = statusMessage('e'.repeat(5000));
+    expect(out.startsWith('e'.repeat(1024))).toBe(true);
+    expect(out).toContain('[truncated 3976 chars]');
+    expect(out.length).toBeLessThan(1200);
+  });
+
+  it('returns the placeholder when capture is off', () => {
+    installTestTracing({ captureContent: false });
+    expect(statusMessage('secret')).toBe('[redacted]');
   });
 });
 

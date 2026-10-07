@@ -987,6 +987,19 @@ describe('RetryOrchestrator tracing', () => {
     expect(exporter.getFinishedSpans().find((s) => s.name === 'attempt 1')).toBeDefined();
   });
 
+  it('marks the attempt span as an error when an exception escapes the attempt', async () => {
+    const session = createMockSession(makeSessionResult());
+    session.start.mockRejectedValue(new Error('docker exploded'));
+    MockClaudeCodeSession.mockImplementationOnce(function () { return session; });
+    const orchestrator = new RetryOrchestrator({ workspaceDir: '/tmp/workspace' }, { maxRetries: 3 });
+
+    await expect(orchestrator.run('Fix the bug')).rejects.toThrow('docker exploded');
+
+    const attempt = exporter.getFinishedSpans().find((s) => s.name === 'attempt 1')!;
+    expect(attempt.status).toEqual({ code: SpanStatusCode.ERROR, message: 'docker exploded' });
+    expect(attempt.attributes['error.type']).toBe('exception');
+  });
+
   it('ends the attempt span when the session fails terminally', async () => {
     MockClaudeCodeSession.mockImplementationOnce(function () {
       return createMockSession(makeSessionResult({ status: 'timeout', error: 'Session timeout reached' }));

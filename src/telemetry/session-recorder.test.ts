@@ -172,6 +172,17 @@ describe('SessionSpanRecorder', () => {
     expect(result).toContain('[truncated');
   });
 
+  it('does not export raw error text in the session status when capture is off', async () => {
+    await resetTracingForTests();
+    exporter = installTestTracing({ captureContent: false });
+    const recorder = new SessionSpanRecorder('t', ROOT_CONTEXT, { now: clock() });
+    recorder.finish(sessionResult({ status: 'failed', finalResponse: '', error: 'leaky secret-path error' }));
+    const [session] = named(exporter.getFinishedSpans(), 'invoke_agent claude-code');
+    expect(session.status.code).toBe(SpanStatusCode.ERROR);
+    expect(session.attributes['error.type']).toBe('failed');
+    expect(JSON.stringify(session.status)).not.toContain('secret-path');
+  });
+
   it('redacts content but keeps structure when capture is off', async () => {
     await resetTracingForTests();
     exporter = installTestTracing({ captureContent: false });

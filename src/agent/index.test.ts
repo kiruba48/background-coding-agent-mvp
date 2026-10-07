@@ -551,6 +551,52 @@ describe('runAgent tracing', () => {
     expect(String(root.attributes['gen_ai.output.messages'])).toContain('max_retries_exhausted');
   });
 
+  it('does not export raw error text on the root span when capture is off', async () => {
+    await resetTracingForTests();
+    exporter = installTestTracing({ captureContent: false });
+    MockRetryOrchestrator.mockImplementationOnce(function () {
+      return { run: vi.fn().mockRejectedValue(new Error('secret-token-leak')), stop: vi.fn() };
+    });
+    await expect(runAgent(options, { skipWorktree: true })).rejects.toThrow('secret-token-leak');
+    const root = rootSpan();
+    expect(root.status.code).toBe(SpanStatusCode.ERROR);
+    expect(JSON.stringify(root.status)).not.toContain('secret-token-leak');
+
+    MockRetryOrchestrator.mockImplementationOnce(function () {
+      return {
+        run: vi.fn().mockResolvedValue({ finalStatus: 'failed', attempts: 1, sessionResults: [], verificationResults: [], judgeResults: [], error: 'another secret-detail' }),
+        stop: vi.fn(),
+      };
+    });
+    await runAgent(options, { skipWorktree: true });
+    const roots = exporter.getFinishedSpans().filter((s) => s.name === 'invoke_agent background-coding-agent');
+    expect(JSON.stringify(roots[1].status)).not.toContain('secret-detail');
+    expect(roots[1].status.code).toBe(SpanStatusCode.ERROR);
+  });
+
+  it('logs agent_run_started with runId and traceId', async () => {
+    mockOrchestrator('success');
+    const logger = { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn(), child: vi.fn() } as any;
+    logger.child.mockReturnValue(logger);
+    await runAgent(options, { skipWorktree: true, logger });
+    const call = logger.info.mock.calls.find((c: unknown[]) => c[1] === 'agent_run_started');
+    expect(call).toBeDefined();
+    const root = rootSpan();
+    expect(call[0]).toEqual({ runId: root.attributes['bg_agent.run_id'], traceId: root.spanContext().traceId });
+    expect(logger.child).toHaveBeenCalledWith(expect.objectContaining({ runId: root.attributes['bg_agent.run_id'] }));
+  });
+
+  it('omits traceId from agent_run_started when tracing is off', async () => {
+    await resetTracingForTests();
+    mockOrchestrator('success');
+    const logger = { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn(), child: vi.fn() } as any;
+    logger.child.mockReturnValue(logger);
+    await runAgent(options, { skipWorktree: true, logger });
+    const call = logger.info.mock.calls.find((c: unknown[]) => c[1] === 'agent_run_started');
+    expect(call[0]).not.toHaveProperty('traceId');
+    expect(call[0]).toHaveProperty('runId');
+  });
+
   it('gives every run its own conversation id', async () => {
     mockOrchestrator('success');
     mockOrchestrator('success');
