@@ -1,4 +1,5 @@
 import type pino from 'pino';
+import type { Context } from '@opentelemetry/api';
 
 export interface SessionConfig {
   workspaceDir: string;
@@ -8,6 +9,7 @@ export interface SessionConfig {
   logger?: pino.Logger;
   signal?: AbortSignal;  // external cancellation signal
   readOnly?: boolean;    // mount workspace :ro, block Write/Edit via hook
+  traceContext?: Context; // OTel parent context; session spans nest under it (telemetry)
 }
 
 /**

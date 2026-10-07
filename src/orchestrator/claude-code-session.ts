@@ -14,6 +14,7 @@ import pino from 'pino';
 import { type SessionConfig, type SessionResult } from '../types.js';
 import { createVerifierMcpServer } from '../mcp/verifier-server.js';
 import { buildDockerRunArgs } from '../cli/docker/index.js';
+import { SessionSpanRecorder } from '../telemetry/session-recorder.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -275,6 +276,29 @@ export class ClaudeCodeSession {
    */
   async run(userMessage: string, logger?: pino.Logger, signal?: AbortSignal): Promise<SessionResult> {
     const log = logger ?? pino({ level: 'silent' });
+    const recorder = new SessionSpanRecorder(userMessage, this.config.traceContext, { model: this.config.model, logger: log });
+    let result: SessionResult | undefined;
+    try {
+      result = await this.runInner(userMessage, log, signal, recorder);
+      return result;
+    } finally {
+      recorder.finish(result ?? {
+        sessionId: '',
+        status: 'failed',
+        toolCallCount: 0,
+        duration: 0,
+        finalResponse: '',
+        error: 'Session threw before returning a result',
+      });
+    }
+  }
+
+  private async runInner(
+    userMessage: string,
+    log: pino.Logger,
+    signal: AbortSignal | undefined,
+    recorder: SessionSpanRecorder,
+  ): Promise<SessionResult> {
     const sessionId = crypto.randomUUID();
     const containerName = `agent-${sessionId}`;
     const workspaceDir = nodePath.resolve(this.config.workspaceDir);
@@ -407,6 +431,7 @@ export class ClaudeCodeSession {
       let finalResult: SDKResultMessage | undefined;
 
       for await (const message of queryGen) {
+        recorder.onMessage(message);
         if (message.type === 'result') {
           finalResult = message as SDKResultMessage;
         }
