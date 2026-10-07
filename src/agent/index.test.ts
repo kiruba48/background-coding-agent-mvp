@@ -540,6 +540,19 @@ describe('runAgent tracing', () => {
     expect(trace.getSpan(orchestratorConfig.traceContext)?.spanContext().spanId).toBe(root.spanContext().spanId);
   });
 
+  it('carries the run session id in the context so child spans are stamped with it', async () => {
+    mockOrchestrator('success');
+    await runAgent(options, { skipWorktree: true });
+    const root = rootSpan();
+    const { startWorkflowSpan, endWorkflowSpan } = await import('../telemetry/spans.js');
+    const ctx = MockRetryOrchestrator.mock.calls[0][0].traceContext;
+    const child = startWorkflowSpan('attempt 1', ctx, 'x');
+    endWorkflowSpan(child.span, 'y');
+    const span = exporter.getFinishedSpans().find((s) => s.name === 'attempt 1')!;
+    expect(span.attributes['splunk_ao.session.id']).toBe(root.attributes['gen_ai.conversation.id']);
+    expect(span.attributes['gen_ai.conversation.id']).toBe(root.attributes['gen_ai.conversation.id']);
+  });
+
   it('marks the root span as an error when the run fails', async () => {
     mockOrchestrator('max_retries_exhausted');
 

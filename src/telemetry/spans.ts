@@ -3,7 +3,7 @@
  * session recorder. All content goes through messagesAttribute/contentAttribute
  * so SPLUNK_AO_CAPTURE_CONTENT=false is enforced in one place.
  */
-import { SpanStatusCode, trace, type Attributes, type Context, type Span } from '@opentelemetry/api';
+import { SpanStatusCode, createContextKey, trace, type Attributes, type Context, type Span } from '@opentelemetry/api';
 import { getTracer, shouldCaptureContent } from './tracing.js';
 import { REDACTED, redactMessages, safeStringify, textMessage, truncate, type GenAIMessage } from './genai.js';
 
@@ -23,6 +23,26 @@ export function statusMessage(text: string): string {
   return shouldCaptureContent() ? truncate(text, MAX_STATUS_MESSAGE_CHARS) : REDACTED;
 }
 
+const SESSION_ID_KEY = createContextKey('bg_agent.session_id');
+
+/** Carry the run's session id in the context so every descendant span can be stamped with it. */
+export function withSessionId(ctx: Context, id: string): Context {
+  return ctx.setValue(SESSION_ID_KEY, id);
+}
+
+/**
+ * Attributes that tie a span to its run's Splunk session. Needed on every span:
+ * child spans can be exported before the root ends and would otherwise land in an orphan session.
+ */
+export function sessionAttributes(ctx: Context | undefined): Attributes {
+  try {
+    const id = ctx?.getValue(SESSION_ID_KEY);
+    return typeof id === 'string' ? { 'splunk_ao.session.id': id, 'gen_ai.conversation.id': id } : {};
+  } catch {
+    return {};
+  }
+}
+
 export interface TracedSpan {
   span: Span;
   ctx: Context;
@@ -32,7 +52,7 @@ export interface TracedSpan {
 export function startWorkflowSpan(name: string, parent: Context, input: string, attributes: Attributes = {}): TracedSpan {
   const span = getTracer().startSpan(
     name,
-    { attributes: { ...attributes, 'gen_ai.provider.name': 'anthropic', 'gen_ai.input.messages': messagesAttribute([textMessage('user', input)]) } },
+    { attributes: { ...attributes, ...sessionAttributes(parent), 'gen_ai.provider.name': 'anthropic', 'gen_ai.input.messages': messagesAttribute([textMessage('user', input)]) } },
     parent,
   );
   return { span, ctx: trace.setSpan(parent, span) };

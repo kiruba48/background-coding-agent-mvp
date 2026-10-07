@@ -28,7 +28,7 @@ import { WorktreeManager } from './worktree-manager.js';
 import type { RetryResult } from '../types.js';
 import { SpanKind, SpanStatusCode, context as otelContext, trace, type Context, type Span } from '@opentelemetry/api';
 import { initTracing, flushTracing, getTracer } from '../telemetry/tracing.js';
-import { messagesAttribute, statusMessage } from '../telemetry/spans.js';
+import { messagesAttribute, statusMessage, withSessionId } from '../telemetry/spans.js';
 import { textMessage } from '../telemetry/genai.js';
 import type { TaskCategory, ExplorationSubtype } from '../intent/types.js';
 
@@ -110,7 +110,7 @@ export async function runAgent(
       'gen_ai.input.messages': messagesAttribute([textMessage('user', options.description ?? options.taskType)]),
     },
   });
-  const runCtx = trace.setSpan(otelContext.active(), runSpan);
+  const runCtx = withSessionId(trace.setSpan(otelContext.active(), runSpan), runId);
   const spanContext = runSpan.spanContext();
   logger.info(
     trace.isSpanContextValid(spanContext) ? { runId, traceId: spanContext.traceId } : { runId },

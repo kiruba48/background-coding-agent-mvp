@@ -8,11 +8,11 @@
  *
  * Telemetry must never break a run: public methods swallow and log errors.
  */
-import { INVALID_SPAN_CONTEXT, SpanKind, SpanStatusCode, context as otelContext, trace, type Context, type Span } from '@opentelemetry/api';
+import { INVALID_SPAN_CONTEXT, SpanKind, SpanStatusCode, context as otelContext, trace, type Attributes, type Context, type Span } from '@opentelemetry/api';
 import type pino from 'pino';
 import type { SessionResult } from '../types.js';
 import { getTracer } from './tracing.js';
-import { contentAttribute, messagesAttribute, statusMessage } from './spans.js';
+import { contentAttribute, messagesAttribute, sessionAttributes, statusMessage } from './spans.js';
 import {
   assistantBlocksToMessage,
   extractToolResults,
@@ -70,6 +70,7 @@ export class SessionSpanRecorder {
   private readonly logger?: pino.Logger;
   private readonly sessionSpan: Span;
   private readonly ctx: Context;
+  private readonly session: Attributes;
   private readonly openTools = new Map<string, Span>();
   private model: string | undefined;
   private pending: PendingChat | null = null;
@@ -85,6 +86,7 @@ export class SessionSpanRecorder {
     this.model = options.model;
 
     const parentCtx = parent ?? otelContext.active();
+    this.session = sessionAttributes(parentCtx);
     const start = this.now();
     let sessionSpan: Span;
     let ctx: Context;
@@ -97,6 +99,7 @@ export class SessionSpanRecorder {
           kind: SpanKind.INTERNAL,
           startTime: start,
           attributes: {
+            ...this.session,
             'gen_ai.operation.name': 'invoke_agent',
             'gen_ai.provider.name': PROVIDER,
             'gen_ai.agent.name': AGENT_NAME,
@@ -210,6 +213,7 @@ export class SessionSpanRecorder {
           kind: SpanKind.CLIENT,
           startTime: chat.start,
           attributes: {
+            ...this.session,
             'gen_ai.operation.name': 'chat',
             'gen_ai.provider.name': PROVIDER,
             'gen_ai.request.model': chat.model,
@@ -232,6 +236,7 @@ export class SessionSpanRecorder {
           kind: SpanKind.INTERNAL,
           startTime: chat.end,
           attributes: {
+            ...this.session,
             'gen_ai.operation.name': 'execute_tool',
             'gen_ai.provider.name': PROVIDER,
             'gen_ai.tool.name': part.name,

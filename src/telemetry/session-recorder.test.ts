@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ROOT_CONTEXT, SpanStatusCode, trace } from '@opentelemetry/api';
 import type { InMemorySpanExporter, ReadableSpan } from '@opentelemetry/sdk-trace-base';
 import { getTracer, installTestTracing, resetTracingForTests } from './tracing.js';
+import { withSessionId } from './spans.js';
 import { SessionSpanRecorder } from './session-recorder.js';
 import { MAX_CONTENT_CHARS } from './genai.js';
 import type { SessionResult } from '../types.js';
@@ -266,5 +267,31 @@ describe('SessionSpanRecorder when span creation fails', () => {
       sessionId: 's', status: 'success', toolCallCount: 0, duration: 0, finalResponse: '',
     } as SessionResult)).not.toThrow();
     expect(warn).toHaveBeenCalled();
+  });
+});
+
+describe('SessionSpanRecorder session id', () => {
+  const run = (parent: ReturnType<typeof trace.setSpan>) => {
+    const recorder = new SessionSpanRecorder('p', parent, { now: clock() });
+    recorder.onMessage(init);
+    recorder.onMessage(assistant('m1', [{ type: 'tool_use', id: 't1', name: 'Edit', input: {} }], 'tool_use'));
+    recorder.onMessage(toolResult('t1', 'ok'));
+    recorder.onMessage(assistant('m2', [{ type: 'text', text: 'done' }], 'end_turn'));
+    recorder.finish(sessionResult());
+  };
+
+  it('stamps the session id on the session, chat and execute_tool spans', () => {
+    run(withSessionId(ROOT_CONTEXT, 'run-9'));
+    const spans = exporter.getFinishedSpans();
+    expect(spans.map((s) => s.name).sort()).toEqual(['chat claude-sonnet-5-5', 'chat claude-sonnet-5-5', 'execute_tool Edit', 'invoke_agent claude-code']);
+    for (const s of spans) {
+      expect(s.attributes['splunk_ao.session.id']).toBe('run-9');
+      expect(s.attributes['gen_ai.conversation.id']).toBe('run-9');
+    }
+  });
+
+  it('adds no session attributes when the parent has none', () => {
+    run(ROOT_CONTEXT);
+    for (const s of exporter.getFinishedSpans()) expect(s.attributes).not.toHaveProperty('splunk_ao.session.id');
   });
 });

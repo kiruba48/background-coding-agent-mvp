@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { ROOT_CONTEXT, SpanStatusCode, trace } from '@opentelemetry/api';
 import { installTestTracing, resetTracingForTests } from './tracing.js';
 import { textMessage, MAX_CONTENT_CHARS } from './genai.js';
-import { messagesAttribute, contentAttribute, startWorkflowSpan, endWorkflowSpan, statusMessage } from './spans.js';
+import { withSessionId, sessionAttributes, messagesAttribute, contentAttribute, startWorkflowSpan, endWorkflowSpan, statusMessage } from './spans.js';
 
 afterEach(async () => {
   await resetTracingForTests();
@@ -135,5 +135,29 @@ describe('robustness: unserializable content', () => {
     const result = messagesAttribute(messages);
     expect(typeof result).toBe('string');
     expect(result).toContain('[unserializable]');
+  });
+});
+
+describe('session id propagation', () => {
+  it('stamps the session id on workflow spans (and their descendants) when the parent carries it', () => {
+    const exporter = installTestTracing();
+    const ctx = withSessionId(ROOT_CONTEXT, 'run-1');
+    const a = startWorkflowSpan('attempt 1', ctx, 'x');
+    const v = startWorkflowSpan('verify', a.ctx, 'y');
+    endWorkflowSpan(v.span, 'ok');
+    endWorkflowSpan(a.span, 'ok');
+    for (const s of exporter.getFinishedSpans()) {
+      expect(s.attributes['splunk_ao.session.id']).toBe('run-1');
+      expect(s.attributes['gen_ai.conversation.id']).toBe('run-1');
+    }
+  });
+
+  it('adds nothing when the parent has no session id', () => {
+    const exporter = installTestTracing();
+    const w = startWorkflowSpan('verify', ROOT_CONTEXT, 'x');
+    endWorkflowSpan(w.span, 'ok');
+    expect(exporter.getFinishedSpans()[0].attributes).not.toHaveProperty('splunk_ao.session.id');
+    expect(sessionAttributes(undefined)).toEqual({});
+    expect(sessionAttributes(ROOT_CONTEXT)).toEqual({});
   });
 });
