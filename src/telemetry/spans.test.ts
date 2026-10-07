@@ -64,3 +64,39 @@ describe('workflow spans', () => {
     expect(span.attributes['error.type']).toBe('exception');
   });
 });
+
+describe('robustness: unserializable content', () => {
+  it('contentAttribute handles circular objects without throwing', () => {
+    installTestTracing();
+    const circular: any = { a: 1 };
+    circular.self = circular;
+    expect(contentAttribute(circular)).toBe('[unserializable]');
+  });
+
+  it('contentAttribute handles BigInt without throwing', () => {
+    installTestTracing();
+    expect(contentAttribute(BigInt(999))).toBe('[unserializable]');
+  });
+
+  it('contentAttribute handles functions without throwing', () => {
+    installTestTracing();
+    expect(contentAttribute(() => 'test')).toBe('[unserializable]');
+  });
+
+  it('messagesAttribute handles tool_call with circular arguments without throwing', () => {
+    installTestTracing();
+    const circular: any = { a: 1 };
+    circular.self = circular;
+    const messages = [
+      {
+        role: 'assistant' as const,
+        parts: [
+          { type: 'tool_call' as const, id: 't1', name: 'Edit', arguments: circular },
+        ],
+      },
+    ];
+    const result = messagesAttribute(messages);
+    expect(typeof result).toBe('string');
+    expect(result).toContain('[unserializable]');
+  });
+});

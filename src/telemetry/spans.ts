@@ -5,15 +5,15 @@
  */
 import { SpanStatusCode, trace, type Attributes, type Context, type Span } from '@opentelemetry/api';
 import { getTracer, shouldCaptureContent } from './tracing.js';
-import { REDACTED, redactMessages, textMessage, truncate, type GenAIMessage } from './genai.js';
+import { REDACTED, redactMessages, safeStringify, textMessage, truncate, type GenAIMessage } from './genai.js';
 
 export function messagesAttribute(messages: GenAIMessage[]): string {
-  return JSON.stringify(shouldCaptureContent() ? messages : redactMessages(messages));
+  return safeStringify(shouldCaptureContent() ? messages : redactMessages(messages));
 }
 
 export function contentAttribute(value: unknown): string {
   if (!shouldCaptureContent()) return REDACTED;
-  return truncate(typeof value === 'string' ? value : JSON.stringify(value ?? null));
+  return truncate(typeof value === 'string' ? value : safeStringify(value ?? null));
 }
 
 export interface TracedSpan {

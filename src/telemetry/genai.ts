@@ -6,6 +6,7 @@
 
 export const MAX_CONTENT_CHARS = 16_000;
 export const REDACTED = '[redacted]';
+export const UNSERIALIZABLE = '[unserializable]';
 
 export type GenAIPart =
   | { type: 'text'; content: string }
@@ -41,6 +42,15 @@ export interface TokenUsage {
   cache_creation_input_tokens?: number | null;
 }
 
+export function safeStringify(value: unknown): string {
+  try {
+    const result = JSON.stringify(value);
+    return result !== undefined ? result : UNSERIALIZABLE;
+  } catch {
+    return UNSERIALIZABLE;
+  }
+}
+
 export function truncate(text: string, max = MAX_CONTENT_CHARS): string {
   if (text.length <= max) return text;
   return `${text.slice(0, max)}… [truncated ${text.length - max} chars]`;
@@ -52,7 +62,7 @@ export function textMessage(role: GenAIMessage['role'], text: string): GenAIMess
 
 function boundedArguments(input: unknown): unknown {
   const value = input ?? {};
-  const serialized = JSON.stringify(value);
+  const serialized = safeStringify(value);
   return serialized.length <= MAX_CONTENT_CHARS ? value : truncate(serialized);
 }
 
@@ -101,7 +111,7 @@ export function toolResultText(content: unknown): string {
       })
       .join('\n');
   }
-  return JSON.stringify(content);
+  return safeStringify(content);
 }
 
 export function toolResultMessage(result: ToolResultBlock): GenAIMessage {

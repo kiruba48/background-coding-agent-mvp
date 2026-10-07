@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   MAX_CONTENT_CHARS,
   REDACTED,
+  UNSERIALIZABLE,
+  safeStringify,
   truncate,
   textMessage,
   assistantBlocksToMessage,
@@ -72,6 +74,28 @@ describe('assistantBlocksToMessage', () => {
   });
 });
 
+describe('safeStringify', () => {
+  it('stringifies normal objects', () => {
+    expect(safeStringify({ a: 1, b: 'x' })).toBe('{"a":1,"b":"x"}');
+    expect(safeStringify([1, 2, 3])).toBe('[1,2,3]');
+    expect(safeStringify('text')).toBe('"text"');
+  });
+
+  it('returns [unserializable] for circular references', () => {
+    const circular: any = { a: 1 };
+    circular.self = circular;
+    expect(safeStringify(circular)).toBe(UNSERIALIZABLE);
+  });
+
+  it('returns [unserializable] for BigInt', () => {
+    expect(safeStringify(BigInt(123))).toBe(UNSERIALIZABLE);
+  });
+
+  it('returns [unserializable] for functions', () => {
+    expect(safeStringify(() => 'test')).toBe(UNSERIALIZABLE);
+  });
+});
+
 describe('tool results', () => {
   it('extracts only well-formed tool_result blocks', () => {
     expect(extractToolResults('plain text')).toEqual([]);
@@ -89,6 +113,16 @@ describe('tool results', () => {
       .toBe('line 1\n[image]\nline 2');
     expect(toolResultText(undefined)).toBe('');
     expect(toolResultText({ a: 1 })).toBe('{"a":1}');
+  });
+
+  it('returns [unserializable] for circular content in toolResultText', () => {
+    const circular: any = { a: 1 };
+    circular.self = circular;
+    expect(toolResultText(circular)).toBe(UNSERIALIZABLE);
+  });
+
+  it('returns [unserializable] for BigInt in toolResultText', () => {
+    expect(toolResultText(BigInt(456))).toBe(UNSERIALIZABLE);
   });
 
   it('builds a tool role message with a truncated response', () => {
