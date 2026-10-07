@@ -102,8 +102,9 @@ describe('initTracing', () => {
     await flushTracing(logger);
     getTracer().startSpan('b').end();
     await flushTracing(logger);
-    const exportWarnings = logger.warn.mock.calls.filter((c: unknown[]) => c[1] === 'telemetry_export_failed');
-    expect(exportWarnings).toHaveLength(1);
+    // Only the first export failure should warn; flushTracing should not log additional warnings
+    expect(logger.warn.mock.calls).toHaveLength(1);
+    expect(logger.warn.mock.calls[0][1]).toBe('telemetry_export_failed');
   });
 });
 

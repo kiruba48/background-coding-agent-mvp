@@ -124,7 +124,7 @@ export async function flushTracing(logger?: pino.Logger, timeoutMs = DEFAULT_FLU
     const outcome = await Promise.race([provider.forceFlush().then(() => 'flushed' as const), timeout]);
     if (outcome === 'timeout') logger?.warn({ timeoutMs }, 'telemetry_flush_timeout');
   } catch (err) {
-    logger?.warn({ err }, 'telemetry_flush_failed');
+    logger?.debug({ err }, 'telemetry_flush_failed');
   } finally {
     clearTimeout(timer);
   }
