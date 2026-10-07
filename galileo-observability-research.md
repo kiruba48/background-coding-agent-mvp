@@ -69,13 +69,16 @@ The REST ingest API (`POST /v2/projects/{id}/spans`, the path used by the SDK's 
 
 A run-shaped trace built with the real helpers was POSTed straight to the ingest endpoint. It contained the root, `attempt 1`, `invoke_agent claude-code`, `chat` ×2, `execute_tool`, `verify` and `judge`, and the response was `{"valid":8}`. **Caveat:** a bare span with no `gen_ai.*` attributes also returns `{"valid":1}`. So the ingest `valid` count only means the span was accepted. It does not check the span-validity rules above, and the UI is the only real check. The workflow spans (`attempt N`, `verify`, `judge`) carry `gen_ai.provider.name` and input/output messages, but no `gen_ai.operation.name`, because semconv has no "workflow" operation.
 
-**Still open (needs the Splunk UI):**
-- the span tree renders with `attempt`, `verify` and `judge` visible and the session nested under them;
-- each run is its own session;
-- `[redacted]` content is shown for the capture-off run;
-- Action Completion, Agent Efficiency and Tool Error Rate scores appear.
+**Verified in Splunk through the AO REST API (2026-10-07).** The checks used `POST https://app.<realm>.observability.splunkcloud.com/ao/api/v2/projects/<id>/{spans,traces,sessions}/search` with `X-SF-Token`, so no browser was needed.
+- **Span tree.** `invoke_agent background-coding-agent` (agent) → `attempt 1` (workflow) → `invoke_agent claude-code` (agent) → `chat …` (llm) / `execute_tool …` (tool). `verify` and `judge` are workflow spans under the attempt. Splunk types `attempt`/`verify`/`judge` as **workflow** without `gen_ai.operation.name`, so no operation name is needed.
+- **Sessions.** The session id is the run's `runId`, and the capture-off run's session input shows `[redacted]`.
+- **Tokens and cost.** Both are recorded per chat span and rolled up per session, about $0.14 for one lodash run. `claude-sonnet-4-6` is priced; the spike's model was not.
+- **Evaluators.** Both session-level agent evaluators (`0086796d…`, `6ab3aa2c…`: Action Completion / Agent Efficiency) scored `success`. Tool Error Rate scores every tool span and rolls up. Tool Selection Quality is `not_applicable`, as expected. Session evaluators read `pending`, and roll-ups can briefly read `failed`, for 1–3 minutes after a run.
+- **Tool Error Rate found a real app issue.** `mcp__verifier__verify` fails inside the session with "Claude requested permissions to use mcp__verifier__verify, but you haven't granted it yet". The in-session verifier MCP tool is not permitted, and the host-side verifier still runs afterwards. This needs a separate follow-up.
 
-If the workflow spans are hidden, set an operation name on them in `startWorkflowSpan` (`src/telemetry/spans.ts`). If runs merge into one session, move `splunk_ao.session.id` to wherever Splunk actually reads it.
+**Two defects were found and fixed during verification:**
+1. **Runs split across two sessions.** This happened in 3 of 4 runs. `splunk_ao.session.id` was only on the root span. `BatchSpanProcessor` exports early chat and tool spans before the root ends, so Splunk put them in an orphan session. The fix carries the session id in the OTel Context and stamps `splunk_ao.session.id` + `gen_ai.conversation.id` on every span. Two later runs each produced a single session.
+2. **Chat input was empty after the first turn.** Splunk silently drops `tool_call_response` parts, under any role, and renders only `text` parts. Tool results are now sent as role `tool` with both a `tool_call_response` part (semconv) and a `text` part. Chat spans now show the tool results as input.
 
 ---
 
