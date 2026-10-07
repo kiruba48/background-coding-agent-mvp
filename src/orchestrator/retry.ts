@@ -6,6 +6,8 @@ import { type SessionConfig, SessionResult, RetryConfig, RetryResult, Verificati
 import { ClaudeCodeSession } from './claude-code-session.js';
 import { captureBaselineSha, getWorkspaceDiff, MIN_DIFF_CHARS } from './judge.js';
 import { ErrorSummarizer } from './summarizer.js';
+import { context as otelContext } from '@opentelemetry/api';
+import { startWorkflowSpan, endWorkflowSpan } from '../telemetry/spans.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -161,232 +163,294 @@ export class RetryOrchestrator {
         ? originalTask
         : this.buildRetryMessage(originalTask, attempt, verificationResults);
 
-      // CRITICAL: Create a fresh session for each attempt.
-      // Never reuse sessions — prior conversation history accumulates and
-      // fills the context window, causing the model to forget the original task.
-      const session = new ClaudeCodeSession(this.config);
-      this.activeSession = session;
-
-      let sessionResult: SessionResult;
+      const attemptTrace = startWorkflowSpan(
+        `attempt ${attempt}`,
+        this.config.traceContext ?? otelContext.active(),
+        message,
+        { 'bg_agent.attempt': attempt },
+      );
+      let attemptSummary = 'attempt started';
+      let attemptThrew = false;
+      let attemptError = '';
       try {
-        await session.start();
-        sessionResult = await session.run(message, logger, this.config.signal);
-      } finally {
-        // Always clean up session, even on error (including start() failures)
-        await session.stop();
-        this.activeSession = null;
-      }
 
-      sessionResults.push(sessionResult);
+        // CRITICAL: Create a fresh session for each attempt.
+        // Never reuse sessions — prior conversation history accumulates and
+        // fills the context window, causing the model to forget the original task.
+        const session = new ClaudeCodeSession({ ...this.config, traceContext: attemptTrace.ctx });
+        this.activeSession = session;
 
-      // Cancellation: reset workspace and return immediately
-      if (sessionResult.status === 'cancelled') {
-        await this.resetWorkspace(this.config.workspaceDir, baselineSha, logger);
-        return {
-          finalStatus: 'cancelled',
-          attempts: attempt,
-          sessionResults,
-          verificationResults,
-          judgeResults,
-        };
-      }
-
-      // Session-level failures are terminal — do NOT retry.
-      // timeout: task is too slow for current settings
-      // turn_limit: task is too complex for current turn budget
-      // failed: unrecoverable error in session
-      if (sessionResult.status !== 'success') {
-        logger?.error(
-          { attempt, status: sessionResult.status },
-          'Session failed, not retrying'
-        );
-        return {
-          finalStatus: sessionResult.status,
-          attempts: attempt,
-          sessionResults,
-          verificationResults,
-          judgeResults,
-          error: sessionResult.error
-        };
-      }
-
-      // Zero-diff check: if agent made no meaningful changes, surface immediately.
-      // Retrying with the same prompt will not produce different results.
-      const workspaceDiff = await getWorkspaceDiff(this.config.workspaceDir, baselineSha);
-      if (!workspaceDiff || workspaceDiff.length < MIN_DIFF_CHARS) {
-        logger?.info({ attempt }, 'Zero diff detected — agent produced no meaningful changes');
-        return {
-          finalStatus: 'zero_diff',
-          attempts: attempt,
-          sessionResults,
-          verificationResults,
-          judgeResults,
-        };
-      }
-
-      // No verifier configured — treat session success as overall success.
-      // Phase 5 verifiers will plug in here via retryConfig.verifier.
-      if (!this.retryConfig.verifier) {
-        return {
-          finalStatus: 'success',
-          attempts: attempt,
-          sessionResults,
-          verificationResults,
-          judgeResults,
-        };
-      }
-
-      // Config-only classification: if all changed files are config files,
-      // skip build+test in the verifier (run lint only)
-      const changedFiles = await getChangedFilesFromBaseline(this.config.workspaceDir, baselineSha, logger);
-      const configOnly = changedFiles.length > 0 && changedFiles.every(isConfigFile);
-      if (configOnly) {
-        logger?.info({ changedFiles }, 'Config-only change detected — will skip build and test verification');
-      }
-
-      // Run pre-verification hook (e.g., host-side npm install for lockfile regen).
-      // Retryable errors (ERESOLVE) feed into the retry loop; terminal errors (network) bail out.
-      if (this.retryConfig.preVerify) {
+        let sessionResult: SessionResult;
         try {
-          await this.retryConfig.preVerify(this.config.workspaceDir);
-        } catch (err) {
-          const isRetryable = err instanceof PreVerifyError && err.retryable;
-          if (isRetryable) {
-            // Extract a concise error snippet for the agent's retry context
-            const errMsg = err instanceof Error ? err.message : String(err);
-            const snippet = errMsg.slice(0, 300);
-            logger?.warn({ attempt, error: snippet }, 'Pre-verify failed with retryable error, feeding to retry loop');
-            const preVerifyVerification: VerificationResult = {
-              passed: false,
-              errors: [{
-                type: 'build',
-                summary: `npm install failed — agent must fix package.json:\n${snippet}`,
-                rawOutput: errMsg,
-              }],
-              durationMs: 0,
+          await session.start();
+          sessionResult = await session.run(message, logger, this.config.signal);
+        } finally {
+          // Always clean up session, even on error (including start() failures)
+          await session.stop();
+          this.activeSession = null;
+        }
+
+        sessionResults.push(sessionResult);
+        attemptTrace.span.setAttribute('bg_agent.session_status', sessionResult.status);
+        attemptSummary = `session ${sessionResult.status}${sessionResult.error ? `: ${sessionResult.error}` : ''}`;
+
+        // Cancellation: reset workspace and return immediately
+        if (sessionResult.status === 'cancelled') {
+          await this.resetWorkspace(this.config.workspaceDir, baselineSha, logger);
+          return {
+            finalStatus: 'cancelled',
+            attempts: attempt,
+            sessionResults,
+            verificationResults,
+            judgeResults,
+          };
+        }
+
+        // Session-level failures are terminal — do NOT retry.
+        // timeout: task is too slow for current settings
+        // turn_limit: task is too complex for current turn budget
+        // failed: unrecoverable error in session
+        if (sessionResult.status !== 'success') {
+          logger?.error(
+            { attempt, status: sessionResult.status },
+            'Session failed, not retrying'
+          );
+          return {
+            finalStatus: sessionResult.status,
+            attempts: attempt,
+            sessionResults,
+            verificationResults,
+            judgeResults,
+            error: sessionResult.error
+          };
+        }
+
+        // Zero-diff check: if agent made no meaningful changes, surface immediately.
+        // Retrying with the same prompt will not produce different results.
+        const workspaceDiff = await getWorkspaceDiff(this.config.workspaceDir, baselineSha);
+        if (!workspaceDiff || workspaceDiff.length < MIN_DIFF_CHARS) {
+          logger?.info({ attempt }, 'Zero diff detected — agent produced no meaningful changes');
+          attemptSummary = 'zero diff: agent produced no meaningful changes';
+          return {
+            finalStatus: 'zero_diff',
+            attempts: attempt,
+            sessionResults,
+            verificationResults,
+            judgeResults,
+          };
+        }
+
+        // No verifier configured — treat session success as overall success.
+        // Phase 5 verifiers will plug in here via retryConfig.verifier.
+        if (!this.retryConfig.verifier) {
+          attemptSummary = 'session succeeded (no verifier configured)';
+          return {
+            finalStatus: 'success',
+            attempts: attempt,
+            sessionResults,
+            verificationResults,
+            judgeResults,
+          };
+        }
+
+        // Config-only classification: if all changed files are config files,
+        // skip build+test in the verifier (run lint only)
+        const changedFiles = await getChangedFilesFromBaseline(this.config.workspaceDir, baselineSha, logger);
+        const configOnly = changedFiles.length > 0 && changedFiles.every(isConfigFile);
+        if (configOnly) {
+          logger?.info({ changedFiles }, 'Config-only change detected — will skip build and test verification');
+        }
+
+        // Run pre-verification hook (e.g., host-side npm install for lockfile regen).
+        // Retryable errors (ERESOLVE) feed into the retry loop; terminal errors (network) bail out.
+        if (this.retryConfig.preVerify) {
+          try {
+            await this.retryConfig.preVerify(this.config.workspaceDir);
+          } catch (err) {
+            const isRetryable = err instanceof PreVerifyError && err.retryable;
+            if (isRetryable) {
+              // Extract a concise error snippet for the agent's retry context
+              const errMsg = err instanceof Error ? err.message : String(err);
+              const snippet = errMsg.slice(0, 300);
+              logger?.warn({ attempt, error: snippet }, 'Pre-verify failed with retryable error, feeding to retry loop');
+              const preVerifyVerification: VerificationResult = {
+                passed: false,
+                errors: [{
+                  type: 'build',
+                  summary: `npm install failed — agent must fix package.json:\n${snippet}`,
+                  rawOutput: errMsg,
+                }],
+                durationMs: 0,
+              };
+              verificationResults.push(preVerifyVerification);
+              attemptSummary = 'pre-verify failed (retryable)';
+              continue; // next attempt with error context
+            }
+            logger?.error({ attempt, err }, 'Pre-verify hook failed (terminal)');
+            attemptSummary = 'pre-verify failed (terminal)';
+            return {
+              finalStatus: 'failed',
+              attempts: attempt,
+              sessionResults,
+              verificationResults,
+              judgeResults,
+              error: `Pre-verify failed: ${err instanceof Error ? err.message : String(err)}`
             };
-            verificationResults.push(preVerifyVerification);
-            continue; // next attempt with error context
           }
-          logger?.error({ attempt, err }, 'Pre-verify hook failed (terminal)');
+        }
+
+        // Run verification on the workspace — catch verifier crashes to return
+        // structured result instead of letting exceptions propagate unhandled
+        const verifyTrace = startWorkflowSpan(
+          'verify',
+          attemptTrace.ctx,
+          changedFiles.length > 0 ? `changed files:\n${changedFiles.join('\n')}` : 'changed files: (none committed)',
+          { 'bg_agent.config_only': configOnly },
+        );
+        let verification: VerificationResult;
+        try {
+          verification = configOnly
+            ? await this.retryConfig.verifier(this.config.workspaceDir, { configOnly: true })
+            : await this.retryConfig.verifier(this.config.workspaceDir);
+        } catch (err) {
+          endWorkflowSpan(verifyTrace.span, 'verifier crashed', { error: err instanceof Error ? err.message : String(err) });
+          attemptSummary = 'verifier crashed';
+          logger?.error({ attempt, err }, 'Verifier crashed');
           return {
             finalStatus: 'failed',
             attempts: attempt,
             sessionResults,
             verificationResults,
             judgeResults,
-            error: `Pre-verify failed: ${err instanceof Error ? err.message : String(err)}`
+            error: `Verifier error: ${err instanceof Error ? err.message : String(err)}`
           };
         }
-      }
+        verificationResults.push(verification);
+        endWorkflowSpan(
+          verifyTrace.span,
+          verification.passed
+            ? 'passed'
+            : `failed:\n${verification.errors.map((e) => `[${e.type}] ${e.summary}`).join('\n')}`,
+          {
+            attributes: {
+              'bg_agent.verification.passed': verification.passed,
+              'bg_agent.verification.error_count': verification.errors.length,
+              'bg_agent.verification.duration_ms': verification.durationMs,
+            },
+          },
+        );
+        attemptTrace.span.setAttribute('bg_agent.verification.passed', verification.passed);
+        attemptSummary = verification.passed ? 'verification passed' : 'verification failed';
 
-      // Run verification on the workspace — catch verifier crashes to return
-      // structured result instead of letting exceptions propagate unhandled
-      let verification: VerificationResult;
-      try {
-        verification = configOnly
-          ? await this.retryConfig.verifier(this.config.workspaceDir, { configOnly: true })
-          : await this.retryConfig.verifier(this.config.workspaceDir);
-      } catch (err) {
-        logger?.error({ attempt, err }, 'Verifier crashed');
-        return {
-          finalStatus: 'failed',
-          attempts: attempt,
-          sessionResults,
-          verificationResults,
-          judgeResults,
-          error: `Verifier error: ${err instanceof Error ? err.message : String(err)}`
-        };
-      }
-      verificationResults.push(verification);
+        if (verification.passed) {
+          logger?.info({ attempt }, 'Verification passed');
 
-      if (verification.passed) {
-        logger?.info({ attempt }, 'Verification passed');
+          // Judge runs AFTER verification passes — separate semantic check
+          if (this.retryConfig.judge) {
+            const maxJudgeVetoes = this.retryConfig.maxJudgeVetoes ?? 1;
 
-        // Judge runs AFTER verification passes — separate semantic check
-        if (this.retryConfig.judge) {
-          const maxJudgeVetoes = this.retryConfig.maxJudgeVetoes ?? 1;
+            // Check if we've already exhausted judge retries
+            const judgeVetoCount = judgeResults.filter(r => r.verdict === 'VETO' && !r.skipped).length;
+            if (judgeVetoCount >= maxJudgeVetoes) {
+              logger?.warn({ judgeVetoCount, maxJudgeVetoes }, 'Judge retry budget exhausted');
+              attemptSummary = 'judge veto budget exhausted';
+              return {
+                finalStatus: 'vetoed',
+                attempts: attempt,
+                sessionResults,
+                verificationResults,
+                judgeResults,
+                error: `Judge vetoed ${judgeVetoCount} time(s) — retry budget exhausted`,
+              };
+            }
 
-          // Check if we've already exhausted judge retries
-          const judgeVetoCount = judgeResults.filter(r => r.verdict === 'VETO' && !r.skipped).length;
-          if (judgeVetoCount >= maxJudgeVetoes) {
-            logger?.warn({ judgeVetoCount, maxJudgeVetoes }, 'Judge retry budget exhausted');
-            return {
-              finalStatus: 'vetoed',
-              attempts: attempt,
-              sessionResults,
-              verificationResults,
-              judgeResults,
-              error: `Judge vetoed ${judgeVetoCount} time(s) — retry budget exhausted`,
-            };
-          }
+            const judgeTrace = startWorkflowSpan('judge', attemptTrace.ctx, originalTask);
+            let judgeResult: JudgeResult;
+            try {
+              judgeResult = await this.retryConfig.judge(this.config.workspaceDir, originalTask, baselineSha);
+            } catch (err) {
+              // Judge crash = fail open (approve) — not a reason to block
+              logger?.warn({ attempt, err }, 'Judge crashed, failing open');
+              judgeResult = {
+                verdict: 'APPROVE',
+                reasoning: 'Judge crashed, failing open',
+                veto_reason: '',
+                durationMs: 0,
+                skipped: true,
+              };
+            }
+            judgeResults.push(judgeResult);
+            endWorkflowSpan(judgeTrace.span, `${judgeResult.verdict}: ${judgeResult.reasoning}`, {
+              attributes: {
+                'bg_agent.judge.verdict': judgeResult.verdict,
+                'bg_agent.judge.skipped': judgeResult.skipped ?? false,
+                'bg_agent.judge.duration_ms': judgeResult.durationMs,
+              },
+            });
+            attemptTrace.span.setAttribute('bg_agent.judge.verdict', judgeResult.verdict);
+            attemptSummary = `verification passed; judge ${judgeResult.verdict}${judgeResult.skipped ? ' (skipped)' : ''}`;
 
-          let judgeResult: JudgeResult;
-          try {
-            judgeResult = await this.retryConfig.judge(this.config.workspaceDir, originalTask, baselineSha);
-          } catch (err) {
-            // Judge crash = fail open (approve) — not a reason to block
-            logger?.warn({ attempt, err }, 'Judge crashed, failing open');
-            judgeResult = {
-              verdict: 'APPROVE',
-              reasoning: 'Judge crashed, failing open',
-              veto_reason: '',
-              durationMs: 0,
-              skipped: true,
-            };
-          }
-          judgeResults.push(judgeResult);
-
-          logger?.info({
-            attempt,
-            verdict: judgeResult.verdict,
-            reasoning: judgeResult.reasoning,
-            veto_reason: judgeResult.veto_reason,
-            durationMs: judgeResult.durationMs,
-            skipped: judgeResult.skipped,
-          }, 'LLM Judge result');
-
-          if (judgeResult.verdict === 'VETO' && !judgeResult.skipped) {
-            // Veto: add as verification error for retry message, continue loop
-            const judgeVerification: VerificationResult = {
-              passed: false,
-              errors: [{
-                type: 'judge',
-                summary: `[JUDGE VETO] ${judgeResult.veto_reason}`,
-                rawOutput: judgeResult.reasoning,
-              }],
+            logger?.info({
+              attempt,
+              verdict: judgeResult.verdict,
+              reasoning: judgeResult.reasoning,
+              veto_reason: judgeResult.veto_reason,
               durationMs: judgeResult.durationMs,
-            };
-            verificationResults.push(judgeVerification);
+              skipped: judgeResult.skipped,
+            }, 'LLM Judge result');
 
-            logger?.warn(
-              { attempt, veto_reason: judgeResult.veto_reason },
-              'Judge vetoed, retrying with veto feedback'
-            );
-            continue; // next attempt in the retry loop
+            if (judgeResult.verdict === 'VETO' && !judgeResult.skipped) {
+              // Veto: add as verification error for retry message, continue loop
+              const judgeVerification: VerificationResult = {
+                passed: false,
+                errors: [{
+                  type: 'judge',
+                  summary: `[JUDGE VETO] ${judgeResult.veto_reason}`,
+                  rawOutput: judgeResult.reasoning,
+                }],
+                durationMs: judgeResult.durationMs,
+              };
+              verificationResults.push(judgeVerification);
+
+              logger?.warn(
+                { attempt, veto_reason: judgeResult.veto_reason },
+                'Judge vetoed, retrying with veto feedback'
+              );
+              continue; // next attempt in the retry loop
+            }
           }
+
+          // Verification passed AND judge approved (or skipped, or no judge configured)
+          return {
+            finalStatus: 'success',
+            attempts: attempt,
+            sessionResults,
+            verificationResults,
+            judgeResults,
+          };
         }
 
-        // Verification passed AND judge approved (or skipped, or no judge configured)
-        return {
-          finalStatus: 'success',
-          attempts: attempt,
-          sessionResults,
-          verificationResults,
-          judgeResults,
-        };
+        // Verification failed — log and loop for next attempt (which will include error context)
+        logger?.warn(
+          {
+            attempt,
+            maxRetries,
+            errorCount: verification.errors.length,
+            errorSummaries: verification.errors.map(e => e.summary),
+          },
+          'Verification failed, retrying with error context'
+        );
+      } catch (err) {
+        attemptThrew = true;
+        attemptError = err instanceof Error ? err.message : String(err);
+        throw err;
+      } finally {
+        endWorkflowSpan(
+          attemptTrace.span,
+          attemptThrew ? `attempt threw: ${attemptError}` : attemptSummary,
+          attemptThrew ? { error: attemptError } : {},
+        );
       }
-
-      // Verification failed — log and loop for next attempt (which will include error context)
-      logger?.warn(
-        {
-          attempt,
-          maxRetries,
-          errorCount: verification.errors.length,
-          errorSummaries: verification.errors.map(e => e.summary),
-        },
-        'Verification failed, retrying with error context'
-      );
     }
 
     // All retries exhausted with no passing verification

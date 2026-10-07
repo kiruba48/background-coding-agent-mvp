@@ -1,4 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { ROOT_CONTEXT, SpanStatusCode, trace } from '@opentelemetry/api';
+import type { InMemorySpanExporter } from '@opentelemetry/sdk-trace-base';
 import type { SessionResult } from '../types.js';
 
 // Mock the SDK module before importing ClaudeCodeSession
@@ -26,6 +28,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { spawn, execFile } from 'node:child_process';
 import { buildDockerRunArgs } from '../cli/docker/index.js';
 import { ClaudeCodeSession } from './claude-code-session.js';
+import { getTracer, installTestTracing, resetTracingForTests } from '../telemetry/tracing.js';
 
 const mockQuery = query as ReturnType<typeof vi.fn>;
 const mockSpawn = spawn as unknown as ReturnType<typeof vi.fn>;
@@ -865,5 +868,104 @@ describe('ClaudeCodeSession', () => {
     expect(killCallsAfter - killCallsBefore).toBe(1);
 
     vi.useRealTimers();
+  });
+});
+
+describe('ClaudeCodeSession tracing', () => {
+  let exporter: InMemorySpanExporter;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.ANTHROPIC_API_KEY = 'test-api-key';
+    mockExecFile.mockImplementation((...args: any[]) => {
+      const callback = args[args.length - 1];
+      if (typeof callback === 'function') callback(null, '', '');
+    });
+    exporter = installTestTracing();
+  });
+
+  afterEach(async () => {
+    await resetTracingForTests();
+  });
+
+  function assistantMsg(id: string, content: any[], stopReason: string) {
+    return {
+      type: 'assistant', parent_tool_use_id: null, session_id: 's', uuid: `u-${id}`,
+      message: {
+        id, model: 'claude-sonnet-5-5', role: 'assistant', content, stop_reason: stopReason,
+        usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      },
+    };
+  }
+
+  it('records session, chat and tool spans under the provided trace context', async () => {
+    mockQuery.mockReturnValue(makeQueryGen([
+      { type: 'system', subtype: 'init', model: 'claude-sonnet-5-5', tools: ['Read', 'Edit'], session_id: 's', uuid: 'u0' },
+      assistantMsg('m1', [{ type: 'tool_use', id: 't1', name: 'Edit', input: { file_path: 'a.ts' } }], 'tool_use'),
+      { type: 'user', parent_tool_use_id: null, session_id: 's', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } },
+      assistantMsg('m2', [{ type: 'text', text: 'Done' }], 'end_turn'),
+      makeSuccessResult(),
+    ]));
+    const parent = getTracer().startSpan('attempt 1');
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace', traceContext: trace.setSpan(ROOT_CONTEXT, parent) });
+
+    const result = await session.run('Fix the bug');
+    parent.end();
+
+    expect(result.status).toBe('success');
+    const spans = exporter.getFinishedSpans();
+    const sessionSpan = spans.find((s) => s.name === 'invoke_agent claude-code')!;
+    expect(sessionSpan.parentSpanContext?.spanId).toBe(parent.spanContext().spanId);
+    expect(spans.filter((s) => s.name === 'chat claude-sonnet-5-5')).toHaveLength(2);
+    expect(spans.filter((s) => s.name === 'execute_tool Edit')).toHaveLength(1);
+    expect(sessionSpan.attributes['bg_agent.cost_usd']).toBe(0.05);
+    expect(sessionSpan.attributes['bg_agent.session_status']).toBe('success');
+  });
+
+  it('ends the session span as an error when the query throws', async () => {
+    mockQuery.mockImplementationOnce(() => { throw new Error('boom'); });
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace' });
+
+    const result = await session.run('task');
+
+    expect(result.status).toBe('failed');
+    const sessionSpan = exporter.getFinishedSpans().find((s) => s.name === 'invoke_agent claude-code')!;
+    expect(sessionSpan.status.code).toBe(SpanStatusCode.ERROR);
+    expect(sessionSpan.attributes['error.type']).toBe('failed');
+  });
+
+  it('records a cancelled session span when the signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace' });
+
+    const result = await session.run('task', undefined, controller.signal);
+
+    expect(result.status).toBe('cancelled');
+    const sessionSpan = exporter.getFinishedSpans().find((s) => s.name === 'invoke_agent claude-code')!;
+    expect(sessionSpan.attributes['bg_agent.session_status']).toBe('cancelled');
+  });
+
+  it('still returns the normal result when span creation fails', async () => {
+    mockQuery.mockReturnValue(makeQueryGen([makeSuccessResult()]));
+    vi.spyOn(getTracer(), 'startSpan').mockImplementation(() => { throw new Error('tracer down'); });
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace' });
+
+    const result = await session.run('task');
+
+    expect(result.status).toBe('success');
+    vi.restoreAllMocks();
+  });
+
+  it('returns failed and ends the session span when runInner throws', async () => {
+    const session = new ClaudeCodeSession({ workspaceDir: '/tmp/workspace' });
+    vi.spyOn(session as any, 'runInner').mockRejectedValue(new Error('inner boom'));
+
+    await expect(session.run('task')).rejects.toThrow('inner boom');
+
+    const sessionSpan = exporter.getFinishedSpans().find((s) => s.name === 'invoke_agent claude-code')!;
+    expect(sessionSpan).toBeDefined();
+    expect(sessionSpan.status.code).toBe(SpanStatusCode.ERROR);
+    expect(sessionSpan.attributes['bg_agent.session_status']).toBe('failed');
   });
 });

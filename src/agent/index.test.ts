@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock Docker functions to avoid real Docker calls
 vi.mock('../cli/docker/index.js', () => ({
@@ -99,6 +99,9 @@ import { RetryOrchestrator } from '../orchestrator/retry.js';
 import { buildPrompt } from '../prompts/index.js';
 import { ClaudeCodeSession } from '../orchestrator/claude-code-session.js';
 import { runAgent } from './index.js';
+import { trace, SpanStatusCode } from '@opentelemetry/api';
+import type { InMemorySpanExporter } from '@opentelemetry/sdk-trace-base';
+import { installTestTracing, resetTracingForTests } from '../telemetry/tracing.js';
 
 // Access the promisified mock (the one actually called by execFileAsync in production)
 const mockExecFileAsync = (execFile as any)[promisify.custom] as ReturnType<typeof vi.fn>;
@@ -487,5 +490,161 @@ describe('src/agent/index.ts', () => {
       );
       expect(result.finalStatus).toBe('cancelled');
     });
+  });
+});
+
+describe('runAgent tracing', () => {
+  let exporter: InMemorySpanExporter;
+  const options = {
+    taskType: 'maven-dependency-update',
+    repo: '/tmp/my-app',
+    turnLimit: 10,
+    timeoutMs: 300_000,
+    maxRetries: 3,
+    dep: 'com.example:lib',
+    targetVersion: '1.0.0',
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockExecFileAsync.mockResolvedValue({ stdout: '', stderr: '' });
+    exporter = installTestTracing();
+  });
+
+  afterEach(async () => {
+    await resetTracingForTests();
+  });
+
+  const rootSpan = () => exporter.getFinishedSpans().find((s) => s.name === 'invoke_agent background-coding-agent')!;
+
+  it('wraps the run in a root span and passes its context to the orchestrator', async () => {
+    mockOrchestrator('success');
+
+    await runAgent(options, { skipWorktree: true });
+
+    const root = rootSpan();
+    expect(root.attributes).toMatchObject({
+      'gen_ai.operation.name': 'invoke_agent',
+      'gen_ai.agent.name': 'background-coding-agent',
+      'bg_agent.task_type': 'maven-dependency-update',
+      'bg_agent.repo': 'my-app',
+      'bg_agent.final_status': 'success',
+      'bg_agent.attempts': 1,
+    });
+    expect(root.attributes['gen_ai.conversation.id']).toBe(root.attributes['bg_agent.run_id']);
+    expect(root.attributes['splunk_ao.session.id']).toBe(root.attributes['bg_agent.run_id']);
+    expect(String(root.attributes['gen_ai.input.messages'])).toContain('Fix the bug'); // mocked buildPrompt
+    expect(root.status.code).toBe(SpanStatusCode.UNSET);
+
+    const orchestratorConfig = MockRetryOrchestrator.mock.calls[0][0];
+    expect(trace.getSpan(orchestratorConfig.traceContext)?.spanContext().spanId).toBe(root.spanContext().spanId);
+  });
+
+  it('carries the run session id in the context so child spans are stamped with it', async () => {
+    mockOrchestrator('success');
+    await runAgent(options, { skipWorktree: true });
+    const root = rootSpan();
+    const { startWorkflowSpan, endWorkflowSpan } = await import('../telemetry/spans.js');
+    const ctx = MockRetryOrchestrator.mock.calls[0][0].traceContext;
+    const child = startWorkflowSpan('attempt 1', ctx, 'x');
+    endWorkflowSpan(child.span, 'y');
+    const span = exporter.getFinishedSpans().find((s) => s.name === 'attempt 1')!;
+    expect(span.attributes['splunk_ao.session.id']).toBe(root.attributes['gen_ai.conversation.id']);
+    expect(span.attributes['gen_ai.conversation.id']).toBe(root.attributes['gen_ai.conversation.id']);
+  });
+
+  it('marks the root span as an error when the run fails', async () => {
+    mockOrchestrator('max_retries_exhausted');
+
+    await runAgent(options, { skipWorktree: true });
+
+    const root = rootSpan();
+    expect(root.status.code).toBe(SpanStatusCode.ERROR);
+    expect(root.attributes['error.type']).toBe('max_retries_exhausted');
+    expect(String(root.attributes['gen_ai.output.messages'])).toContain('max_retries_exhausted');
+  });
+
+  it('does not export raw error text on the root span when capture is off', async () => {
+    await resetTracingForTests();
+    exporter = installTestTracing({ captureContent: false });
+    MockRetryOrchestrator.mockImplementationOnce(function () {
+      return { run: vi.fn().mockRejectedValue(new Error('secret-token-leak')), stop: vi.fn() };
+    });
+    await expect(runAgent(options, { skipWorktree: true })).rejects.toThrow('secret-token-leak');
+    const root = rootSpan();
+    expect(root.status.code).toBe(SpanStatusCode.ERROR);
+    expect(JSON.stringify(root.status)).not.toContain('secret-token-leak');
+
+    MockRetryOrchestrator.mockImplementationOnce(function () {
+      return {
+        run: vi.fn().mockResolvedValue({ finalStatus: 'failed', attempts: 1, sessionResults: [], verificationResults: [], judgeResults: [], error: 'another secret-detail' }),
+        stop: vi.fn(),
+      };
+    });
+    await runAgent(options, { skipWorktree: true });
+    const roots = exporter.getFinishedSpans().filter((s) => s.name === 'invoke_agent background-coding-agent');
+    expect(JSON.stringify(roots[1].status)).not.toContain('secret-detail');
+    expect(roots[1].status.code).toBe(SpanStatusCode.ERROR);
+  });
+
+  it('logs agent_run_started with runId and traceId', async () => {
+    mockOrchestrator('success');
+    const logger = { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn(), child: vi.fn() } as any;
+    logger.child.mockReturnValue(logger);
+    await runAgent(options, { skipWorktree: true, logger });
+    const call = logger.info.mock.calls.find((c: unknown[]) => c[1] === 'agent_run_started');
+    expect(call).toBeDefined();
+    const root = rootSpan();
+    expect(call[0]).toEqual({ runId: root.attributes['bg_agent.run_id'], traceId: root.spanContext().traceId });
+    expect(logger.child).toHaveBeenCalledWith(expect.objectContaining({ runId: root.attributes['bg_agent.run_id'] }));
+  });
+
+  it('omits traceId from agent_run_started when tracing is off', async () => {
+    await resetTracingForTests();
+    mockOrchestrator('success');
+    const logger = { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn(), child: vi.fn() } as any;
+    logger.child.mockReturnValue(logger);
+    await runAgent(options, { skipWorktree: true, logger });
+    const call = logger.info.mock.calls.find((c: unknown[]) => c[1] === 'agent_run_started');
+    expect(call[0]).not.toHaveProperty('traceId');
+    expect(call[0]).toHaveProperty('runId');
+  });
+
+  it('gives every run its own conversation id', async () => {
+    mockOrchestrator('success');
+    mockOrchestrator('success');
+
+    await runAgent(options, { skipWorktree: true });
+    await runAgent(options, { skipWorktree: true });
+
+    const roots = exporter.getFinishedSpans().filter((s) => s.name === 'invoke_agent background-coding-agent');
+    expect(roots).toHaveLength(2);
+    expect(roots[0].attributes['gen_ai.conversation.id']).not.toBe(roots[1].attributes['gen_ai.conversation.id']);
+  });
+
+  it('records the root span and rethrows when the run throws', async () => {
+    MockRetryOrchestrator.mockImplementationOnce(function () {
+      return { run: vi.fn().mockRejectedValue(new Error('orchestrator exploded')), stop: vi.fn() };
+    });
+
+    await expect(runAgent(options, { skipWorktree: true })).rejects.toThrow('orchestrator exploded');
+
+    const root = rootSpan();
+    expect(root.status).toEqual({ code: SpanStatusCode.ERROR, message: 'orchestrator exploded' });
+  });
+
+  it('passes the root context to investigation sessions', async () => {
+    mockSessionRun.mockResolvedValue({ sessionId: 's', status: 'success', toolCallCount: 0, duration: 10, finalResponse: 'Report' });
+
+    await runAgent(
+      { taskType: 'investigation', repo: '/tmp/my-app', turnLimit: 5, timeoutMs: 60_000, maxRetries: 1, description: 'analyze git strategy' },
+      { skipDockerChecks: true },
+    );
+
+    const root = rootSpan();
+    const MockCtor = ClaudeCodeSession as unknown as ReturnType<typeof vi.fn>;
+    const sessionConfig = MockCtor.mock.calls[0][0];
+    expect(trace.getSpan(sessionConfig.traceContext)?.spanContext().spanId).toBe(root.spanContext().spanId);
+    expect(root.attributes['bg_agent.task_type']).toBe('investigation');
   });
 });
