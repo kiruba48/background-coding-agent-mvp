@@ -115,9 +115,14 @@ export function toolResultText(content: unknown): string {
 }
 
 export function toolResultMessage(result: ToolResultBlock): GenAIMessage {
+  const text = truncate(toolResultText(result.content));
   return {
     role: 'tool',
-    parts: [{ type: 'tool_call_response', id: result.tool_use_id, response: truncate(toolResultText(result.content)) }],
+    // Splunk AO silently drops tool_call_response parts but renders text parts, so emit both.
+    parts: [
+      { type: 'tool_call_response', id: result.tool_use_id, response: text },
+      { type: 'text', content: text },
+    ],
   };
 }
 

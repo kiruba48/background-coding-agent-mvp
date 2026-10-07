@@ -91,7 +91,7 @@ describe('SessionSpanRecorder', () => {
     );
     // Second turn's input is the tool result that came back.
     expect(json(chats[1], 'gen_ai.input.messages')).toEqual([
-      { role: 'tool', parts: [{ type: 'tool_call_response', id: 't1', response: 'File updated' }] },
+      { role: 'tool', parts: [{ type: 'tool_call_response', id: 't1', response: 'File updated' }, { type: 'text', content: 'File updated' }] },
     ]);
 
     expect(tool.attributes).toMatchObject({

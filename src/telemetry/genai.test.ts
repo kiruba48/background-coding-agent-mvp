@@ -125,10 +125,13 @@ describe('tool results', () => {
     expect(toolResultText(BigInt(456))).toBe(UNSERIALIZABLE);
   });
 
-  it('builds a tool role message with a truncated response', () => {
+  it('builds a tool role message with the response and a text part (Splunk renders only text)', () => {
     expect(toolResultMessage({ type: 'tool_result', tool_use_id: 't1', content: 'File updated' })).toEqual({
       role: 'tool',
-      parts: [{ type: 'tool_call_response', id: 't1', response: 'File updated' }],
+      parts: [
+        { type: 'tool_call_response', id: 't1', response: 'File updated' },
+        { type: 'text', content: 'File updated' },
+      ],
     });
   });
 });
@@ -159,14 +162,15 @@ describe('redactMessages', () => {
         { type: 'text', content: 'secret plan' },
         { type: 'tool_call', id: 't1', name: 'Edit', arguments: { file_path: '/secret' } },
       ] },
-      { role: 'tool', parts: [{ type: 'tool_call_response', id: 't1', response: 'secret output' }] },
+      { role: 'tool', parts: [{ type: 'tool_call_response', id: 't1', response: 'secret output' }, { type: 'text', content: 'secret output' }] },
     ]);
     expect(redacted).toEqual([
       { role: 'assistant', finish_reason: 'tool_call', parts: [
         { type: 'text', content: REDACTED },
         { type: 'tool_call', id: 't1', name: 'Edit', arguments: REDACTED },
       ] },
-      { role: 'tool', parts: [{ type: 'tool_call_response', id: 't1', response: REDACTED }] },
+      { role: 'tool', parts: [{ type: 'tool_call_response', id: 't1', response: REDACTED }, { type: 'text', content: REDACTED }] },
     ]);
+    expect(JSON.stringify(redacted)).not.toContain('secret');
   });
 });
